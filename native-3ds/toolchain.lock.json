@@ -1,0 +1,11 @@
+{
+  "llvm_url": "https://github.com/mstorsjo/llvm-mingw/releases/download/20260908/llvm-mingw-20260908-ucrt-x86_64.zip",
+  "llvm_sha256": "1bcf74d06b724aeecaa6412ca85f5b26fb1da770e7cdcefa9263c9c5c3ad34b6",
+  "llvm_directory": "llvm-mingw-20260908-ucrt-x86_64",
+  "sdk_image": "devkitpro/devkitarm@sha256:15b79ce75822c289538d8153da5fa7aafe5e6adc32ad8a575a197beca0f0761b",
+  "sdk_layer": "sha256:3c5026e520aeec9e208399f6d0a62098d5ee4c13d8cca97cdb9adbc6bb56a1c0",
+  "3dstools_repository": "https://github.com/devkitPro/3dstools.git",
+  "3dstools_commit": "718d6f2330dbef9dd5726573392425dcbd451677",
+  "picasso_repository": "https://github.com/devkitPro/picasso.git",
+  "picasso_commit": "d522455ea59cd5cb9219c699b93eb7750039233c"
+}
