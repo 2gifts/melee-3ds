@@ -49,7 +49,7 @@ def main():
         data=binary.read_bytes()
         with shader_c.open('a') as source:
             source.write(f'const unsigned char mp_{name}_shader[] __attribute__((aligned(4)))={{'+','.join(str(b) for b in data)+f'}};\nconst unsigned mp_{name}_shader_size={len(data)};\n')
-    for src in (ROOT/'port/3ds/game.c',ROOT/'port/3ds/renderer.c',ROOT/'port/3ds/citro3d_fix.c',ROOT/'port/3ds/services.c',ROOT/'port/3ds/cpu_speed.c',ROOT/'port/3ds/file_io.c',ROOT/'port/3ds/audio.c',ROOT/'port/3ds/command_cache.c',ROOT/'port/3ds/log_io.c',ROOT/'port/3ds/game_bridge.S',shader_c):
+    for src in (ROOT/'port/3ds/game.c',ROOT/'port/3ds/bottom.c',ROOT/'port/3ds/bottom_draw.c',ROOT/'port/3ds/renderer.c',ROOT/'port/3ds/citro3d_fix.c',ROOT/'port/3ds/services.c',ROOT/'port/3ds/cpu_speed.c',ROOT/'port/3ds/file_io.c',ROOT/'port/3ds/audio.c',ROOT/'port/3ds/command_cache.c',ROOT/'port/3ds/log_io.c',ROOT/'port/3ds/game_bridge.S',shader_c):
         obj=out/(src.stem+'.o')
         run([cc,*arch,*common_flags(),'-fshort-enums','-D__3DS__',
              *(['-DMP_SMOKE_TEST'] if args.smoke else []),*(['-DMP_AUDIO_HLE_TEST'] if args.audio_hle else []),*(['-DMP_BOOTMODE'] if args.boot else []),*includes,'-c',src,'-o',obj])

@@ -54,7 +54,9 @@ def observe(control=None):
                     proc=word(proc)
             if 'hand' in state:
                 state['doors']=[]
-                for i in range(2):
+                door_count=read(symbols['mnCharSel_804D6CF5'],1)[0]
+                if read(symbols['state_machine'],1)[0]==28:door_count=2
+                for i in range(min(4,door_count)):
                     door=read(symbols['mnCharSel_803F0DFC']+36*i,36)
                     token_pointer=word(symbols['mnCharSel_804A0BD0']+4*i)
                     if not token_pointer:
@@ -69,7 +71,7 @@ def observe(control=None):
                 for i in range(25):
                     icon=read(symbols['icons']+28*i,28)
                     left,right,top,bottom=struct.unpack('>ffff',icon[12:28])
-                    state['characters'].append({'id':i,'available':icon[2],
+                    state['characters'].append({'id':i,'character_kind':icon[1],'available':icon[2],
                                                 'xy':((left+right)/2,(top+bottom)/2)})
             if 'cursor' in state:
                 state['selection']=read(symbols['mnStageSel_804D6CAE'],1)[0]

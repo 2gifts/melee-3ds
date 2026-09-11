@@ -50,6 +50,8 @@ ENGINEBRIDGE mp_game_set_stereo,mp_display_set_stereo
 ENGINEBRIDGE mp_game_stereo_scene,mp_display_stereo_scene
 ENGINEBRIDGE mp_game_simulation,gm_801A4BA8
 ENGINEBRIDGE mp_game_configure_cache,mp_gx_configure_cache
+ENGINEBRIDGE mp_game_bottom_snapshot,mp_bottom_snapshot
+ENGINEBRIDGE mp_game_bottom_font,mp_bottom_font
 #ifdef MP_SMOKE_TEST
 ENGINEBRIDGE mp_game_memory_check,mp_memory_compare_self_test
 #endif

@@ -2,12 +2,13 @@
 
 A work-in-progress native ARM port of Super Smash Bros. Melee, built from the [doldecomp/melee](https://github.com/doldecomp/melee) decompilation. This is native game code with a 3DS graphics/audio/platform layer, not a Dolphin emulator build.
 
-**Current milestone: update 10. Playable on a New Nintendo 3DS, with native stereoscopic 3D. Performance varies substantially; stable 60 FPS has not been achieved.** Full matches have been played on a physical New 3DS. This remains an experimental community development build.
+**Current milestone: update 11. Playable on a New Nintendo 3DS, with native stereoscopic 3D. Performance varies substantially; stable 60 FPS has not been achieved.** Full matches have been played on a physical New 3DS. This remains an experimental community development build.
 
-Update 10 fixes player shield colors, including the startup flash and transparency, with the existing geometry cache retained. [Fix and validation details](docs/SHIELD_COLOR_UPDATE_10.md).
+Update 11 replaces the bottom console with a Melee-style companion screen: original portraits, stocks and damage for up to four fighters, a live CSS roster, contextual menu guidance and a results summary. [Details and controls](docs/BOTTOM_SCREEN_UPDATE_11.md).
 
 ## What works
 
+- **Touch-screen match dashboard**, with FPS hidden by default. Tap FPS to toggle it, VIEW to change projection, or CONTROLS for the guide. The guide does not pause gameplay.
 - Original menus, character selection, Training and Versus against a CPU, including results and rematches.
 - Native slider-controlled stereo in gameplay and perspective menus, with a forward CSS Ready to Fight ribbon. Lowering the slider fully selects 2D.
 - Centered 4:3 by default. Optional expanded 5:3 reveals more horizontal world without stretching; HUD/menu proportions stay intact.
@@ -72,6 +73,7 @@ Default Versus rules are 4 stocks, 8 minutes, items off, team attack on and paus
 | START | Confirm / Training menu; pause when enabled in Rules |
 | Hold ZL + ZR, press SELECT | Toggle 4:3 / expanded gameplay |
 | 3D slider | Depth; fully down selects 2D |
+| Touch FPS / VIEW / CONTROLS | Toggle rendered FPS, projection, or the control guide |
 | SELECT | Return to Homebrew Launcher |
 
 ## Optional Diet scenery

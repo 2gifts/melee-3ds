@@ -20,6 +20,7 @@ def main():
     symbol_text=subprocess.check_output([str(ROOT/'.toolchain/llvm-mingw-20260908-ucrt-x86_64/bin/llvm-nm.exe'),str(elf)],text=True)
     labels={line.split()[-1] for line in symbol_text.splitlines() if line.split()}
     forbidden={'mp_test_control','mp_test_capture','mp_test_frame_limit','audio_snapshot_pcm','audio_snapshot_request',
+               'mp_test_bottom_touch','mp_test_bottom_disabled','mp_bottom_observed','mp_bottom_fps_visible','mp_bottom_guide_visible',
                'mp_test_stereo_slider','stereo_verify','verify_stereo','stereo_order_reference',
                'stereo_eye_switches','stereo_pairs','stereo_attribute_writes',
                'mp_collision_failed_joints','mp_collision_failed_addresses','mp_collision_failed_joints_count',
@@ -92,6 +93,16 @@ Physical console speed and audio still need your hardware results.
 The port remains unfinished; saving and multiplayer are unavailable.
 
 The first line of /3ds/melee/game.log identifies this update.
+''')
+    if 'mp_native_bottom_frame' in labels:
+        with (directory/'README.txt').open('a') as readme:
+            readme.write('''
+The bottom screen shows the live roster, damage and stocks for up to four
+fighters, with matching menu guidance and a completed-match summary.
+Tap FPS OFF at the lower left to show FPS; tap again to hide it.
+Tap VIEW to switch between 4:3 and expanded gameplay.
+Tap CONTROLS for the guide, then CLOSE GUIDE to return. The guide does not
+pause the match. FPS starts hidden each launch; game logs stay on the SD.
 ''')
     if 'mp_game_set_stereo' in labels:
         with (directory/'README.txt').open('a') as readme:

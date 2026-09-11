@@ -8,6 +8,7 @@
 #include <sys/stat.h>
 #include "audio_trace.h"
 #include "log_progress.h"
+#include "bottom.h"
 
 extern const char mp_image_text_start[],mp_image_rodata_start[],mp_image_data_start[];
 /* Filled after linking, without relocation records. Volatile prevents the
@@ -29,6 +30,8 @@ static int engine_failed;
 static int exit_requested;
 unsigned mp_native_expanded;
 static unsigned display_toggle_pending,display_combo_previous;
+static unsigned bottom_touch_previous,bottom_touch_pending,bottom_touch_x,bottom_touch_y;
+void mp_native_toggle_display(void){display_toggle_pending^=1;}
 extern void mp_game_set_display(unsigned);
 extern void mp_game_set_stereo(unsigned);
 extern unsigned mp_game_stereo_scene(void);
@@ -46,6 +49,12 @@ void mp_native_display_keys(unsigned keys){
     unsigned combo=(keys&(KEY_ZL|KEY_ZR|KEY_SELECT))==(KEY_ZL|KEY_ZR|KEY_SELECT);
     if(combo&&!display_combo_previous)display_toggle_pending^=1;
     display_combo_previous=combo;
+    /* Pad and frame polling both scan HID. Latch the first contact here so
+     * a short touch cannot be consumed by an intervening controller poll. */
+    unsigned touched=!!(keys&KEY_TOUCH);
+    if(touched&&!bottom_touch_previous){touchPosition p;hidTouchRead(&p);
+        bottom_touch_x=p.px;bottom_touch_y=p.py;bottom_touch_pending=1;}
+    bottom_touch_previous=touched;
 }
 #ifdef MP_SMOKE_TEST
 volatile unsigned mp_test_capture;
@@ -62,7 +71,8 @@ static void capture_frame(void){
     C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
     for(int screen=0;screen<3;++screen){
         u16 w,h;u8*fb=gfxGetFramebuffer(screen==2?GFX_BOTTOM:GFX_TOP,screen==1?GFX_RIGHT:GFX_LEFT,&w,&h);
-        unsigned size=w*h*(screen==2?2:3);GSPGPU_InvalidateDataCache(fb,size);
+        unsigned size=w*h*(screen==2?2:3);
+        if(screen==2)fb=(u8*)mp_native_bottom_pixels;else GSPGPU_InvalidateDataCache(fb,size);
         /* Read on the CPU before file IPC; accelerated emulator surfaces
          * need materializing into RAM before a service can read the bytes. */
         for(unsigned i=0;i<size;++i)copy[i]=((volatile u8*)fb)[i];
@@ -104,17 +114,17 @@ void mp_native_frame(void)
     /* Flat menus use one render view even when the slider is raised. */
     if(!mp_game_stereo_scene())mp_native_stereo_depth=0;
     mp_game_set_stereo(mp_native_stereo_depth);
-    static unsigned rate_tick,rate_frame,rate_sim,rate_display=~0u;
+    static unsigned rate_tick,rate_frame,rate_sim,rate_display=~0u,bottom_fps;
     if(!rate_tick||now-rate_tick>=40500000||rate_display!=mp_native_expanded){
         unsigned sim=mp_game_simulation(),elapsed=now-rate_tick;
         float fps=elapsed?(engine_frames-rate_frame)*40500000.0/elapsed:0;
         float updates=elapsed&&sim>=rate_sim?(sim-rate_sim)*40500000.0/elapsed:0;
-#ifndef MP_SMOKE_TEST
-        printf("\x1b[18;1HDisplay: %-22s\nRender: %5.1f FPS  Game: %5.1f Hz\n%-39s\nZL + ZR + SELECT: change display\n3D slider: depth       0 = 2D\n",mp_native_expanded?"Expanded (5:3)":"Original (4:3)",fps,updates,mp_cpu_status);
-#endif
+        bottom_fps=(unsigned)(fps+.5f);
         if(rate_tick){char text[128];snprintf(text,sizeof(text),"Rates: %.1f render FPS, %.1f game Hz; display=%s stereo=%u\n",fps,updates,mp_native_expanded?"expanded":"4:3",mp_native_stereo_depth);mp_native_log(text);}
         rate_tick=now;rate_frame=engine_frames;rate_sim=sim;rate_display=mp_native_expanded;
     }
+    mp_native_bottom_frame(bottom_fps,mp_native_expanded,bottom_touch_pending,bottom_touch_x,bottom_touch_y);
+    bottom_touch_pending=0;
 #ifdef MP_SMOKE_TEST
     if(mp_test_frame_limit&&engine_frames>=mp_test_frame_limit)mp_native_panic("End of automatic engine run");
 #endif
@@ -125,16 +135,13 @@ void mp_native_free(void*p){free(p);}
 static void flush_log(void){mp_log_flush(0);}
 static void native_log(const char*s){mp_log_append(s);
     if(strstr(s,"Preload complete"))flush_log();
-#ifdef MP_SMOKE_TEST
-    printf("%s",s);fflush(stdout);
-#endif
 }
 void mp_native_log(const char*s){MP_AUDIO_TRACE(0,native_log(s));}
 void mp_native_panic(const char*s){mp_native_log(s);mp_renderer_end();mp_log_flush(1);engine_failed=1;
 #ifdef MP_SMOKE_TEST
     capture_frame();
 #else
-    consoleClear();printf("Melee stopped\n\n%s\n\nSELECT: return to Homebrew Launcher\nDetails: /3ds/melee/game.log\n",s);
+    consoleInit(GFX_BOTTOM,NULL);consoleClear();printf("Melee stopped\n\n%s\n\nSELECT: return to Homebrew Launcher\nDetails: /3ds/melee/game.log\n",s);
 #endif
     longjmp(failure_return,1);}
 static void *read_asset(const char *name,unsigned *size)
@@ -154,10 +161,7 @@ int main(void)
     mkdir("sdmc:/3ds",0777);mkdir("sdmc:/3ds/melee",0777);
     mp_log_init();
     bool is_new=false;APT_CheckNew3DS(&is_new);
-#ifndef MP_SMOKE_TEST
-    printf("SUPER SMASH BROS. MELEE\nNative 3DS alpha - update 10\n\nCircle Pad: move\nA: attack     B: special\nX / Y: jump\nL / R: shield\nZL / ZR: grab (New 3DS)\nC Stick: directional attack\nSTART: confirm / Training menu\nSELECT: Homebrew Launcher\n\nUCF 0.84 / all fighters unlocked\n4 stocks / 8 minutes / items off\nVersus pause off (change in Rules)\nSettings reset on app restart.\n");
-#endif
-    mp_native_log("Melee ARM BE8 engine startup - shield color update 10\n");
+    mp_native_log("Melee ARM BE8 engine startup - bottom screen update 11\n");
     mp_native_log("All-stage performance: low-detail fighters, projected shadows off, conservative off-screen mesh rejection; audited Diet scenery where available\n");
     if(is_new)mp_native_log("New 3DS family detected; fast CPU and L2 cache requested\n");
     u32 actual_layout[3]={(u32)mp_image_text_start,(u32)mp_image_rodata_start,(u32)mp_image_data_start};
@@ -170,6 +174,7 @@ int main(void)
     mp_native_log("Image layout verified; BE8 relocations prepared at build time\n");
     flush_log();
     if(!mp_renderer_init()){mp_native_log("GPU initialization failed\n");mp_log_close();gfxExit();return 1;}
+    mp_native_bottom_init();
     mp_native_cpu_init(is_new);
     extern void mp_native_files_init(void);mp_native_files_init();
     if(is_new){extern unsigned __ctru_heap_size;extern unsigned mp_native_cache_menus(unsigned);
@@ -178,7 +183,7 @@ int main(void)
         /* Retain the existing non-cache reserve when assigning more heap to
          * decoded geometry. The known title/menu sources still fit fully. */
         unsigned reserve=50*1024*1024+geometry,budget=__ctru_heap_size>reserve?__ctru_heap_size-reserve:0;
-        char text[160];printf("Preparing menus...\n");
+        char text[160];
         unsigned cached=mp_native_cache_menus(budget);
         snprintf(text,sizeof(text),"Menu sources cached=%u bytes; ordinary heap=%u bytes, reserve=%u\n",cached,__ctru_heap_size,reserve);mp_native_log(text);flush_log();
         snprintf(text,sizeof(text),"Decoded geometry cache capacity=%u bytes\n",geometry);mp_native_log(text);
@@ -223,5 +228,5 @@ cleanup:
     {extern void mp_native_audio_exit(void);mp_native_audio_exit();}
     {extern void mp_native_files_exit(void);mp_native_files_exit();}
     mp_native_log("Game application exit\n");mp_log_close();
-    free(model);mp_renderer_exit();gfxExit();return 0;
+    free(model);mp_native_bottom_exit();mp_renderer_exit();gfxExit();return 0;
 }

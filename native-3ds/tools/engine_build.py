@@ -40,6 +40,9 @@ def compile_engine(jobs=6,sanitize=False):
     sources = [p for p in sources if p.name != 'be_probe.c']
     headers = b''.join(p.read_bytes() for base in ('port/include','port/engine','build/compat')
                       for p in sorted((ROOT/base).rglob('*.h')))
+    # The companion screen's wire schema is shared with the native SDK side.
+    # Schema edits must invalidate BE8 objects as well as native UI objects.
+    headers += (ROOT/'port/3ds/bottom_state.h').read_bytes()
     basehash = hashlib.sha256(json.dumps(flags).encode()+headers+(ROOT/'tools/engine_encoding.py').read_bytes()).digest()
     def compile_one(src):
         from engine_overlays import adapt

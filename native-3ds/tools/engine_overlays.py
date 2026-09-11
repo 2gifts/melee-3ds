@@ -93,6 +93,24 @@ def adapt(source):
         block=block.replace(old,'''    extern void mp_display_ribbon_callback(HSD_GObj*, int);
     GObj_SetupGXLink(gobj, mp_display_ribbon_callback, 4, 0x80);''')
         changed=changed[:start]+block+changed[end:]
+        changed+='''
+/* Read only persistent CSS door data; no animated portrait object escapes. */
+unsigned mp_bottom_css(unsigned slot)
+{
+    CSSDoor* d;
+    unsigned character, color, count = mnCharSel_804D6CF5;
+    /* Training reports one human door, but also exposes the CPU door. */
+    if (mnCharSel_804D6CB0 && mnCharSel_804D6CB0->match_type == TRAINING_MODE) count = 2;
+    if (slot >= 4 || slot >= count) return 3;
+    d = &mnCharSel_803F0DFC.doors[slot];
+    character = d->sel_icon < 25 ? icons[d->sel_icon].char_kind : 255;
+    color = slot;
+    if (mnCharSel_804D6CB0 && mnCharSel_804D6CB0->match_type != TRAINING_MODE &&
+        mnCharSel_804D6CB0->vs.start.rules.is_teams && d->team < 3)
+        color = d->team == 2 ? 3 : d->team;
+    return d->p_kind | (character << 8) | (d->costume << 16) | (color << 24);
+}
+'''
         out=ROOT/'build/overlays'/source.name;out.parent.mkdir(parents=True,exist_ok=True)
         out.write_text(changed,encoding='utf-8');return out
     if source.name in ('gricemt.c','itkyasarinegg.c'):
@@ -180,6 +198,10 @@ def adapt(source):
         old='GXInvalidateTexAll();'
         assert changed.count(old)==1,source.name
         changed='extern void mp_gx_frame_texture_visibility(void);\n'+changed.replace(old,'mp_gx_frame_texture_visibility();')
+    if source.name=='gm_1A45.c':
+        old='    gm_804D6720 = info;'
+        assert changed.count(old)==1
+        changed=changed.replace(old, old+'\n    extern void mp_bottom_scene_begin(unsigned);\n    mp_bottom_scene_begin(info ? info->scene_kind : 255);')
     if source.name=='lbarq.c':
         # Hardware DMA interrupts complete this empty busy wait on GameCube.
         # Our transfers are cooperative. Restoring interrupts drains only one
