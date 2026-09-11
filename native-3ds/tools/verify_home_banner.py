@@ -71,6 +71,10 @@ def verify_banner(data):
     skel = r.ptr(model+224)
     assert r.u32(skel) == 0x2000000
     bones = r.dictionary(skel+24)
+    # Authoring budget for this four-object scene, not a claimed CGFX limit.
+    # Package 2 duplicated transforms for 75 material draws (78 bones).
+    assert set(bones) == {'Scene root', 'Melee diorama', 'Final Destination',
+                          'Fox 1', 'Fox 2', 'Melee logo', 'Banner Camera'}, 'Unexpected banner skeleton'
     bone_ids = {}
     for name, bone in bones.items():
         assert r.string(bone) == name
@@ -105,10 +109,12 @@ def verify_banner(data):
             count = r.u32(attr+20)
             stream = r.ptr(attr+24)
             fmt, components = r.read('II', attr+36)
-            assert fmt in (0x1400,0x1401,0x1402,0x1406) and 1 <= components <= 4
+            assert fmt == 0x1406, 'Use the tested float vertex profile'
+            assert components == {0:3,1:3,3:3,4:2}[usage]
             unit = {0x1400:1,0x1401:1,0x1402:2,0x1406:4}[fmt]
             assert count % (components*unit) == 0 and stream+count <= len(data)
-            assert math.isfinite(r.read('f', attr+44)[0]) and r.read('f', attr+44)[0] > 0
+            assert r.read('f', attr+44)[0] == 1
+            assert all(math.isfinite(v) for v in r.read(f'{count//4}f', stream))
             counts.append(count//(components*unit))
         assert set(usages) == {0,1,3,4} and len(set(counts)) == 1
         for primitive_set in r.array(shape+44):
@@ -134,7 +140,7 @@ def verify_banner(data):
     frames = r.read('f', animation+20)[0]
     assert 0 < frames <= 600
     members = r.dictionary(animation+24)
-    assert members
+    assert set(members) == {'Fox 1','Fox 2'}, 'Animate each complete fighter once'
     for name, member in members.items():
         assert name in bindings and r.string(member+4) == name, 'Animation must target a mesh node'
         assert r.u32(member+16) == 5, 'Only ordinary Transform animation is supported'

@@ -4,12 +4,13 @@ import struct
 from pathlib import Path
 
 from verify_home_banner import Reader, verify_banner
+from verify_cia import verify_sound
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('banner', nargs='?', type=Path, default=Path('build/home-menu/art/banner.cgfx'))
-    ap.add_argument('--previous', type=Path, help='Optional archived soft-skinned banner regression fixture')
+    ap.add_argument('--previous', type=Path, help='Optional archived unsafe banner regression fixture')
     args = ap.parse_args()
     data = args.banner.read_bytes()
     verify_banner(data)
@@ -31,6 +32,8 @@ def main():
         ('baked animation', member+16, 8),
         ('logo transform', bones['Melee logo']+56, 0x3f800000),
         ('dangling shape array', model+200, 0x7fffffff),
+        ('quantized vertex stream', attribute+36, 0x1402),
+        ('nonfinite vertex', r.ptr(attribute+24), 0x7fc00000),
     ]
     for name, offset, value in cases:
         bad = bytearray(data)
@@ -48,6 +51,23 @@ def main():
             print(f'PASS: rejects previous package: {error}')
         else:
             raise AssertionError('Previous unsafe banner was accepted')
+    packed=args.banner.with_name('banner.bin')
+    wav=args.banner.with_name('announcer.wav')
+    if packed.exists() and wav.exists():
+        banner=packed.read_bytes()
+        sound=banner[struct.unpack_from('<I',banner,0x84)[0]:]
+        verify_sound(sound,wav)
+        info=struct.unpack_from('<I',sound,24)[0]
+        entry=info+28+struct.unpack_from('<I',sound,info+36)[0]
+        for name,off in [('sound size',12),('sample count',info+20),('channel pointer',entry+4)]:
+            bad=bytearray(sound)
+            struct.pack_into('<I',bad,off,0x7fffffff)
+            try:
+                verify_sound(bad,wav)
+            except (AssertionError,struct.error):
+                print(f'PASS: rejects invalid {name}')
+            else:
+                raise AssertionError(f'Accepted invalid {name}')
     print('PASS: current serialized banner')
 
 

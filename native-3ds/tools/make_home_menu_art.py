@@ -54,16 +54,23 @@ class Scene:
             mat['pbrMetallicRoughness']['baseColorTexture']=dict(index=len(self.textures)-1)
         if alpha:mat.update(alphaMode='MASK',alphaCutoff=.3)
         index=len(self.materials);self.materials.append(mat);self.texture_ids[key]=index;return index
-    def mesh(self,name,pos,norm,uv,color,ix,material,joints=None,weights=None,skin=None):
+    def mesh(self,name,pos,norm,uv,color,ix,material,joints=None,weights=None,skin=None,node=None):
         # Collapse repeated GX vertices before encoding seven attribute streams.
         arrays=[np.asarray(x) for x in (pos,norm,uv,color)]
         if joints is not None:arrays += [np.asarray(joints),np.asarray(weights)]
         _,unique,remap=np.unique(np.concatenate(arrays,axis=1),axis=0,return_index=True,return_inverse=True)
         pos,norm,uv,color=[x[unique] for x in arrays[:4]];ix=remap[np.asarray(ix)]
         if joints is not None:joints,weights=[x[unique] for x in arrays[4:]]
-        attr=dict(POSITION=self.data(pos,'VEC3'),NORMAL=self.data(norm,'VEC3'),TEXCOORD_0=self.data(uv,'VEC2'),COLOR_0=self.data(color,'VEC4'))
+        # Match the float RGB vertex streams of the working SM64 banner.
+        # Transparency belongs to the texture/material, not a vertex alpha.
+        assert np.allclose(color[:,3],1), 'Vertex alpha needs explicit material handling'
+        attr=dict(POSITION=self.data(pos,'VEC3'),NORMAL=self.data(norm,'VEC3'),TEXCOORD_0=self.data(uv,'VEC2'),COLOR_0=self.data(color[:,:3],'VEC3'))
         if joints is not None:attr.update(JOINTS_0=self.data(joints,'VEC4',5121),WEIGHTS_0=self.data(weights,'VEC4'))
-        mesh=len(self.meshes);self.meshes.append(dict(name=name,primitives=[dict(attributes=attr,indices=self.data(ix,'SCALAR',5123),material=material,mode=4)]))
+        primitive=dict(attributes=attr,indices=self.data(ix,'SCALAR',5123),material=material,mode=4)
+        if node is not None:
+            self.meshes[self.nodes[node]['mesh']]['primitives'].append(primitive)
+            return node
+        mesh=len(self.meshes);self.meshes.append(dict(name=name,primitives=[primitive]))
         node=len(self.nodes);self.nodes.append(dict(name=name,mesh=mesh))
         if skin is not None:self.nodes[node]['skin']=skin
         self.nodes[0]['children'].append(node);return node
@@ -145,18 +152,19 @@ def build_scene():
         # Texture materials get restrained ambient/directional illumination
         # from the HOME Menu, rather than baking a view-dependent highlight.
         return np.clip(c,0,1)
+    stage_node=None
     for i,d in enumerate(stage0):
         p=d['positions'];norm=d['v'][:,10:13]@np.linalg.inv(matrix(d)[:3,:3]);norm/=np.maximum(1e-6,np.linalg.norm(norm,axis=1))[:,None]
         mi=material(d,captures[0][1]);s.materials[mi]['doubleSided']=True
         # The gameplay diet material omits GX multipass surface effects.
         # Give the original platform a compact purple-metal banner finish.
         tint=([.32,.24,.78,1] if i==0 else [.10,.07,.20,1] if i==1 else [.22,.16,.34,1]) if not d['texture'] else [.45,.44,.95,1]
-        s.mesh(f'Final Destination {i}',p,norm,d['v'][:,8:10],np.tile(tint,(len(p),1)),d['indices'],mi)
+        stage_node=s.mesh('Final Destination',p,norm,d['v'][:,8:10],np.tile(tint,(len(p),1)),d['indices'],mi,node=stage_node)
     # Fill the original top surface beneath its animated GX overlay. The
     # game renders this base through its CPU path, outside the GPU export.
     d=stage0[-1];mi=s.material(name='Platform surface');s.materials[mi]['doubleSided']=True
     p=d['positions'].copy();p[:,1]-=.05
-    s.mesh('Final Destination floor',p,[[0,1,0]]*len(p),d['v'][:,8:10],np.tile([.075,.025,.16,1],(len(p),1)),d['indices'],mi)
+    s.mesh('Final Destination',p,[[0,1,0]]*len(p),d['v'][:,8:10],np.tile([.075,.025,.16,1],(len(p),1)),d['indices'],mi,node=stage_node)
     # Bake complete captured poses, then animate each material part with the
     # same rigid transform. Physical HOME Menu cannot safely animate soft
     # skins. Keeping the whole fighter rigid avoids cracks between envelopes.
@@ -176,6 +184,9 @@ def build_scene():
         for dx,dy in zip(motion,hops):
             transform=np.eye(4);transform[:3,3]=desired+[dx,dy,0]
             transforms.append(transform)
+        # One transform/animation per fighter, regardless of material count.
+        # Creating a bone for each draw needlessly balloons HOME's matrices.
+        node=None
         for j,d in enumerate(parts):
             p=(normalize@np.c_[d['positions'],np.ones(len(d['v']))].T).T[:,:3]
             p=(p-foot)*2.3
@@ -184,9 +195,9 @@ def build_scene():
                 mask=d['v'][:,13].astype(int)==row
                 norm[mask]=d['v'][mask,10:13]@np.linalg.inv((normalize@matrix(d,int(row)))[:3,:3])
             norm/=np.maximum(1e-6,np.linalg.norm(norm,axis=1))[:,None]
-            node=s.mesh(f'Fox {player+1} part {j}',p,norm,d['v'][:,8:10],color(d),d['indices'],material(d,captures[frame][1]))
-            s.nodes[node]['translation']=desired.tolist()
-            s.animation(node,times,transforms)
+            node=s.mesh(f'Fox {player+1}',p,norm,d['v'][:,8:10],color(d),d['indices'],material(d,captures[frame][1]),node=node)
+        s.nodes[node]['translation']=desired.tolist()
+        s.animation(node,times,transforms)
     # Logo sits above and slightly in front of the stage. Put it outside the
     # scaled diorama hierarchy so its original aspect ratio stays exact.
     im=Image.open(OUT/'logo.png');mi=s.material(im,'Logo',True)

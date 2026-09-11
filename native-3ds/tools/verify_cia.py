@@ -3,6 +3,7 @@ import argparse
 import hashlib
 import json
 import struct
+import wave
 from pathlib import Path
 
 from be8_image import ElfImage
@@ -85,6 +86,44 @@ def lz11(data):
     return bytes(out)
 
 
+def verify_sound(data, wav_path):
+    """Check CWAV offsets and compare both planar PCM channels to the WAV."""
+    assert data[:4] == b'CWAV'
+    assert struct.unpack_from('<HH', data, 4) == (0xfeff, 0x40)
+    assert u32(data,8) == 0x02010000 and u32(data,12) == len(data)
+    assert struct.unpack_from('<HH', data,16) == (2,0)
+    blocks=[]
+    for off,kind,magic in ((20,0x7000,b'INFO'),(32,0x7001,b'DATA')):
+        ref,padding,start,size=struct.unpack_from('<HHII',data,off)
+        assert ref == kind and padding == 0 and start % 32 == 0
+        assert 0x40 <= start < start+size <= len(data)
+        assert data[start:start+4] == magic and u32(data,start+4) == size
+        blocks.append((start,size))
+    (info,info_size),(samples,samples_size)=blocks
+    assert info+info_size == samples and samples+samples_size == len(data)
+    assert data[info+8:info+12] == bytes((1,0,0,0)), 'Expected nonlooping PCM16'
+    rate,loop_start,frames,reserved,channels=struct.unpack_from('<5I',data,info+12)
+    assert loop_start == reserved == 0 and channels == 2 and 0 < frames <= rate*3
+    with wave.open(str(wav_path),'rb') as wav:
+        assert (wav.getframerate(),wav.getnframes(),wav.getnchannels(),wav.getsampwidth()) == (rate,frames,channels,2)
+        pcm=wav.readframes(frames)
+    end=samples+32
+    for channel in range(channels):
+        kind,pad,rel=struct.unpack_from('<HHI',data,info+32+channel*8)
+        entry=info+28+rel
+        assert kind == 0x7100 and pad == 0 and info+48 <= entry <= info+info_size-20
+        kind,pad,rel=struct.unpack_from('<HHI',data,entry)
+        assert kind == 0x1f00 and pad == 0
+        assert struct.unpack_from('<HHII',data,entry+8) == (0,0,0xffffffff,0)
+        start=samples+8+rel
+        assert start == end and start+frames*2 <= len(data)
+        expected=b''.join(pcm[i:i+2] for i in range(channel*2,len(pcm),4))
+        assert data[start:start+frames*2] == expected, 'CWAV PCM changed during packaging'
+        end=start+frames*2
+    assert end == len(data)
+    return dict(channels=channels,rate=rate,frames=frames,pcm_matches_source=True)
+
+
 def verify(path, elf_path, art):
     raw = path.read_bytes()
     hdr, _, _, cert, ticket_size, tmd_size, meta_size, size = struct.unpack_from('<IHHIIIIQ', raw)
@@ -147,11 +186,12 @@ def verify(path, elf_path, art):
     assert cgfx[:4] == b'CGFX' and len(cgfx) <= 0x80000
     banner_validation = verify_banner(cgfx)
     sound = u32(banner, 0x84)
-    assert banner[sound:sound+4] == b'CWAV'
+    assert sound % 16 == 0 and 0x88 < sound < len(banner)
+    sound_validation = verify_sound(banner[sound:], art/'announcer.wav')
     return dict(title_id=f'{TITLE_ID:016X}', title_version=int.from_bytes(tmd[0x1dc:0x1de], 'big'), cia_bytes=len(raw),
                 sha256=hashlib.sha256(raw).hexdigest(),
                 code_bytes_verified=len(code), elf_sha256=hashlib.sha256(image.data).hexdigest(),
-                cgfx_bytes=len(cgfx), banner_validation=banner_validation,
+                cgfx_bytes=len(cgfx), banner_validation=banner_validation, sound_validation=sound_validation,
                 smdh_flags=f'{u32(icon, 0x2028):08x}', native_app=True, new_3ds_only=True,
                 memory_mode='124MB', cpu_mhz=804, l2_cache=True,
                 services=[s for s in services if s], embedded_game_romfs=False)

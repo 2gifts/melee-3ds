@@ -28,19 +28,22 @@ same application mode without stereoscopic output; it has not been tested on
 physical hardware. Original 3DS/2DS models are excluded by the package metadata.
 Audio still needs the DSP support from the existing homebrew setup.
 
-### Unwrapping crash in the first CIA
+### HOME banner compatibility
 
-HOME package 1 could crash HOME Menu while unwrapping the icon, before the
-game started. Package 2 replaces the soft-skinned banner with rigid mesh-node
-animation, fixes the mesh-to-bone names, separates the billboard logo from the
-scaled stage, and sets the extended-banner SMDH flag. The title ID is unchanged;
-FBI can overwrite the old installation. The title version increases from 0 to 1.
+The first CIA crashed during unwrapping; package 2 still froze HOME Menu.
+Package 3 groups material parts under their actual moving objects: seven bones
+and two animation tracks replace 78 bones and 62 tracks. It retains all 1,702
+triangles and the same fighter motion, and uses the float RGB vertex streams
+found in the working reference banners. The disc icon and announcer clip stay
+the same. CIA title version 2 replaces version 1 using the same title ID.
 
-The returned dump identifies US HOME Menu (`0004003000008F02`) as the crashed
-process. This diagnosis and the documented hardware limitation motivate the
-fix; the exact HOME implementation is unavailable for symbolication. Binary
-checks reject the previous banner and verify the replacement's rigid structure.
-**Package 2 still needs physical HOME Menu validation.**
+The earlier dump belongs to US HOME Menu (`0004003000008F02`). Analysis of the
+matching executable places the fault in a heap-list traversal, consistent with
+prior memory corruption. No new dump accompanied the package 2 freeze. Reducing
+the transform workload addresses a major difference from the working banners;
+the exact corrupting instruction has not been isolated. The validator now
+rejects both earlier banner layouts. **Physical validation of package 3 is
+still required; structural checks alone cannot guarantee HOME compatibility.**
 
 ## Local authoring and packaging
 
@@ -94,8 +97,8 @@ require the explicit `--development` option and must not be copied to consoles.
 - Native executable, 124 MB application mode, 804 MHz CPU request, L2 enabled.
 - No embedded game filesystem. Both launch methods read `/3ds/melee/`.
 - Banner: 1,702 triangles, a looping 3.2-second rigid animation, and a
-  437,384-byte CGFX under HOME's 524,288-byte limit. Mesh deduplication and
-  compact attribute formats apply only to this banner.
+  439,032-byte CGFX under HOME's 524,288-byte limit. Material parts share one
+  transform per object, with float RGB vertex streams and two animation tracks.
 - Sound: original English intro bank `nr_title.ssm`, sample 1 (game sound ID
   20001), final word isolated and shortened without changing pitch to fit
   HOME's audio limit. Output: stereo, 32 kHz, approximately 2.92 seconds.
@@ -105,6 +108,9 @@ require the explicit `--development` option and must not be copied to consoles.
 - Serialized CGFX verification follows relative pointers, validates mesh/bone/
   animation bindings and curve values, checks triangle indices and rejects
   soft skins, bone-weight/index streams and non-identity billboard transforms.
+  It enforces this scene's seven-bone budget and checks finite float attributes.
+  The sound verifier checks both CWAV channel pointers, block sizes and sample
+  bounds, and compares every PCM sample against the local source WAV.
   Run `python tools/test_home_banner.py` after generating the banner to check
   that malformed variants are rejected. This does not render HOME Menu.
 - Local validation includes CIA installation and installed-executable startup
