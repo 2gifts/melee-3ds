@@ -270,7 +270,7 @@ static void menu_page(const MPBottomState* s){
 static void guide_page(void){
     header("CONTROLS","NEW 3DS");
     static const char* labels[]={"CIRCLE PAD","A / B","X / Y","L / R","ZL / ZR","C STICK","START","SELECT"};
-    static const char* actions[]={"MOVE","ATTACK / SPECIAL","JUMP","SHIELD","GRAB","DIRECTIONAL ATTACK","CONFIRM / PAUSE","HOMEBREW LAUNCHER"};
+    static const char* actions[]={"MOVE","ATTACK / SPECIAL","JUMP","SHIELD","GRAB","DIRECTIONAL ATTACK","CONFIRM / PAUSE","EXIT GAME"};
     for(int i=0;i<8;++i){int y=39+i*19;text(15,y,labels[i],13,gold);fit(122,y,actions[i],13,187,ink);}
     text(15,195,"THE CONTROLS GUIDE DOES NOT PAUSE PLAY",11,muted);
 }

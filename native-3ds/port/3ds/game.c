@@ -145,7 +145,7 @@ void mp_native_panic(const char*s){mp_native_log(s);mp_renderer_end();mp_log_flu
 #ifdef MP_SMOKE_TEST
     capture_frame();
 #else
-    consoleInit(GFX_BOTTOM,NULL);consoleClear();printf("Melee stopped\n\n%s\n\nSELECT: return to Homebrew Launcher\nDetails: /3ds/melee/game.log\n",s);
+    consoleInit(GFX_BOTTOM,NULL);consoleClear();printf("Melee stopped\n\n%s\n\nSELECT: exit game\nDetails: /3ds/melee/game.log\n",s);
 #endif
     longjmp(failure_return,1);}
 static void *read_asset(const char *name,unsigned *size)

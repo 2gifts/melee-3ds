@@ -9,6 +9,7 @@ from engine_build import compile_engine
 def main():
     ap=argparse.ArgumentParser(description=__doc__)
     ap.add_argument('--smoke',action='store_true')
+    ap.add_argument('--banner-capture',action='store_true',help='Include offline banner geometry export (development builds only)')
     ap.add_argument('--audio-hle',action='store_true',help='Exercise NDSP using Azahar HLE without DSP firmware (smoke builds only)')
     ap.add_argument('--release',action='store_true',help='Build a separate homebrew package with physical controls')
     ap.add_argument('--skip-engine',action='store_true')
@@ -16,6 +17,7 @@ def main():
     ap.add_argument('--boot',action='store_true',help='Enter Melee original main and scene loop')
     ap.add_argument('--output',type=Path,help='Alternate 3DSX destination, preserving an existing hardware test package')
     args=ap.parse_args()
+    if args.banner_capture and not args.smoke:ap.error('--banner-capture requires --smoke')
     if args.audio_hle and not args.smoke:ap.error('--audio-hle requires --smoke; it cannot run on hardware')
     if args.release:
         if args.smoke:ap.error('--release and --smoke are mutually exclusive')
@@ -52,7 +54,7 @@ def main():
     for src in (ROOT/'port/3ds/game.c',ROOT/'port/3ds/bottom.c',ROOT/'port/3ds/bottom_draw.c',ROOT/'port/3ds/renderer.c',ROOT/'port/3ds/citro3d_fix.c',ROOT/'port/3ds/services.c',ROOT/'port/3ds/cpu_speed.c',ROOT/'port/3ds/file_io.c',ROOT/'port/3ds/audio.c',ROOT/'port/3ds/command_cache.c',ROOT/'port/3ds/log_io.c',ROOT/'port/3ds/game_bridge.S',shader_c):
         obj=out/(src.stem+'.o')
         run([cc,*arch,*common_flags(),'-fshort-enums','-D__3DS__',
-             *(['-DMP_SMOKE_TEST'] if args.smoke else []),*(['-DMP_AUDIO_HLE_TEST'] if args.audio_hle else []),*(['-DMP_BOOTMODE'] if args.boot else []),*includes,'-c',src,'-o',obj])
+             *(['-DMP_SMOKE_TEST'] if args.smoke else []),*(['-DMP_BANNER_CAPTURE'] if args.banner_capture else []),*(['-DMP_AUDIO_HLE_TEST'] if args.audio_hle else []),*(['-DMP_BOOTMODE'] if args.boot else []),*includes,'-c',src,'-o',obj])
         objects.append(obj)
     libs=arm/'arm-none-eabi/lib/armv6k/fpu'
     gcc=sorted((arm/'lib/gcc/arm-none-eabi').iterdir())[-1]/'armv6k/fpu'

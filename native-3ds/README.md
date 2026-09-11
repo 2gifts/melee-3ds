@@ -6,6 +6,8 @@ A work-in-progress native ARM port of Super Smash Bros. Melee, built from the [d
 
 Update 15 overlaps game simulation with GPU rendering, uses shorter material programs, uploads only referenced bone matrices, and shares overlapping geometry snapshots. It also fixes a reproduced freeze in Kirby’s copied-model visibility. Stereo rendering and casual-play regressions passed in Azahar; the 60 FPS competitive and 30 FPS casual targets still require physical-console validation. [Changes and validation](docs/STEREO_PERFORMANCE_UPDATE_15.md).
 
+**Standalone HOME Menu packaging is now available.** A locally built CIA installs through FBI and adds a Melee disc icon, an animated 3D Final Destination banner with two Foxes, and the intro announcer call. It reuses the existing SD game files. [Installation and local banner authoring](docs/HOME_MENU.md).
+
 ## What works
 
 - **Touch-screen match dashboard**, with FPS hidden by default. Tap FPS to toggle it, VIEW to change projection, or CONTROLS for the guide. The guide does not pause gameplay.
@@ -52,7 +54,7 @@ SD:/3ds/melee/files/...
 SD:/3ds/melee/visuals/...    (optional)
 ```
 
-Launch **melee** from Homebrew Launcher. Audio uses libctru's normal DSP discovery through the launcher or your existing `SD:/3ds/dspfirm.cdc`. No firmware is bundled. A standalone HOME Menu app/icon is planned; this milestone uses `.3dsx`.
+Launch **melee** from Homebrew Launcher. Audio uses libctru's normal DSP discovery through the launcher or your existing `SD:/3ds/dspfirm.cdc`. No firmware is bundled. A locally built CIA can also launch from HOME; see [HOME Menu installation](docs/HOME_MENU.md).
 
 For subsequent updates, replace the executable and any deliberately changed optional visuals; keep the original `files` directory. Back up the previous executable before replacing it.
 
@@ -74,7 +76,7 @@ Default Versus rules are 4 stocks, 8 minutes, items off, team attack on and paus
 | Hold ZL + ZR, press SELECT | Toggle 4:3 / expanded view |
 | 3D slider | Depth; fully down selects 2D |
 | Touch FPS / VIEW / CONTROLS | Toggle rendered FPS, projection, or the control guide |
-| SELECT | Return to Homebrew Launcher |
+| SELECT | Exit to the launcher or HOME, depending on how the game was opened |
 
 ## Optional Diet scenery
 

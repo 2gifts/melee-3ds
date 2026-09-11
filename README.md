@@ -6,6 +6,8 @@ The aim is to make Melee enjoyable on a handheld while keeping its original game
 
 Update 15 overlaps game simulation with GPU rendering, uses shorter material programs, uploads only referenced bone matrices, and shares overlapping geometry snapshots. It also fixes a reproduced freeze in Kirby’s copied-model visibility. Stereo rendering and casual-play regressions passed in Azahar; the 60 FPS competitive and 30 FPS casual targets still require physical-console validation. [Changes and validation](native-3ds/docs/STEREO_PERFORMANCE_UPDATE_15.md).
 
+**Standalone HOME Menu packaging is now available.** A locally built CIA installs through FBI and adds a Melee disc icon, an animated 3D Final Destination banner with two Foxes, and the intro announcer call. It reuses the existing SD game files. [Installation and local banner authoring](native-3ds/docs/HOME_MENU.md).
+
 ## Project features
 
 - **Touch-screen match dashboard**, with FPS hidden by default. Tap FPS to toggle it, VIEW to change projection, or CONTROLS for the guide. The guide does not pause gameplay.
@@ -62,7 +64,7 @@ Copy the whole generated package for the first installation; the executable alon
 
 ### 3. Launch and play
 
-Open **Homebrew Launcher** using your existing homebrew setup and select **melee**. This version launches as a `.3dsx` app; a standalone HOME Menu app with its own icon is planned.
+Open **Homebrew Launcher** using your existing homebrew setup and select **melee**. Alternatively, install a locally built CIA through FBI to launch from HOME. See the [HOME Menu instructions](native-3ds/docs/HOME_MENU.md).
 
 At the title screen, press START. Choose **VS Mode → Melee**, select your fighter and a CPU opponent, press START, and pick a stage. For practice, choose **1-P Mode → Training**.
 
@@ -82,7 +84,7 @@ Audio uses the DSP support supplied by your homebrew setup or your existing `SD:
 | 3D slider | Adjust depth; fully down selects 2D |
 | Hold ZL + ZR, then press SELECT | Toggle 4:3 / expanded view |
 | Touch FPS / VIEW / CONTROLS | Toggle rendered FPS, projection, or the control guide |
-| SELECT | Return to Homebrew Launcher |
+| SELECT | Exit to the launcher or HOME, depending on how the game was opened |
 
 Versus defaults to **4 stocks, 8 minutes, items off, team attack on and pause on**. Rules can be changed in the menus for the current session.
 

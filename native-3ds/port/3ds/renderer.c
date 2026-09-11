@@ -439,6 +439,9 @@ static u32 decode(const Draw*d,unsigned x,unsigned y)
     default:{char text[160];snprintf(text,sizeof(text),"Unsupported GX texture format %u at %08x, size %ux%u\n",d->format,d->image,d->w,d->h);mp_native_panic(text);return 0;}}
 }
 static unsigned texture_bucket(const Texture*t){return mp_texture_bucket(t->image,t->palette,t->format,t->w,t->h);}
+#ifdef MP_BANNER_CAPTURE
+#include "banner_capture.h"
+#endif
 static int texture_matches(const Texture*t,const Draw*d){return !t->retired&&t->image==d->image&&t->palette==d->palette&&t->format==d->format&&t->palfmt==d->palfmt&&t->palcount==d->palcount&&t->w==d->w&&t->h==d->h;}
 #ifdef MP_SMOKE_TEST
 static Texture*texture_lookup_linear(const Draw*d){for(unsigned i=0;i<texture_count;++i)if(texture_matches(&textures[i],d))return &textures[i];return NULL;}
@@ -610,6 +613,9 @@ static void renderer_begin(void)
      * for the previous GPU queue before recycling any streaming storage. */
     if(frame_active)return;
     frame_pending=0;
+#ifdef MP_BANNER_CAPTURE
+    banner_capture_begin();
+#endif
 #ifdef MP_SMOKE_TEST
     MP_AUDIO_TRACE(2,C3D_FrameBegin(gpu_vblank_wait?C3D_FRAME_SYNCDRAW:0));
 #else
@@ -677,6 +683,9 @@ void mp_native_submit(const Vertex*be,unsigned count,const Draw*state)
 {
     renderer_begin();
     Draw d;for(unsigned i=0;i<sizeof(d)/4;++i)((u32*)&d)[i]=read32((const u32*)state+i);
+#ifdef MP_BANNER_CAPTURE
+    banner_capture_draw(be,count,&d);
+#endif
     if(d.points&&!d.point_size)return;
     if(d.cull==3)return;
     unsigned width=d.screen_width==320?320:400;
@@ -865,6 +874,9 @@ void mp_native_submit(const Vertex*be,unsigned count,const Draw*state)
 #include "shader_verify.h"
 #endif
 void mp_renderer_end(void){if(frame_pending)renderer_begin();if(!frame_active)return;
+#ifdef MP_BANNER_CAPTURE
+    banner_capture_end();
+#endif
 #ifdef MP_SMOKE_TEST
     if(shader_verify)verify_shader_paths();
     if(stereo_verify)verify_stereo();
