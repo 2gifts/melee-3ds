@@ -2,9 +2,9 @@
 
 A work-in-progress native ARM port of Super Smash Bros. Melee, built from the [doldecomp/melee](https://github.com/doldecomp/melee) decompilation. This is native game code with a 3DS graphics/audio/platform layer, not a Dolphin emulator build.
 
-**Current milestone: update 12. Playable on a New Nintendo 3DS, with native stereoscopic 3D. Performance varies substantially; stable 60 FPS has not been achieved.** Full matches have been played on a physical New 3DS. This remains an experimental community development build.
+**Current milestone: update 13. Playable on a New Nintendo 3DS, with native stereoscopic 3D. Performance varies substantially; stable 60 FPS has not been achieved.** Full matches have been played on a physical New 3DS. This remains an experimental community development build.
 
-Update 12 fixes menu stack corruption, refines bottom-screen guidance, extends proper widescreen to menu models and enables Start-to-pause by default. The Melee-style bottom screen shows original portraits, stocks and damage for up to four fighters. [Changes and validation](docs/MENU_REFINEMENT_UPDATE_12.md).
+Update 13 fixes an Event Match crash, the Classic trophy-bonus loading loop and related Classic encounter layout errors. It also reduces shared geometry-cache work throughout gameplay and menus. Nine Classic encounter fixtures passed emulator checks; the update still needs physical console performance results. [Changes and validation](docs/CLASSIC_STABILITY_UPDATE_13.md).
 
 ## What works
 

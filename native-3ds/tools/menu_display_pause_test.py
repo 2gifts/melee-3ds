@@ -19,7 +19,8 @@ def clock_state():
         finally:packet(sock,'c');packet(sock,'D');receive(sock)
 
 def main():
-    ap=argparse.ArgumentParser();ap.add_argument('--fresh',action='store_true');args=ap.parse_args()
+    ap=argparse.ArgumentParser();ap.add_argument('--fresh',action='store_true')
+    ap.add_argument('--output',default='build/update12-qa');args=ap.parse_args()
     set_word('mp_test_frame_limit',0);set_word('mp_test_stereo_slider',0);select.observe((0,1,0,0))
     if args.fresh:
         for _ in range(60):
@@ -28,6 +29,7 @@ def main():
             select.act(0x100 if bottom.snapshot()['scene']==42 else 0x1000,2);select.act(frames=20)
         else:raise AssertionError(state)
     from menu_refinement_test import enter,back
+    bottom.OUT=bottom.ROOT/args.output;bottom.OUT.mkdir(parents=True,exist_ok=True)
     enter(0,1);bottom.capture('1p-final');back(0);bottom.capture('main-final')
     state=select.open_versus(select.observe())
     for slot,icon in [(0,1),(1,2)]:state=bottom.choose(state,slot,icon)

@@ -103,7 +103,7 @@ typedef struct {
 typedef struct GeometryChunk {struct GeometryChunk*next;unsigned count,indices,bytes,id,points;MPGeometryBounds bounds;} GeometryChunk;
 volatile unsigned mp_geometry_cull=1;
 unsigned mp_geometry_cull_checks,mp_geometry_cull_draws,mp_geometry_cull_vertices;
-typedef struct GeometrySource {struct GeometrySource*next;const u8*source;u8*copy;unsigned size,refs,epoch,changed;} GeometrySource;
+typedef struct GeometrySource {struct GeometrySource*next;const u8*source;u8*copy;unsigned size,refs,epoch,changed;const void*base;} GeometrySource;
 typedef struct {
     const void*list;unsigned bytes,stamp;GeometryKey key;
     GeometrySource*source[VERTEX_FIELDS+1];GeometryChunk*first,*last;
@@ -117,17 +117,27 @@ static unsigned geometry_bytes,geometry_clock,geometry_hits,geometry_misses;
 static GeometrySource*geometry_sources[1024];
 static unsigned geometry_epoch=1;
 unsigned geometry_source_compares,geometry_source_reuses,geometry_source_bytes;
+/* Multiple meshes index overlapping parts of the same vertex array. Reuse
+ * an already captured containing range, still comparing every source byte
+ * after invalidation. A changed shared range invalidates all its users. */
+volatile unsigned geometry_range_share=1;
+static unsigned geometry_range_previous=1;
+unsigned geometry_range_shares;
+volatile unsigned geometry_key_block=1;
 volatile unsigned geometry_source_compare_all;
 static volatile unsigned geometry_block_compare=1,geometry_compare_validate;
 unsigned geometry_compare_checks;
 extern int mp_be_memcmp_block(const void*,const void*,size_t);
-static unsigned source_bucket(const void*p,unsigned n){unsigned a=(u32)p;return((a>>4)^(a>>14)^n)&1023;}
+static int geometry_table_compare(const void*a,const void*b,unsigned n){
+    return geometry_key_block?mp_be_memcmp_block(a,b,n):memcmp(a,b,n);
+}
+static unsigned source_bucket(const void*p){unsigned a=(u32)p;return((a>>4)^(a>>14))&1023;}
 void mp_gx_invalidate_sources(void){
     if(!++geometry_epoch){geometry_epoch=1;for(unsigned i=0;i<1024;++i)for(GeometrySource*s=geometry_sources[i];s;s=s->next)s->epoch=0;}
 }
 static void source_release(GeometrySource*s){
     if(!s||--s->refs)return;
-    GeometrySource**link=&geometry_sources[source_bucket(s->source,s->size)];
+    GeometrySource**link=&geometry_sources[source_bucket(s->base)];
     while(*link!=s)link=&(*link)->next;*link=s->next;
     geometry_bytes-=sizeof(*s)+s->size+3;mp_platform_free(s);
 }
@@ -170,12 +180,17 @@ static int source_valid(GeometrySource*s){
     }else ++geometry_source_reuses;
     return !s->changed;
 }
-static GeometrySource*source_acquire(const void*data,unsigned size){
-    unsigned bucket=source_bucket(data,size);
+static GeometrySource*source_acquire(const void*base,const void*data,unsigned size){
+    unsigned bucket=source_bucket(base);
     for(GeometrySource*s=geometry_sources[bucket];s;s=s->next)
-        if(s->source==data&&s->size==size&&source_valid(s)){++s->refs;return s;}
+        if(s->base==base&&(geometry_range_share?
+           (u32)data>=(u32)s->source&&(u32)data-(u32)s->source<=s->size&&size<=s->size-((u32)data-(u32)s->source):
+           s->source==data&&s->size==size)&&source_valid(s)){
+            if(s->source!=data||s->size!=size)++geometry_range_shares;
+            ++s->refs;return s;
+        }
     GeometrySource*s=geometry_alloc(sizeof(*s)+size+3);if(!s)return NULL;
-    s->source=data;s->size=size;s->refs=1;s->epoch=geometry_epoch;s->changed=0;
+    s->source=data;s->base=base;s->size=size;s->refs=1;s->epoch=geometry_epoch;s->changed=0;
     s->copy=(u8*)(s+1)+((u32)data&3);memcpy(s->copy,data,size);
     s->next=geometry_sources[bucket];geometry_sources[bucket]=s;return s;
 }
@@ -206,7 +221,7 @@ static GeometryCache*geometry_find(const void*list,unsigned bytes,const Geometry
     ++geometry_clock;
     GeometryCache*set=geometry_set(list);
     for(unsigned i=0;i<GEOMETRY_WAYS;++i){GeometryCache*e=&set[i];
-        if(e->list!=list||e->bytes!=bytes||memcmp(&e->key,k,sizeof(*k)))continue;
+        if(e->list!=list||e->bytes!=bytes||geometry_table_compare(&e->key,k,sizeof(*k)))continue;
         int valid=1;for(unsigned j=0;j<VERTEX_FIELDS+1;++j)if(!source_valid(e->source[j])){valid=0;break;}
         if(valid){e->stamp=geometry_clock;++geometry_hits;return e;}geometry_clear(e);
     }
@@ -224,9 +239,14 @@ static void geometry_finish(void){
     if(!e->first){geometry_cancel();return;}
     for(unsigned i=0;i<=field_count;++i){
         if(i&&geometry_min[i-1]==~0u)continue;
-        const void*data=i?fields[i-1].array+geometry_min[i-1]:e->list;
-        unsigned n=i?geometry_max[i-1]-geometry_min[i-1]:e->bytes;
-        if(!n)continue;e->source[i]=source_acquire(data,n);
+        /* Capture array prefixes so different mesh index windows can share
+         * a containing snapshot. Every byte is inside the source array up
+         * to an actually referenced element; no allocation boundary is
+         * rounded outward. Unused changing bytes only cause safe eviction. */
+        unsigned begin=i&&!geometry_range_share?geometry_min[i-1]:0;
+        const void*data=i?fields[i-1].array+begin:e->list;
+        unsigned n=i?geometry_max[i-1]-begin:e->bytes;
+        if(!n)continue;e->source[i]=source_acquire(i?fields[i-1].array:e->list,data,n);
         if(!e->source[i]){geometry_cancel();return;}
     }
     geometry_record=NULL;
@@ -249,7 +269,15 @@ GXRenderModeObj GXNtsc480Prog={2,640,480,480,40,0,640,480,0,0,0,{{6,6},{6,6},{6,
 static unsigned short_be(const u8*p){return (p[0]<<8)|p[1];}
 GXFifoObj*GXInit(void*base,u32 size){memset(&fifo_object,0,sizeof(fifo_object));for(unsigned i=0;i<64;++i){memset(position_mtx[i],0,sizeof(Mtx));position_mtx[i][0][0]=position_mtx[i][1][1]=position_mtx[i][2][2]=1;}copy.src[2]=640;copy.src[3]=480;copy.scale=1;return &fifo_object;}
 void GXSetMisc(GXMiscToken t,u32 value){if(t<8)misc[t]=value;}
-void GXInvalidateVtxCache(void){mp_gx_invalidate_sources();}
+void GXInvalidateVtxCache(void){
+    /* Switch only at the frame's original GX invalidation point, for a
+     * controlled same-encounter comparison through the development debugger. */
+    if(geometry_range_previous!=!!geometry_range_share){
+        geometry_cancel();for(unsigned i=0;i<GEOMETRY_ENTRIES;++i)geometry_clear(&geometry_cache[i]);
+        geometry_range_previous=!!geometry_range_share;
+    }
+    mp_gx_invalidate_sources();
+}
 void GXInvalidateTexAll(void){extern void mp_platform_texture_invalidate(void);mp_platform_texture_invalidate();}
 /* Frame setup itself does not change image data. CPU cache-visibility calls
  * and framebuffer copies track the writes before textures are reused. */
@@ -299,6 +327,7 @@ void GXSetDrawDone(void){
     if(++frames%60==0){
         OSReport("Vertex shading GPU=%u flat=%u affine=%u fallback=%u\n",gpu_vertices,flat_vertices,affine_vertices,slow_vertices);
         OSReport("Geometry cache hits=%u misses=%u checks=%u bytes=%u\n",geometry_hits,geometry_misses,geometry_checks,geometry_bytes);
+        OSReport("Geometry sources compares=%u reuses=%u bytes=%u shared ranges=%u\n",geometry_source_compares,geometry_source_reuses,geometry_source_bytes,geometry_range_shares);
         OSReport("Off-screen geometry checks=%u skipped draws=%u vertices=%u\n",mp_geometry_cull_checks,mp_geometry_cull_draws,mp_geometry_cull_vertices);
         OSReport("Profile/60 frames list=%u submit=%u copy=%u audio=%u ticks\n",profile_lists,profile_submit,profile_copy,mp_profile_audio);
         OSReport("Material cache hits=%u misses=%u checks=%u\n",shade_hits,shade_misses,shade_checks);
@@ -411,7 +440,7 @@ static void prepare_material(void)
     for(unsigned i=0;i<bytes/4;++i)hash=(hash^((u32*)tev_configuration)[i])*16777619u;
     ShadeCache*set=shade_cache+(hash&63)*4,*slot=set,*hit=NULL;++shade_clock;
     for(unsigned i=0;i<4;++i){ShadeCache*e=set+i;
-        if(e->stamp&&e->hash==hash&&!memcmp(&key,&e->key,sizeof(key))&&!memcmp(tev_configuration,e->config,bytes)){hit=e;break;}
+        if(e->stamp&&e->hash==hash&&!geometry_table_compare(&key,&e->key,sizeof(key))&&!geometry_table_compare(tev_configuration,e->config,bytes)){hit=e;break;}
         if(e->stamp<slot->stamp)slot=e;
     }
     if(hit){++shade_hits;hit->stamp=shade_clock;

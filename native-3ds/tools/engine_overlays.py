@@ -2,6 +2,65 @@
 import re
 from build import ROOT
 def adapt(source):
+    if source.name=='gmclassic.c':
+        changed=source.read_text(encoding='utf-8')
+        # Original code treats the intro plus randomized encounter order as
+        # one context. Section alignment otherwise separates them on ARM.
+        changed=changed.replace('u8 gm_804908A0[112];','extern u8 gm_804908A0[112];')
+        old='gmClassicIntroData gmClassicIntroDataBuffer;'
+        assert changed.count(old)==1
+        changed=changed.replace(old,'''gmClassicRuntimeData mp_classic_runtime __attribute__((aligned(8),used));
+_Static_assert(__builtin_offsetof(gmClassicRuntimeData,state)==0x20,"Classic runtime ABI");
+extern gmClassicIntroData gmClassicIntroDataBuffer;
+__asm__(".global gmClassicIntroDataBuffer\\n.set gmClassicIntroDataBuffer,mp_classic_runtime\\n");
+__asm__(".global gm_804908A0\\n.set gm_804908A0,mp_classic_runtime+32\\n");''')
+        old='    gmClassicSceneData* scene_data =\n        (gmClassicSceneData*) gm_Mode_Classic_States;'
+        assert changed.count(old)==2
+        changed=changed.replace(old,'')
+        changed=changed.replace('scene_data->matchups.','gmClassic_803DDEC8.')
+        out=ROOT/'build/overlays'/source.name;out.parent.mkdir(parents=True,exist_ok=True)
+        out.write_text(changed,encoding='utf-8');return out
+    if source.name=='toy.c':
+        changed=source.read_text(encoding='utf-8')
+        start=changed.index('/* 4A26B8 */')
+        end=changed.index('/* 4D5A40 */',start)
+        # Trophy code casts this header to a 0x404-byte context. The split
+        # decompilation globals must share that allocation on ARM too, or
+        # initialization writes elsewhere and selection sees an empty pool.
+        changed=changed[:start]+'''u8 mp_toy_storage[0x404] __attribute__((aligned(8),used));
+extern struct _Toy_804A26B8_t _Toy_804A26B8;
+extern char _Toy_devtext_buf_804A26C4[0x8C];
+extern char _Toy_devtext_buf_804A2750[0xFC];
+extern u16 Toy_804A284C[302];
+extern ToyAnimState Toy_804A2AA8;
+'''+''.join('__asm__(".global '+name+'\\n.set '+name+',mp_toy_storage+'+str(offset)+'\\n");\n'
+           for name,offset in [('_Toy_804A26B8',0),('_Toy_devtext_buf_804A26C4',0xC),
+                               ('_Toy_devtext_buf_804A2750',0x98),('Toy_804A284C',0x194),
+                               ('Toy_804A2AA8',0x3F0)])+changed[end:]
+        out=ROOT/'build/overlays'/source.name;out.parent.mkdir(parents=True,exist_ok=True)
+        out.write_text(changed,encoding='utf-8');return out
+    if source.name=='mnevent.c':
+        changed=source.read_text(encoding='utf-8')
+        # Strings and the fifth asset belong to separate C objects. The PPC
+        # addresses happened to be adjacent; ARM section ordering need not be.
+        changed=changed.replace('    char* strs;\n','').replace('    strs = (char*) &mnEvent_803EF740;\n','')
+        for old,new in [('strs + 0x70','mnEvent_803EF7A0 + 0x10'),
+                        ('strs + 0x88','mnEvent_803EF7A0 + 0x28'),
+                        ('strs + 0x94','mnEvent_803EF7A0 + 0x34')]:
+            assert changed.count(old)==1;changed=changed.replace(old,new)
+        changed=changed.replace('    char* base = (char*) &mnEvent_803EF740;\n','')
+        old='''        lbArchive_LoadSections(archive, arr, base + 0xA0, arr + 1, base + 0xB8,
+                               arr + 2, base + 0xD4, arr + 3, base + 0xF4,
+                               arr + 4, base + 0x118, 0);'''
+        assert changed.count(old)==1
+        changed=changed.replace(old,'''        lbArchive_LoadSections(archive,
+            &arr[0], "MenMainConEv_Top_joint",
+            &arr[1], "MenMainConEv_Top_animjoint",
+            &arr[2], "MenMainConEv_Top_matanim_joint",
+            &arr[3], "MenMainConEv_Top_shapeanim_joint",
+            &mnEvent_804A0908[0], "MenMainMarkEv_Top_joint", NULL);''')
+        out=ROOT/'build/overlays'/source.name;out.parent.mkdir(parents=True,exist_ok=True)
+        out.write_text(changed,encoding='utf-8');return out
     if source.name=='mnmain.c':
         changed=source.read_text(encoding='utf-8')
         # The PPC stack's padding masked undersized scratch arrays. On ARM,
@@ -422,10 +481,39 @@ unsigned mp_bottom_css(unsigned slot)
         changed=changed.replace('while (HSD_Synth_804D772C != 0) {\n        callback();', 'while (HSD_Synth_804D772C != 0) {\n        mp_engine_poll();\n        callback();')
     if source.name in ('psdisp.c','hsd_3915.c','gm_1832.c'):
         changed=re.sub(r'GXWGFifo\.(u8|u16|u32|f32)\s*=\s*([^;]+);',r'mp_gx_write_\1(\2);',changed)
+    if source.name=='gm_1832.c':
+        # Classic's team roster splash composites ten pre-rendered fighters
+        # with per-pixel Z24X8 replacement. Use ordinary alpha portrait sprites
+        # on PICA, retaining the original layout, reveal timing and colors.
+        # One color capture replaces color+depth and saves three depth images.
+        old='''            HSD_ImageDescCopyFromEFB(&lbl_804735E8.x40[i], 0x82, 0, 0, 0);
+            HSD_ImageDescCopyFromEFB(&lbl_804735E8.x88[i], 0x82, 0, 1, 1);'''
+        assert changed.count(old)==1
+        changed=changed.replace(old,'            HSD_ImageDescCopyFromEFB(&lbl_804735E8.x40[i], 0x82, 0, 1, 1);')
+        old='''        img[3].image_ptr = NULL;
+        lb_800121FC(&img[3], 0x17C, 0x190, GX_TF_Z24X8, 0);'''
+        assert changed.count(old)==1;changed=changed.replace(old,'')
+        old='            desc.image2 = &lbl_804735E8.x88[img_idx[0x90]];'
+        assert changed.count(old)==1;changed=changed.replace(old,'            desc.image2 = NULL;')
+        old='''            sobj = HSD_SObjLib_803A477C(lbl_804735E8.xDC, &desc.desc, 0, 0,
+                                        0x80, 1);'''
+        assert changed.count(old)==1;changed=changed.replace(old,old.replace('0x80, 1','0x80, 0'))
     if source.name=='psdisp.c':
         changed=changed.replace('if (gp == NULL) {\n        *x = gp->pos.x;\n        *y = gp->pos.y;\n        *z = gp->pos.z;', 'if (gp == NULL) {\n        *x = pp->pos.x;\n        *y = pp->pos.y;\n        *z = pp->pos.z;')
     if source.name=='tydisplay.c':
         changed=re.sub(r'(?m)^inline (.*?) (_tyDisplay_803(?:18CB4|19994)_sort)',r'static inline \1 \2',changed)
+        # Use the actual archive/joint/animation tables, not a struct cast
+        # that assumes their PPC linker addresses are contiguous.
+        for old,new,count in [('temp->arch_names','_tyDisplay_803B8AE0',2),
+                              ('tables->arch_names','_tyDisplay_803B8AE0',1),
+                              ('*(TyDspArchNames*) tables->jobj_names','_tyDisplay_803B8988',3),
+                              ('*(TyDspArchNames*) tables->matanim_names','_tyDisplay_803B8A34',1)]:
+            assert changed.count(old)==count;changed=changed.replace(old,new)
+        for old in ('    const TyDspNameTables* temp;\n','    const TyDspNameTables* tables;\n',
+                    '    tables = (TyDspNameTables const*) &_tyDisplay_803B8988;\n',
+                    '    temp = tables;\n',
+                    '    const TyDspNameTables* tables =\n        (TyDspNameTables const*) &_tyDisplay_803B8988;\n'):
+            assert changed.count(old)==1;changed=changed.replace(old,'')
     if source.name=='texp.c':
         changed=changed.replace('tdesc->desc.next = &(*tevdesc)->desc;', 'tdesc->desc.next = *tevdesc ? &(*tevdesc)->desc : NULL;')
         changed=changed.replace('clist = &texp->cnst;', 'clist = texp ? &texp->cnst : NULL;')
