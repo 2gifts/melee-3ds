@@ -6,6 +6,7 @@ import struct
 from pathlib import Path
 
 from be8_image import ElfImage
+from verify_home_banner import verify_banner
 
 TITLE_ID = 0x000400000F4D4500
 
@@ -139,17 +140,19 @@ def verify(path, elf_path, art):
     icon, banner = files['icon'], files['banner']
     assert icon[:4] == b'SMDH' and len(icon) == 0x36c0
     assert u32(icon, 0x2018) == 0x7fffffff
-    assert u32(icon, 0x2028) & 0x1005 == 0x1005
+    assert u32(icon, 0x2028) & 0x1025 == 0x1025, '3D/New3DS/extended-banner flags are required'
     assert banner[:4] == b'CBMD'
     cgfx = lz11(banner[u32(banner, 8):])
     assert cgfx == (art/'banner.cgfx').read_bytes()
     assert cgfx[:4] == b'CGFX' and len(cgfx) <= 0x80000
+    banner_validation = verify_banner(cgfx)
     sound = u32(banner, 0x84)
     assert banner[sound:sound+4] == b'CWAV'
-    return dict(title_id=f'{TITLE_ID:016X}', cia_bytes=len(raw),
+    return dict(title_id=f'{TITLE_ID:016X}', title_version=int.from_bytes(tmd[0x1dc:0x1de], 'big'), cia_bytes=len(raw),
                 sha256=hashlib.sha256(raw).hexdigest(),
                 code_bytes_verified=len(code), elf_sha256=hashlib.sha256(image.data).hexdigest(),
-                cgfx_bytes=len(cgfx), native_app=True, new_3ds_only=True,
+                cgfx_bytes=len(cgfx), banner_validation=banner_validation,
+                smdh_flags=f'{u32(icon, 0x2028):08x}', native_app=True, new_3ds_only=True,
                 memory_mode='124MB', cpu_mhz=804, l2_cache=True,
                 services=[s for s in services if s], embedded_game_romfs=False)
 

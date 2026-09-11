@@ -1,18 +1,19 @@
 """Assemble a private disc icon and a real, animated HOME Menu diorama.
 
-All source imagery and geometry is extracted locally from the user's disc.
+Game imagery and geometry is extracted locally from the user's disc. The
+optional disc-label image is supplied locally and is never redistributed.
 The CGFX conversion is performed by the separately acquired pycgfx tool.
 """
-import hashlib,json,math,struct,sys
+import argparse,hashlib,json,math,struct,sys
 from pathlib import Path
 import numpy as np
-from PIL import Image,ImageDraw,ImageFont,ImageFilter
+from PIL import Image,ImageFilter
 from banner_assets import ROOT,OUT as ASSETS
 from banner_capture_read import read_capture
 
 OUT=ROOT/'build/home-menu/art'
 
-def logo_and_icon():
+def logo_and_icon(disc_image):
     logo=Image.new('RGBA',(512,256))
     top=Image.open(ASSETS/'title-0023b0.png').resize((432,128),Image.Resampling.LANCZOS)
     lower=Image.open(ASSETS/'title-0028b0.png').resize((300,61),Image.Resampling.LANCZOS)
@@ -20,22 +21,15 @@ def logo_and_icon():
     alpha=logo.getchannel('A');outline=alpha.filter(ImageFilter.MaxFilter(9))
     shadow=Image.new('RGBA',logo.size,(17,14,22,255));shadow.putalpha(outline)
     shadow.alpha_composite(logo);shadow.save(OUT/'logo.png')
-    # A clean mini-disc silhouette remains recognizable at the HOME Menu's
-    # 48px icon size. Original title art forms the printed disc label.
-    im=Image.new('RGBA',(384,384));p=ImageDraw.Draw(im)
-    p.ellipse((8,8,376,376),fill=(154,163,181),outline=(233,237,244),width=5)
-    p.ellipse((16,16,368,368),fill=(22,20,31))
-    p.arc((24,24,360,360),205,345,fill=(225,184,96),width=4)
-    p.arc((25,25,359,359),25,155,fill=(115,117,155),width=4)
-    # Ring and readable label are vector-like geometry, not a screenshot.
-    font=ImageFont.truetype('C:/Windows/Fonts/arialbd.ttf',23)
-    p.text((192,58),'NINTENDO GAMECUBE',font=font,anchor='mm',fill=(237,237,242))
-    mark=shadow.resize((306,153),Image.Resampling.LANCZOS);im.alpha_composite(mark,(39,198))
-    p=ImageDraw.Draw(im);p.ellipse((142,142,242,242),fill=(159,166,183),outline=(230,231,242),width=3)
-    p.ellipse((156,156,228,228),fill=(76,80,93),outline=(22,22,31),width=3)
-    p.ellipse((172,172,212,212),fill=(0,0,0,0))
-    p.text((192,114),'SUPER SMASH BROS.',font=ImageFont.truetype('C:/Windows/Fonts/arialbd.ttf',14),anchor='mm',fill=(172,160,185))
-    im.save(OUT/'disc-icon-large.png');im.resize((48,48),Image.Resampling.LANCZOS).save(OUT/'icon.png')
+    im=Image.open(disc_image).convert('RGBA')
+    assert min(im.size)>=256 and abs(im.width-im.height)<=2, 'Supply a square disc image, at least 256px'
+    # SMDH is RGB565 and has no alpha. Composite before downsampling so the
+    # transparent hub/corners cannot turn into an opaque black square.
+    icon=Image.new('RGBA',(1024,1024),(238,240,244,255))
+    icon.alpha_composite(im.resize((1000,1000),Image.Resampling.LANCZOS),(12,12))
+    icon.convert('RGB').save(OUT/'disc-icon-large.png')
+    icon.convert('RGB').resize((48,48),Image.Resampling.LANCZOS).save(OUT/'icon.png')
+    (OUT/'icon-source.json').write_text(json.dumps(dict(source_sha256=hashlib.sha256(disc_image.read_bytes()).hexdigest(),source_size=im.size,output_size=[48,48],alpha_background=[238,240,244]),indent=2)+'\n')
 
 class Scene:
     def __init__(self):
@@ -86,7 +80,9 @@ class Scene:
         if channels:self.animations.append(dict(name=f'Pose {node}',samplers=samplers,channels=channels))
     def save(self):
         camera=len(self.nodes);self.nodes.append(dict(name='Banner Camera',camera=0,translation=[0,1,44.786]))
-        scene=dict(asset=dict(version='2.0',generator='Melee local HOME Menu authoring'),scene=0,scenes=[dict(nodes=[0,camera])],nodes=self.nodes,meshes=self.meshes,skins=self.skins,materials=self.materials,images=self.images,textures=self.textures,samplers=[dict(magFilter=9729,minFilter=9729,wrapS=33071,wrapT=33071)],buffers=[dict(uri='scene.bin',byteLength=len(self.blob))],bufferViews=self.views,accessors=self.accessors,animations=self.animations,cameras=[dict(name='Banner Camera',type='perspective',perspective=dict(aspectRatio=5/3,yfov=math.pi/6,znear=26.5,zfar=1000))])
+        children={c for n in self.nodes for c in n.get('children',[])}
+        scene=dict(asset=dict(version='2.0',generator='Melee local HOME Menu authoring'),scene=0,scenes=[dict(nodes=[i for i in range(len(self.nodes)) if i not in children])],nodes=self.nodes,meshes=self.meshes,materials=self.materials,images=self.images,textures=self.textures,samplers=[dict(magFilter=9729,minFilter=9729,wrapS=33071,wrapT=33071)],buffers=[dict(uri='scene.bin',byteLength=len(self.blob))],bufferViews=self.views,accessors=self.accessors,animations=self.animations,cameras=[dict(name='Banner Camera',type='perspective',perspective=dict(aspectRatio=5/3,yfov=math.pi/6,znear=26.5,zfar=1000))])
+        assert not self.skins, 'HOME banners must use rigid mesh-node animation'
         (OUT/'scene.bin').write_bytes(self.blob);(OUT/'scene.gltf').write_text(json.dumps(scene,separators=(',',':'))+'\n')
 
 def decompose(m):
@@ -161,49 +157,47 @@ def build_scene():
     d=stage0[-1];mi=s.material(name='Platform surface');s.materials[mi]['doubleSided']=True
     p=d['positions'].copy();p[:,1]-=.05
     s.mesh('Final Destination floor',p,[[0,1,0]]*len(p),d['v'][:,8:10],np.tile([.075,.025,.16,1],(len(p),1)),d['indices'],mi)
-    # Export each envelope as a skin joint, keeping the captured game poses.
-    # Limit animation samples to fit HOME Menu's 512 KiB CGFX envelope.
-    samples=list(range(0,45,8));times=np.linspace(0,2.6,len(samples)).tolist()+[3.2]
-    bone_cache={}
+    # Bake complete captured poses, then animate each material part with the
+    # same rigid transform. Physical HOME Menu cannot safely animate soft
+    # skins. Keeping the whole fighter rigid avoids cracks between envelopes.
+    times=[0,.35,.65,.85,1.15,1.6,1.95,2.25,2.5,2.85,3.2]
     for player in range(2):
-        lookup=[{mesh_key(d):d for d in group[player]} for group in groups]
-        # A small miniature needs larger fighters than the gameplay camera.
-        pos=np.concatenate([d['positions'] for d in groups[0][player]])
+        frame=16 if player==0 else 24
+        normalize=base@np.linalg.inv(reference[frame])
+        parts=[d for d in groups[frame][player] if d['d']['geometry_id']]
+        pos=np.concatenate([(normalize@np.c_[d['positions'],np.ones(len(d['v']))].T).T[:,:3] for d in parts])
         foot=np.array([np.median(pos[:,0]),pos[:,1].min(),np.median(pos[:,2])])
-        enlarge=np.eye(4);enlarge[:3,:3]*=2.3
         desired=np.array([center[0]+(-19 if player==0 else 19),ground,center[2]+22])
-        enlarge[:3,3]=desired-foot*2.3
-        for j,d in enumerate(groups[0][player]):
-            if not d['d']['geometry_id']:continue
-            key=mesh_key(d);rows=np.unique(d['v'][:,13].astype(int));bones=[]
-            for r in rows:
-                transforms=[];previous=d
-                for frame in samples:
-                    current=lookup[frame].get(key,previous);previous=current
-                    normalize=base@np.linalg.inv(reference[frame])
-                    frame_pos=np.concatenate([x['positions'] for x in groups[frame][player]])
-                    frame_pos=(normalize@np.c_[frame_pos,np.ones(len(frame_pos))].T).T[:,:3]
-                    frame_foot=np.array([np.median(frame_pos[:,0]),frame_pos[:,1].min(),np.median(frame_pos[:,2])])
-                    anchored=enlarge.copy();anchored[:3,3]=desired-frame_foot*2.3
-                    transforms.append(anchored@normalize@matrix(current,int(r)))
-                transforms.append(transforms[0])
-                bone_key=np.round(transforms,4).tobytes()
-                if bone_key in bone_cache:
-                    bones.append(bone_cache[bone_key]);continue
-                node=len(s.nodes);bones.append(node);bone_cache[bone_key]=node
-                t,q,scale=decompose(transforms[0]);s.nodes.append(dict(name=f'Fox{player+1}_{j}_{r}',translation=t,rotation=q,scale=scale))
-                s.nodes[0]['children'].append(node);s.animation(node,times,transforms)
-            skin=len(s.skins);s.skins.append(dict(name=f'Fox{player+1} skin {j}',joints=bones,inverseBindMatrices=s.data(np.tile(np.eye(4,dtype='f4').ravel(),(len(bones),1)),'MAT4')))
-            ji=np.zeros((len(d['v']),4),dtype='u2');ji[:,0]=np.searchsorted(rows,d['v'][:,13].astype(int));weights=np.zeros((len(ji),4),dtype='f4');weights[:,0]=1
-            s.mesh(f'Fox {player+1} part {j}',d['v'][:,:3],d['v'][:,10:13],d['v'][:,8:10],color(d),d['indices'],material(d,captures[0][1]),ji,weights,skin)
+        # A short lunge, evade and counterattack loop; original triangle/UV
+        # data is retained. This animation belongs only to the HOME diorama.
+        motion=([0,0,9,13,4,0,-3,0,3,0,0] if player==0 else [0,0,0,5,7,0,-9,-13,-4,0,0])
+        hops=([0,0,1,0,0,0,4,2,0,0,0] if player==0 else [0,0,0,3,4,0,1,0,0,0,0])
+        transforms=[]
+        for dx,dy in zip(motion,hops):
+            transform=np.eye(4);transform[:3,3]=desired+[dx,dy,0]
+            transforms.append(transform)
+        for j,d in enumerate(parts):
+            p=(normalize@np.c_[d['positions'],np.ones(len(d['v']))].T).T[:,:3]
+            p=(p-foot)*2.3
+            norm=np.empty((len(p),3))
+            for row in np.unique(d['v'][:,13].astype(int)):
+                mask=d['v'][:,13].astype(int)==row
+                norm[mask]=d['v'][mask,10:13]@np.linalg.inv((normalize@matrix(d,int(row)))[:3,:3])
+            norm/=np.maximum(1e-6,np.linalg.norm(norm,axis=1))[:,None]
+            node=s.mesh(f'Fox {player+1} part {j}',p,norm,d['v'][:,8:10],color(d),d['indices'],material(d,captures[frame][1]))
+            s.nodes[node]['translation']=desired.tolist()
+            s.animation(node,times,transforms)
     # Logo sits above and slightly in front of the stage. Put it outside the
     # scaled diorama hierarchy so its original aspect ratio stays exact.
     im=Image.open(OUT/'logo.png');mi=s.material(im,'Logo',True)
     n=s.mesh('Melee logo',[[-11.5,1.5,2],[11.5,1.5,2],[11.5,13,2],[-11.5,13,2]],[[0,0,1]]*4,[[0,1],[1,1],[1,0],[0,0]],[[1,1,1,1]]*4,[0,1,2,0,2,3],mi)
-    # Counter-transform the model root for the logo's intended banner units.
-    s.nodes[n]['matrix']=np.linalg.inv(root).T.ravel().tolist()
+    # Y-axis billboarding requires an identity logo node beside the world.
+    s.nodes[0]['children'].remove(n)
     metrics.update(nodes=len(s.nodes),materials=len(s.materials),skins=len(s.skins),animation_samples=len(times),triangles=sum(s.accessors[p['indices']]['count']//3 for m in s.meshes for p in m['primitives']))
     s.save();(OUT/'art-report.json').write_text(json.dumps(metrics,indent=2)+'\n');print(json.dumps(metrics))
 
 if __name__=='__main__':
-    OUT.mkdir(parents=True,exist_ok=True);logo_and_icon();build_scene()
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--disc-image',type=Path,required=True,help='Local square full-color disc artwork (not committed)')
+    args=parser.parse_args()
+    OUT.mkdir(parents=True,exist_ok=True);logo_and_icon(args.disc_image);build_scene()
