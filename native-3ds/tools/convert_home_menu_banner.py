@@ -17,17 +17,15 @@ def main():
                     str(ROOT / '.toolchain/home-menu/pycgfx')]
     import main as converter
     import gltflib
-    from cgfx.mtob import CullMode, ColorFloat, FragmentLightingFlags
+    from cgfx.mtob import ColorFloat, FragmentLightingFlags
     from cgfx.primitives import DataType, VertexAttributeUsage as Usage
     from cgfx.sobj import BillboardMode
 
     source = gltflib.GLTF.load(str(ART / 'scene.gltf'), load_file_resources=True)
     assert not source.model.skins, 'Soft skins can crash physical HOME Menu'
     assert all(n.skin is None for n in source.model.nodes)
-    # PICA can disable culling directly. Avoid pycgfx's doubled geometry.
-    two_sided = {m.name for m in source.model.materials if m.doubleSided}
-    for material in source.model.materials:
-        material.doubleSided = False
+    # Follow the reference converter's two-sided geometry and render state.
+    # Four atlas draws keep the duplicated stage/logo geometry affordable.
     banner = converter.convert_gltf(source)
     for model_name in banner.data.models:
         model = banner.data.models[model_name]
@@ -38,15 +36,6 @@ def main():
             specular.src_rgb, specular.combine_rgb = 0xFFF, 0
             material.fragment_shader.fragment_lighting.flags = FragmentLightingFlags(0)
             material.fragment_shader.fragment_lighting_table.distribution_0_sampler = None
-            if name in two_sided or name == 'Logo':
-                material.rasterization.cull_mode = CullMode.Never
-                material.rasterization.command.param = CullMode.Never
-            if name == 'Logo':
-                # Typography stays bright regardless of HOME's light rig.
-                material.flags = 0
-                for combiner in material.fragment_shader.texture_combiners[1:3]:
-                    combiner.src_rgb = 0xF
-                    combiner.combine_rgb = 0
         for mesh in model.meshes.data.contents:
             shape = model.shapes.data.contents[mesh.shape_index]
             bone_ids = {b for p in shape.primitive_sets.data.contents for b in p.related_bones.data.contents}

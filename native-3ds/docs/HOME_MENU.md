@@ -30,20 +30,27 @@ Audio still needs the DSP support from the existing homebrew setup.
 
 ### HOME banner compatibility
 
-The first CIA crashed during unwrapping; package 2 still froze HOME Menu.
-Package 3 groups material parts under their actual moving objects: seven bones
-and two animation tracks replace 78 bones and 62 tracks. It retains all 1,702
-triangles and the same fighter motion, and uses the float RGB vertex streams
-found in the working reference banners. The disc icon and announcer clip stay
-the same. CIA title version 2 replaces version 1 using the same title ID.
+The first CIA crashed during unwrapping; packages 2 and 3 still froze HOME Menu.
+Package 4 rebuilds the scene as **four rigid draws, four materials and two
+textures**, following the compact animated reference. Previously there were
+75 draws, 42 materials and 40 textures. A padded atlas preserves the original
+texture resolution; triangles crossing texture-clamp boundaries are split
+before their UVs are remapped. The logo keeps its separate texture.
+
+Both fighters now have complete scale, rotation and translation curves,
+including constant channels. Two-sided stage/logo surfaces use the reference
+converter's geometry and render state. Scene-control data shrinks from 197,716
+to 22,404 bytes. This is an authoring budget, not a claim about a documented
+four-mesh hardware limit. The disc icon and announcer clip stay the same.
+CIA title version 3 replaces version 2 using the same title ID.
 
 The earlier dump belongs to US HOME Menu (`0004003000008F02`). Analysis of the
 matching executable places the fault in a heap-list traversal, consistent with
-prior memory corruption. No new dump accompanied the package 2 freeze. Reducing
-the transform workload addresses a major difference from the working banners;
-the exact corrupting instruction has not been isolated. The validator now
-rejects both earlier banner layouts. **Physical validation of package 3 is
-still required; structural checks alone cannot guarantee HOME compatibility.**
+prior memory corruption. No new dump accompanied the later freezes. The exact
+corrupting instruction has not been isolated. Local native HOME loading and
+animation tests also accept the failing package 3, so they do not reproduce
+the physical freeze. **Package 4 still needs physical unwrapping validation;
+neither its smaller resource footprint nor the local tests prove a fix.**
 
 ## Local authoring and packaging
 
@@ -96,9 +103,10 @@ require the explicit `--development` option and must not be copied to consoles.
 - Homebrew title ID: `000400000F4D4500`; product code: `CTR-P-M3LE`.
 - Native executable, 124 MB application mode, 804 MHz CPU request, L2 enabled.
 - No embedded game filesystem. Both launch methods read `/3ds/melee/`.
-- Banner: 1,702 triangles, a looping 3.2-second rigid animation, and a
-  439,032-byte CGFX under HOME's 524,288-byte limit. Material parts share one
-  transform per object, with float RGB vertex streams and two animation tracks.
+- Banner: the original 1,702 triangles become 2,014 after UV-boundary splits,
+  or 2,862 with reverse faces for the stage/logo. A looping 3.2-second rigid
+  animation and the float RGB vertex streams occupy a 404,776-byte CGFX under
+  HOME's 524,288-byte limit. There are seven bones and two animated objects.
 - Sound: original English intro bank `nr_title.ssm`, sample 1 (game sound ID
   20001), final word isolated and shortened without changing pitch to fit
   HOME's audio limit. Output: stereo, 32 kHz, approximately 2.92 seconds.
@@ -108,11 +116,24 @@ require the explicit `--development` option and must not be copied to consoles.
 - Serialized CGFX verification follows relative pointers, validates mesh/bone/
   animation bindings and curve values, checks triangle indices and rejects
   soft skins, bone-weight/index streams and non-identity billboard transforms.
-  It enforces this scene's seven-bone budget and checks finite float attributes.
+  It enforces this scene's four-draw/seven-bone atlas profile, complete TRS
+  curves and finite float attributes. Atlas tests check coverage, interpolation
+  and clamping; a local before/after render comparison retained every pixel
+  within 4/255 per channel in the checked view.
   The sound verifier checks both CWAV channel pointers, block sizes and sample
   bounds, and compares every PCM sample against the local source WAV.
   Run `python tools/test_home_banner.py` after generating the banner to check
   that malformed variants are rejected. This does not render HOME Menu.
+- `python tools/test_home_banner_atlas.py` checks the triangle splitting.
+- The private native HOME harness uses the owner's matching executable in
+  Azahar to construct the model through its real loader and advance banner
+  animation. A working reference and the earlier failing banner serve as
+  controls. This bypasses UI selection; it does not validate gift unwrapping,
+  physical GPU behavior or end-to-end HOME display.
+  Captured native graphics commands fell from 267,280 to 142,864 bytes in
+  the checked frame (including HOME UI), close to the animated reference's
+  142,256 bytes. The captured vertex shader programs match the references.
+  These measurements demonstrate reduced work, not a proven freeze cause.
 - Local validation includes CIA installation and installed-executable startup
   in Azahar, original menu navigation into Versus, stereo pixel checks and
   Start pause/resume. This does not validate the physical HOME Menu's banner

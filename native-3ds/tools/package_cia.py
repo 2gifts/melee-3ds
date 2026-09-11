@@ -24,7 +24,7 @@ def main():
     ap.add_argument('--art', type=Path, default=ROOT/'build/home-menu/art')
     ap.add_argument('--output', type=Path, default=ROOT/'dist/home-menu/melee-3ds.cia')
     ap.add_argument('--development', action='store_true', help='Allow an emulator-only validation ELF')
-    ap.add_argument('--version', type=int, default=2, help='CIA title version; retains the installed title ID')
+    ap.add_argument('--version', type=int, default=3, help='CIA title version; retains the installed title ID')
     ap.add_argument('--cci', type=Path, help='Also emit a local emulator test cartridge')
     args = ap.parse_args()
     image = ElfImage(args.elf.read_bytes())

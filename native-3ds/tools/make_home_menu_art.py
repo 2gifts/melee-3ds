@@ -81,7 +81,8 @@ class Scene:
             if name=='rotation':
                 for j in range(1,len(values)):
                     if values[j]@values[j-1]<0:values[j]*=-1
-            if np.max(np.abs(values-values[0])) < 2e-4:continue
+            # Emit complete TRS tracks, including static scale/rotation, like
+            # the hardware-tested animated reference banner.
             channels.append(dict(sampler=len(samplers),target=dict(node=node,path=name)))
             samplers.append(dict(input=t,output=self.data(values,kind),interpolation='LINEAR'))
         if channels:self.animations.append(dict(name=f'Pose {node}',samplers=samplers,channels=channels))
@@ -204,6 +205,8 @@ def build_scene():
     n=s.mesh('Melee logo',[[-11.5,1.5,2],[11.5,1.5,2],[11.5,13,2],[-11.5,13,2]],[[0,0,1]]*4,[[0,1],[1,1],[1,0],[0,0]],[[1,1,1,1]]*4,[0,1,2,0,2,3],mi)
     # Y-axis billboarding requires an identity logo node beside the world.
     s.nodes[0]['children'].remove(n)
+    from home_banner_atlas import compact_scene
+    metrics['atlas'] = compact_scene(s, OUT)
     metrics.update(nodes=len(s.nodes),materials=len(s.materials),skins=len(s.skins),animation_samples=len(times),triangles=sum(s.accessors[p['indices']]['count']//3 for m in s.meshes for p in m['primitives']))
     s.save();(OUT/'art-report.json').write_text(json.dumps(metrics,indent=2)+'\n');print(json.dumps(metrics))
 

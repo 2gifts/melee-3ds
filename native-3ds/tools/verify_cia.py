@@ -144,7 +144,8 @@ def verify(path, elf_path, art):
     assert hashlib.sha256(content).digest() == chunk[16:48]
     assert hashlib.sha256(tmd[0x204:0xb04]).digest() == tmd[0x1e4:0x204]
     assert content[0x100:0x104] == b'NCCH'
-    assert struct.unpack_from('<Q', content, 0x118)[0] == TITLE_ID
+    for offset in (0x108,0x118,0x3c8,0x400,0x800):
+        assert struct.unpack_from('<Q', content, offset)[0] == TITLE_ID, 'Inconsistent partition/program/jump ID'
     assert content[0x18c] == 2 and content[0x18f] & 4
     assert u32(content, 0x1b0) == 0, 'Unexpected embedded game assets/RomFS'
     exhdr = content[0x200:0x600]

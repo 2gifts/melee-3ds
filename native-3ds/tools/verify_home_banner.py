@@ -68,6 +68,11 @@ def verify_banner(data):
     assert r.u32(model) == 0x40000092 and data[model+4:model+8] == b'CMDL'
     meshes, shapes = r.array(model+180), r.array(model+196)
     materials = r.dictionary(model+188)
+    assert len(meshes) == len(shapes) == len(materials) == 4, 'Use four atlas draws for this diorama'
+    assert len(r.dictionary(36)) == 2, 'Expected a shared diorama atlas and separate logo'
+    for material in materials.values():
+        assert r.u32(material+24) == 1, 'Keep the reference fragment-lighting material path'
+        assert r.read('IIfII', material+260) == (0,2,0,2,0x10040), 'Keep reference culling state'
     skel = r.ptr(model+224)
     assert r.u32(skel) == 0x2000000
     bones = r.dictionary(skel+24)
@@ -145,6 +150,7 @@ def verify_banner(data):
         assert name in bindings and r.string(member+4) == name, 'Animation must target a mesh node'
         assert r.u32(member+16) == 5, 'Only ordinary Transform animation is supported'
         flags = r.u32(member)
+        assert flags == 0, 'Use complete TRS curves, matching the animated reference'
         for off, constant, ignore in zip((20,24,28,32,36,40,48,52,56),
                 (6,7,8,9,10,11,13,14,15), (16,17,18,19,20,21,23,24,25)):
             if flags & (1 << ignore):
@@ -166,6 +172,7 @@ def verify_banner(data):
                 times = values[::2]
                 assert all(x < y for x,y in zip(times,times[1:]))
                 assert abs(times[0]-a) < .001 and abs(times[-1]-b) < .001 and speed > 0
-    return dict(meshes=len(meshes), bones=len(bones), triangles=triangles,
+    return dict(meshes=len(meshes), materials=len(materials), textures=2,
+                scene_data_bytes=r.u32(24), bones=len(bones), triangles=triangles,
                 animation_members=len(members), frames=frames, rigid_only=True,
                 mesh_bindings_verified=True, serialized_curves_verified=True)

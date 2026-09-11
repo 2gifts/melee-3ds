@@ -22,6 +22,7 @@ def main():
     attribute = r.array(shape+56)[0]
     skeleton = r.ptr(model+224)
     bones = r.dictionary(skeleton+24)
+    material = next(iter(r.dictionary(model+188).values()))
     animation = r.dictionary(100)['COMMON']
     member = next(iter(r.dictionary(animation+24).values()))
     cases = [
@@ -34,6 +35,9 @@ def main():
         ('dangling shape array', model+200, 0x7fffffff),
         ('quantized vertex stream', attribute+36, 0x1402),
         ('nonfinite vertex', r.ptr(attribute+24), 0x7fc00000),
+        ('incomplete transform tracks', member, 0x3f0000),
+        ('custom unlit material', material+24, 0),
+        ('custom culling command', material+272, 0),
     ]
     for name, offset, value in cases:
         bad = bytearray(data)
