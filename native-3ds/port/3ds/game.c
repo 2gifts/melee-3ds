@@ -155,9 +155,9 @@ int main(void)
     mp_log_init();
     bool is_new=false;APT_CheckNew3DS(&is_new);
 #ifndef MP_SMOKE_TEST
-    printf("SUPER SMASH BROS. MELEE\nNative 3DS alpha - update 9\n\nCircle Pad: move\nA: attack     B: special\nX / Y: jump\nL / R: shield\nZL / ZR: grab (New 3DS)\nC Stick: directional attack\nSTART: confirm / Training menu\nSELECT: Homebrew Launcher\n\nUCF 0.84 / all fighters unlocked\n4 stocks / 8 minutes / items off\nVersus pause off (change in Rules)\nSettings reset on app restart.\n");
+    printf("SUPER SMASH BROS. MELEE\nNative 3DS alpha - update 10\n\nCircle Pad: move\nA: attack     B: special\nX / Y: jump\nL / R: shield\nZL / ZR: grab (New 3DS)\nC Stick: directional attack\nSTART: confirm / Training menu\nSELECT: Homebrew Launcher\n\nUCF 0.84 / all fighters unlocked\n4 stocks / 8 minutes / items off\nVersus pause off (change in Rules)\nSettings reset on app restart.\n");
 #endif
-    mp_native_log("Melee ARM BE8 engine startup - menu 3D and collision update 9\n");
+    mp_native_log("Melee ARM BE8 engine startup - shield color update 10\n");
     mp_native_log("All-stage performance: low-detail fighters, projected shadows off, conservative off-screen mesh rejection; audited Diet scenery where available\n");
     if(is_new)mp_native_log("New 3DS family detected; fast CPU and L2 cache requested\n");
     u32 actual_layout[3]={(u32)mp_image_text_start,(u32)mp_image_rodata_start,(u32)mp_image_data_start};

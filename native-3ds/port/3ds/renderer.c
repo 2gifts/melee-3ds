@@ -67,6 +67,7 @@ static Vertex*vertices;static unsigned vertex_count,draw_count,render_vertex_cou
 static float(*layer_uv)[2];static int layer_attributes;
 #ifdef MP_SMOKE_TEST
 unsigned layered_draws;
+unsigned shield_draws[2];
 #endif
 static u16*indices;static unsigned index_count;
 static unsigned flushed_vertices,flushed_indices;
@@ -651,8 +652,9 @@ void mp_native_submit(const Vertex*be,unsigned count,const Draw*state)
     if(state_needed(STATE_CULL,d.cull!=raster_state.cull))raster_cull(d.cull);
     raster_state.cull=d.cull;
     unsigned measured=native_detail_begin(0);MPTextureLayer layer={0};Texture*t1=NULL;Draw second={0};
-    if(d.layer){
-        for(unsigned i=0;i<sizeof(layer)/4;++i)((u32*)&layer)[i]=read32((const u32*)d.layer+i);
+    if(d.layer)for(unsigned i=0;i<sizeof(layer)/4;++i)((u32*)&layer)[i]=read32((const u32*)d.layer+i);
+    int two_uv=d.layer&&layer.mode!=MP_FRAGMENT_TINT;
+    if(two_uv){
         memcpy(&second,&layer,7*4);second.wrap_s=layer.wrap_s;second.wrap_t=layer.wrap_t;
         t1=texture(&second);if(!t1)mp_native_panic("Layered material has no second texture");
         /* Eviction compacts the slot array. Pin by key and look up again after
@@ -660,9 +662,9 @@ void mp_native_submit(const Vertex*be,unsigned count,const Draw*state)
         texture_pin=&second;texture_pin_bytes=t1->tex.size;
     }
     Texture*t=texture(&d);
-    if(d.layer){t1=texture(&second);texture_pin=NULL;texture_pin_bytes=0;if(!t)mp_native_panic("Layered material has no base texture");}
+    if(two_uv){t1=texture(&second);texture_pin=NULL;texture_pin_bytes=0;if(!t)mp_native_panic("Layered material has no base texture");}
     native_detail_end(0,measured);
-    bind_program(d.layer?2:d.points!=0);
+    bind_program(two_uv?2:d.points!=0);
     if(state_needed(STATE_SCISSOR,memcmp(clip,raster_state.clip,sizeof(clip))!=0))C3D_SetScissor(GPU_SCISSOR_NORMAL,clip[0],clip[1],clip[2],clip[3]);
     memcpy(raster_state.clip,clip,sizeof(clip));
     measured=native_detail_begin(1);
@@ -692,14 +694,14 @@ void mp_native_submit(const Vertex*be,unsigned count,const Draw*state)
         C3D_FVUnifSet(GPU_GEOMETRY_SHADER,0,d.point_size/2880.f,d.point_size/(12.f*width),uv*us,uv*vs);
     }
     measured=native_detail_begin(2);
-    NativeGeometry*geometry=d.layer?NULL:native_geometry_get(be,count,&d,t!=NULL,us,vs);const Vertex*submitted;float*submitted_uv=NULL;
+    NativeGeometry*geometry=two_uv?NULL:native_geometry_get(be,count,&d,t!=NULL,us,vs);const Vertex*submitted;float*submitted_uv=NULL;
     if(geometry){submitted=geometry->vertices;draw_indices=geometry->indices;}
     else{
         NATIVE_WORK(7,count);
         reserve_dynamic(count,d.index_count);
         const u16*src=(void*)d.indices;for(unsigned i=0;i<d.index_count;++i)indices[index_count+i]=__builtin_bswap16(src[i]);
         convert_vertices(vertices+vertex_count,be,count,t!=NULL,us,vs);submitted=vertices+vertex_count;draw_indices=indices+index_count;
-        if(d.layer){const u32*source=(const void*)layer.uv;float su=(float)t1->w/t1->tex.width,sv=(float)t1->h/t1->tex.height;
+        if(two_uv){const u32*source=(const void*)layer.uv;float su=(float)t1->w/t1->tex.width,sv=(float)t1->h/t1->tex.height;
             submitted_uv=layer_uv[vertex_count];for(unsigned i=0;i<count;++i){union{u32 u[2];float f[2];}uv={{read32(source+2*i),read32(source+2*i+1)}};
                 submitted_uv[2*i]=uv.f[0]*su;submitted_uv[2*i+1]=1.f-uv.f[1]*sv;}
             GSPGPU_FlushDataCache(submitted_uv,count*8);
@@ -707,11 +709,30 @@ void mp_native_submit(const Vertex*be,unsigned count,const Draw*state)
         vertex_count+=count;index_count+=d.index_count;
     }
     native_detail_end(2,measured);measured=native_detail_begin(3);
-    if(d.layer)layered_vertex_pointer(submitted,submitted_uv);else vertex_pointer(submitted);
+    if(two_uv)layered_vertex_pointer(submitted,submitted_uv);else vertex_pointer(submitted);
     static unsigned sampled;
     if(sampled++<5){char text[200];const Vertex*v=submitted;snprintf(text,sizeof(text),"GX draw texture=%08lx fmt=%lu %lux%lu rgba=%.2f %.2f %.2f %.2f uv=%.2f %.2f\n",(unsigned long)d.image,(unsigned long)d.format,(unsigned long)d.w,(unsigned long)d.h,v->c[0],v->c[1],v->c[2],v->c[3],v->t[0],v->t[1]);mp_native_log(text);}
     unsigned env_key=d.layer?8:t?!!d.texture_rgb|(!!d.texture_alpha<<1)|((!!d.texture_alpha&&(d.format==0||d.format==1))<<2):0;
-    if(d.layer){
+    if(d.layer&&layer.mode){
+        for(unsigned i=0;i<3;++i)C3D_TexEnvInit(C3D_GetTexEnv(i));
+        C3D_TexEnv*env=C3D_GetTexEnv(0);
+        GPU_TEVSRC texture_source=two_uv?GPU_TEXTURE1:GPU_TEXTURE0;
+        unsigned fmt=two_uv?layer.format:d.format;
+        GPU_TEVOP_A alpha_source=fmt==0||fmt==1?GPU_TEVOP_A_SRC_R:GPU_TEVOP_A_SRC_ALPHA;
+        C3D_TexEnvSrc(env,C3D_Both,GPU_CONSTANT,GPU_PRIMARY_COLOR,texture_source);C3D_TexEnvFunc(env,C3D_Both,GPU_INTERPOLATE);
+        C3D_TexEnvOpAlpha(env,GPU_TEVOP_A_SRC_ALPHA,GPU_TEVOP_A_SRC_ALPHA,alpha_source);C3D_TexEnvColor(env,layer.tint);
+        if(two_uv){
+            env=C3D_GetTexEnv(1);C3D_TexEnvSrc(env,C3D_Both,GPU_PREVIOUS,GPU_CONSTANT,0);C3D_TexEnvFunc(env,C3D_Both,GPU_MODULATE);
+            C3D_TexEnvColor(env,layer.blend*0x01010101u);
+            env=C3D_GetTexEnv(2);C3D_TexEnvSrc(env,C3D_Both,GPU_TEXTURE0,GPU_CONSTANT,GPU_PREVIOUS);C3D_TexEnvFunc(env,C3D_Both,GPU_MULTIPLY_ADD);
+            alpha_source=d.format==0||d.format==1?GPU_TEVOP_A_SRC_R:GPU_TEVOP_A_SRC_ALPHA;
+            C3D_TexEnvOpAlpha(env,alpha_source,GPU_TEVOP_A_SRC_ALPHA,GPU_TEVOP_A_SRC_ALPHA);C3D_TexEnvColor(env,layer.base);
+        }
+        raster_state.valid|=STATE_TEXENV;
+#ifdef MP_SMOKE_TEST
+        ++shield_draws[layer.mode==MP_FRAGMENT_TINT];
+#endif
+    }else if(d.layer){
         for(unsigned i=0;i<3;++i)C3D_TexEnvInit(C3D_GetTexEnv(i));
         C3D_TexEnv*env=C3D_GetTexEnv(0);
         C3D_TexEnvSrc(env,C3D_RGB,GPU_TEXTURE0,GPU_CONSTANT,GPU_CONSTANT);C3D_TexEnvFunc(env,C3D_RGB,GPU_INTERPOLATE);
@@ -788,6 +809,7 @@ void mp_native_submit(const Vertex*be,unsigned count,const Draw*state)
 #include "blend_verify.h"
 #include "raster_state_verify.h"
 #include "layered_verify.h"
+#include "shield_verify.h"
 #include "stereo_verify.h"
 #endif
 void mp_renderer_end(void){if(!frame_active)return;
@@ -795,6 +817,7 @@ void mp_renderer_end(void){if(!frame_active)return;
     if(stereo_verify)verify_stereo();
     if(native_geometry_lru_validate)native_geometry_check_lru();
     if(layered_verify)verify_layered_material();
+    if(shield_verify)verify_shield_material();
     if(raster_state_verify)verify_raster_state();
     if(point_verify)verify_points();
     if(cull_verify)verify_culling();

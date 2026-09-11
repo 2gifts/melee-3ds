@@ -2,7 +2,9 @@
 
 A work-in-progress native ARM port of Super Smash Bros. Melee, built from the [doldecomp/melee](https://github.com/doldecomp/melee) decompilation. This is native game code with a 3DS graphics/audio/platform layer, not a Dolphin emulator build.
 
-**Current milestone: update 9. Playable on a New Nintendo 3DS, with native stereoscopic 3D. Performance varies substantially; stable 60 FPS has not been achieved.** Full matches have been played on a physical New 3DS. This remains an experimental community development build.
+**Current milestone: update 10. Playable on a New Nintendo 3DS, with native stereoscopic 3D. Performance varies substantially; stable 60 FPS has not been achieved.** Full matches have been played on a physical New 3DS. This remains an experimental community development build.
+
+Update 10 fixes player shield colors, including the startup flash and transparency, with the existing geometry cache retained. [Fix and validation details](docs/SHIELD_COLOR_UPDATE_10.md).
 
 ## What works
 
@@ -89,7 +91,7 @@ Copy the audited `references/diet-melee/files/GrIz.dat` and the four prepared `.
 
 Only one physical player is mapped. Multiplayer, online/rollback, replay recording, memory-card saving and optional movies are unfinished. UCF/offline defaults do not make this an official Slippi build. Materials, some shadows and reflections remain approximate. Frame rate varies with stage, fighters and stereo; 2D avoids the additional eye's drawing work. The lower screen reports **rendered FPS separately from simulation updates**.
 
-The update 9 emulator regression covered all 29 stage selections and 25 character icons, plus 120 simulation seconds of Marth/DK combat on each of Poké Floats and Jungle Japes, stereo pixel references, cache pressure, turnips, audio and protected-memory checks. Emulator results are not physical FPS measurements. [Current status](docs/PORT_STATUS.md), [hardware history](docs/HARDWARE_TESTS.md) and the implementation notes preserve the scope and limits of those checks. Paths to `build/` evidence in historical notes refer to local development records; raw logs, dumps, screenshots and game-derived fixtures are not published.
+The update 9 emulator regression covered all 29 stage selections and 25 character icons, plus 120 simulation seconds of Marth/DK combat on each of Poké Floats and Jungle Japes, stereo pixel references, cache pressure, turnips, audio and protected-memory checks. Emulator results are not physical FPS measurements. [Current status](docs/PORT_STATUS.md), [hardware history](docs/HARDWARE_TESTS.md) and the implementation notes preserve the scope and limits of those checks. Paths to `build/` evidence in historical notes refer to local development records; raw logs, dumps, screenshots and game textures are not published.
 
 For bug reports, include the source commit, console model, launcher/Luma version, 2D/3D and aspect mode, stage/fighters, and reproduction steps. Review `SD:/3ds/melee/game.log` for personal information before sharing it. Do not attach disc data, extracted assets or firmware. [Contribution notes](CONTRIBUTING.md).
 

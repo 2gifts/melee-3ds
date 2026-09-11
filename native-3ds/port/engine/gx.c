@@ -12,6 +12,7 @@ volatile unsigned shade_legacy_clamp;
 #include "vertex_decode.h"
 #include "primitive_expand.h"
 #include "layered_material.h"
+#include "shield_material.h"
 #include "stereo_config.h"
 /* Constant-size matrix/color copies can be inlined safely in BE8. Any
  * remaining library call is redirected by the object converter. */
@@ -55,7 +56,7 @@ typedef struct {unsigned kind,offset,mode,type,count,stride;float scale;const u8
 #define VERTEX_FIELDS 6
 static VertexField fields[VERTEX_FIELDS];
 static unsigned field_count;
-static unsigned layer_active,layer_coord,layer_uv_attr,primary_uv_attr;
+static unsigned layer_active,tint_active,layer_coord,layer_uv_attr,primary_uv_attr;
 static VertexField layer_field;
 static MPTextureLayer texture_layer;
 static float batch_layer_uv[384][2];
@@ -321,7 +322,7 @@ static void submit_geometry(const RenderVertex*v,unsigned count,const u16*indice
      * unrelated palette in its cache key creates redundant conversions. */
     if(draw.format<GX_TF_C4||draw.format>GX_TF_C14X2)draw.palette=draw.palette_format=draw.palette_count=0;
     draw.texture_rgb=texture_used_rgb;draw.texture_alpha=texture_used_alpha;draw.wrap_s=t->dummy[3]>>16;draw.wrap_t=(t->dummy[3]>>8)&255;draw.indices=(u32)indices;draw.index_count=n;draw.geometry_id=id;
-    draw.layer=layer_active?(u32)&texture_layer:0;
+    draw.layer=layer_active||tint_active?(u32)&texture_layer:0;
     draw.points=points;draw.point_size=point_size;draw.point_offset=tex_offsets[active_coord&7][1]?point_offset:0;
     /* GX face culling applies to polygon primitives only. CPU-expanded
      * lines and geometry-shader points have no original front/back face. */
@@ -346,6 +347,25 @@ static void prepare_layered_material(void){
     if(flat_shading){float zero[3]={0};raster_color(flat_color,material[0],zero,zero,0);}
     else {memset(&shade_plan,0,sizeof(shade_plan));shade_plan.valid=1;
         for(unsigned j=0;j<4;++j){shade_plan.out[j].valid=1;if(j==3)shade_plan.out[j].a=1;else shade_plan.out[j].x=1;}}
+}
+static void prepare_shield_material(unsigned mode){
+    memset(&texture_layer,0,sizeof(texture_layer));
+    active_texture=tev_configuration[1][1];active_coord=tev_configuration[1][0];
+    if(mode==MP_FRAGMENT_SHIELD_START){
+        GXTexObj*t=&textures[active_texture];GXTlutObj*p=&palettes[t->dummy[4]&31];
+        texture_layer=(MPTextureLayer){t->dummy[0],t->dummy[1]>>16,t->dummy[1]&65535,t->dummy[2],
+            p->dummy[0],p->dummy[1],p->dummy[2],t->dummy[3]>>16,(t->dummy[3]>>8)&255,(u32)batch_layer_uv};
+        if(texture_layer.format<GX_TF_C4||texture_layer.format>GX_TF_C14X2)texture_layer.palette=texture_layer.palette_format=texture_layer.palette_count=0;
+        layer_coord=active_coord;active_texture=tev_configuration[2][1];active_coord=tev_configuration[2][0];
+    }
+    float tint[4],highlight[4],base[4];
+    for(unsigned j=0;j<4;++j){tint[j]=konst(tev_configuration[0][23],j);highlight[j]=konst(tev_configuration[1][23],j);base[j]=konst(tev_configuration[2][23],j);}
+    base[3]=tev_color[1].a/255.f;
+    /* No raster or lighting inputs occur in this matched program. Keeping
+     * the low endpoint in the ordinary primary-color shader retains cached
+     * geometry for held shields and adds no per-vertex texture work. */
+    flat_shading=1;
+    mp_shield_parameters(mode,tint,highlight,base,konst(tev_configuration[3][23],0),konst(tev_configuration[1][24],3),flat_color,&texture_layer);
 }
 static float color_arg(unsigned a,unsigned k,float reg[4][4],const float*ras,unsigned sel){if(a<8)return reg[a/2][(a&1)?3:k];if(a==8||a==9)return 1;if(a==10)return ras[k];if(a==11)return ras[3];if(a==12)return 1;if(a==13)return .5f;if(a==14)return konst(sel,k);return 0;}
 static float alpha_arg(unsigned a,float reg[4][4],const float*ras,unsigned sel){if(a<4)return reg[a][3];if(a==4)return 1;if(a==5)return ras[3];if(a==6)return konst(sel,3);return 0;}
@@ -593,7 +613,12 @@ void GXBegin(GXPrimitive type,GXVtxFmt fmt,u16 nverts)
     layer_active=!points&&!lines&&!ind_count&&mp_layered_material(tev_configuration,num_stages)&&
         tev_configuration[1][0]<texgens&&tev_configuration[2][0]<texgens;
     if(layer_active){active_texture=tev_configuration[1][1];active_coord=tev_configuration[1][0];layer_coord=tev_configuration[2][0];}
-    u32 measured=detail_begin(0);if(layer_active)prepare_layered_material();else prepare_material();detail_end(0,measured);
+    unsigned shield=!points&&!lines&&!ind_count?mp_shield_material(tev_configuration,num_stages):0;
+    if(shield&&(tev_configuration[1][0]>=texgens||(shield==MP_FRAGMENT_SHIELD_START&&tev_configuration[2][0]>=texgens)))shield=0;
+    tint_active=shield==MP_FRAGMENT_TINT;
+    u32 measured=detail_begin(0);
+    if(shield){layer_active=shield==MP_FRAGMENT_SHIELD_START;prepare_shield_material(shield);}
+    else if(layer_active)prepare_layered_material();else prepare_material();detail_end(0,measured);
     measured=detail_begin(1);gpu_shading=prepare_gpu_shading();detail_end(1,measured);draw.gpu=gpu_shading?(u32)&gpu_uniforms:0;
     if(!gpu_shading&&nverts>mp_fallback_vertex_count){
         mp_fallback_vertex_count=nverts;mp_fallback_reason=gpu_reject_reason;mp_fallback_stages=num_stages;

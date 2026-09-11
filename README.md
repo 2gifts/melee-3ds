@@ -2,7 +2,9 @@
 
 An experimental port of **Super Smash Bros. Melee running natively on New Nintendo 3DS hardware**, built from the [doldecomp/melee](https://github.com/doldecomp/melee) decompilation. The original game engine runs as ARM code, with a 3DS graphics, audio and controller layer.
 
-The aim is to make Melee enjoyable on a handheld while keeping its original gameplay and adding features suited to the 3DS. Full matches have been played on a physical New 3DS. **The current milestone is update 9; performance varies, and stable 60 FPS has not been achieved.**
+The aim is to make Melee enjoyable on a handheld while keeping its original gameplay and adding features suited to the 3DS. Full matches have been played on a physical New 3DS. **The current milestone is update 10; performance varies, and stable 60 FPS has not been achieved.**
+
+Update 10 fixes player shield colors, including the startup flash and transparency, with the existing geometry cache retained. [Fix and validation details](native-3ds/docs/SHIELD_COLOR_UPDATE_10.md).
 
 ## Project features
 

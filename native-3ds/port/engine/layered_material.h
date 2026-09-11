@@ -8,7 +8,10 @@
 typedef struct {
     unsigned image,width,height,format,palette,palette_format,palette_count;
     unsigned wrap_s,wrap_t,uv,tint,blend,alpha;
+    unsigned mode,base;
 } MPTextureLayer;
+enum {MP_FRAGMENT_SUBTRACT,MP_FRAGMENT_SHIELD_START,MP_FRAGMENT_TINT};
+_Static_assert(sizeof(MPTextureLayer)==15*4,"Fragment material bridge layout");
 static inline int mp_layered_material(const unsigned c[16][30],unsigned n){
     static const unsigned rgb[4][4]={{15,15,15,14},{0,8,14,15},{8,15,15,0},{15,0,10,15}};
     static const unsigned alpha[4][4]={{7,7,7,7},{7,7,7,0},{1,4,4,7},{7,0,5,7}};
