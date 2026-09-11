@@ -19,8 +19,9 @@ def press(button):
 def main():
     ap=argparse.ArgumentParser();ap.add_argument('--seconds',type=int,default=60)
     ap.add_argument('--stage-kind',type=int,default=14,help='StKind (selected-stage numbering), 14 is Temple')
-    ap.add_argument('--label',default='casual');args=ap.parse_args()
-    bottom.OUT=bottom.ROOT/'build/update14-qa';bottom.OUT.mkdir(exist_ok=True)
+    ap.add_argument('--label',default='casual');ap.add_argument('--output',default='build/update15-qa')
+    ap.add_argument('--pause-after',action='store_true');args=ap.parse_args()
+    bottom.OUT=bottom.ROOT/args.output;bottom.OUT.mkdir(parents=True,exist_ok=True)
     select.observe((0,1,0,0));set_word('mp_test_stereo_slider',1000)
     for _ in range(90):
         state=select.observe()
@@ -78,6 +79,14 @@ def main():
     (bottom.OUT/(args.label+'-scenario.json')).write_text(json.dumps(summary,indent=2)+'\n')
     (bottom.OUT/(args.label+'-objects.json')).write_text(json.dumps(rows,indent=2)+'\n')
     print(json.dumps(summary),flush=True)
+    set_word('mp_rotation_cache_validate',0,'big');set_word('draw_packet_validate',0)
+    if args.pause_after:
+        from menu_display_pause_test import clock_state
+        assert bottom.snapshot()['players'][0]['stocks']>0,'Human player has no stocks to pause'
+        for _ in range(5):
+            if clock_state()['pause_flags']:break
+            select.act(0x1000,3);select.act(frames=20)
+        assert clock_state()['pause_flags']
 
 
 if __name__=='__main__':main()

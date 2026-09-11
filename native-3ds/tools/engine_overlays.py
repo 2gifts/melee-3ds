@@ -2,6 +2,37 @@
 import re
 from build import ROOT
 def adapt(source):
+    if source.name=='ftkirby.c':
+        changed=source.read_text(encoding='utf-8')
+        marker='void ftKb_SpecialN_800F14B4(Fighter_GObj* gobj)'
+        assert changed.count(marker)==1
+        helper='''/* The copied Game & Watch visibility lookup has one model group;
+ * Kirby's body has two. Its next archive word is a relocated pointer,
+ * interpreted as a negative/empty count on PPC but positive on ARM.
+ * Keep the real group and explicitly empty the unused body groups.
+ * Fighter player IDs are the six original player slots; Kirby has no
+ * simultaneous partner fighter sharing a slot. No archive is modified. */
+static FtPartsVisLookup mp_kirby_body_vis[6][11];
+static FtPartsVisLookup* mp_kirby_body_visibility(Fighter* fp,
+                                                FtPartsVisLookup* lookup)
+{
+    unsigned count = fp->u.kb.hat.x24.model_num;
+    FtPartsVisLookup* body;
+    HSD_ASSERT(0, fp->player_id < 6 && fp->x5AC.model_num <= 11 && count <= 11);
+    if (count > fp->x5AC.model_num) count = fp->x5AC.model_num;
+    body = mp_kirby_body_vis[fp->player_id];
+    memset(body, 0, sizeof(mp_kirby_body_vis[0]));
+    memcpy(body, lookup, count * sizeof(*body));
+    return body;
+}
+
+'''
+        changed=changed.replace(marker,helper+marker)
+        old='    fp->x5AC.xC[4] = lookup;'
+        assert changed.count(old)==1
+        changed=changed.replace(old,'    fp->x5AC.xC[4] = mp_kirby_body_visibility(fp, lookup);')
+        out=ROOT/'build/overlays'/source.name;out.parent.mkdir(parents=True,exist_ok=True)
+        out.write_text(changed,encoding='utf-8');return out
     if source.name=='grzebes.c':
         changed=source.read_text(encoding='utf-8')
         old='/* 8049F140 */ static Vec3 grZe_8049F140[2];\n/* 8049F158 */ static Vec3 grZe_8049F158[2];\n/* 8049F170 */ static grZe_BubbleEntry grZe_8049F170[20];'

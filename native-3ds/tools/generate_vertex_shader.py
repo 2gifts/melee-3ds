@@ -147,15 +147,32 @@ shader+='''        mov r10, zeros
     end
 .end
 '''
+# Early specialized entry paths keep the original full shader's IF nesting
+# unchanged. PICA has only a small flow-control stack. Mixed CPU/GPU batches
+# first reject the CPU clip-space marker before taking either shortcut.
+transform=('    mov r0, v3.wwww\n    cmp zeros, le, le, r0.x\n'
+    '    jmpc !cmp.x, full_vertex\n'+shader[shader.index('        mova a0.x'):shader.index('        mov r0, config[0]')])
+material=shader[shader.index('        mov r10, zeros\n        sge r9, v4'):shader.index('        mul r8, shade[1]')]
+# Omit the two lighting-channel clamps from the unlit path.
+material=material[:material.index('        mov r0, config[0]')]
+affine=shader[shader.index('        mul r8, shade[1]'):shader.index('    .else\n        mov outpos, v0')]
+tex=shader[shader.index('    mov outtex.xy'):shader.index('    end\n.end')]
+shader=shader.replace('.alias zeros constants.xxxx',
+    '.bool constant_color, unlit_color\n.alias zeros constants.xxxx')
+shader=shader.replace('.proc main\n', '.proc main\n'
+    '    jmpu constant_color, flat_vertex\n    jmpu unlit_color, unlit_vertex\nfull_vertex:\n')
+shader=shader.replace('    end\n.end', '    end\nflat_vertex:\n'+transform+
+    '        mov r8, zeros\n        add outcolor, shade[0], r8\n'+tex+'    end\nunlit_vertex:\n'+transform+
+    material+affine+tex+'    end\n.end')
 (ROOT/'port/3ds/vertex.v.pica').write_text(shader)
 # A separate program leaves the common single-texture vertex shader unchanged.
 dual=shader.replace('.out outtex texcoord0','.out outtex texcoord0\n.out outtex1 texcoord1')
-dual=dual.replace('    end\n.end','    mov outtex1.xy, v5\n    mov outtex1.z, zeros\n    mov outtex1.w, ones\n    end\n.end')
+dual=dual.replace('    end\n','    mov outtex1.xy, v5\n    mov outtex1.z, zeros\n    mov outtex1.w, ones\n    end\n')
 (ROOT/'port/3ds/vertex-dual.v.pica').write_text(dual)
-# The zero-slider programs stay byte-for-byte unchanged. Stereo adjusts the
-# rotated horizontal clip coordinate; fixed attribute 6 holds (scale,bias).
+# Stereo adjusts the rotated horizontal clip coordinate on every exit;
+# fixed attribute 6 holds (scale,bias). All routes share identical uniforms.
 for name,source in [('vertex-stereo',shader),('vertex-dual-stereo',dual)]:
     assert 'r11' not in source
     stereo=source.replace('outpos', 'r11').replace('.out r11 position','.out outpos position')
-    stereo=stereo.replace('    end\n.end','    mad r11.y, v6.x, r11.w, r11.y\n    add r11.y, r11.y, v6.y\n    mov outpos, r11\n    end\n.end')
+    stereo=stereo.replace('    end\n','    mad r11.y, v6.x, r11.w, r11.y\n    add r11.y, r11.y, v6.y\n    mov outpos, r11\n    end\n')
     (ROOT/f'port/3ds/{name}.v.pica').write_text(stereo)

@@ -139,8 +139,11 @@ static void source_release(GeometrySource*s){
     if(!s||--s->refs)return;
     GeometrySource**link=&geometry_sources[source_bucket(s->base)];
     while(*link!=s)link=&(*link)->next;*link=s->next;
-    geometry_bytes-=sizeof(*s)+s->size+3;mp_platform_free(s);
+    geometry_bytes-=sizeof(*s)+s->size+3;
+    mp_platform_free(s->copy-((u32)s->source&3));mp_platform_free(s);
 }
+volatile unsigned geometry_source_grow=1;
+unsigned geometry_source_growths;
 static unsigned geometry_next_id;
 static volatile unsigned geometry_validate;
 static unsigned geometry_checks;
@@ -189,9 +192,31 @@ static GeometrySource*source_acquire(const void*base,const void*data,unsigned si
             if(s->source!=data||s->size!=size)++geometry_range_shares;
             ++s->refs;return s;
         }
-    GeometrySource*s=geometry_alloc(sizeof(*s)+size+3);if(!s)return NULL;
+    /* Meshes often visit successively larger prefixes of the same array.
+     * Grow a stable shared descriptor instead of retaining/checking every
+     * smaller overlapping snapshot on every frame. Existing owners are safe
+     * only after their old prefix has passed the usual content comparison.
+     * Pin before allocation: cache-pressure eviction may release all owners. */
+    if(geometry_range_share&&geometry_source_grow){
+        GeometrySource*grow=NULL;
+        for(GeometrySource*s=geometry_sources[bucket];s;s=s->next)
+            if(s->base==base&&s->source==data&&s->size<size&&
+               (!grow||s->size>grow->size)&&source_valid(s))grow=s;
+        if(grow){
+            ++grow->refs;
+            u8*allocation=geometry_alloc(size+3);
+            if(!allocation){source_release(grow);return NULL;}
+            u8*copy=allocation+((u32)data&3);memcpy(copy,data,size);
+            geometry_bytes-=grow->size+3;mp_platform_free(grow->copy-((u32)grow->source&3));
+            grow->copy=copy;grow->size=size;grow->epoch=geometry_epoch;
+            ++geometry_source_growths;++geometry_range_shares;return grow;
+        }
+    }
+    GeometrySource*s=geometry_alloc(sizeof(*s));if(!s)return NULL;
+    u8*allocation=geometry_alloc(size+3);
+    if(!allocation){geometry_bytes-=sizeof(*s);mp_platform_free(s);return NULL;}
     s->source=data;s->base=base;s->size=size;s->refs=1;s->epoch=geometry_epoch;s->changed=0;
-    s->copy=(u8*)(s+1)+((u32)data&3);memcpy(s->copy,data,size);
+    s->copy=allocation+((u32)data&3);memcpy(s->copy,data,size);
     s->next=geometry_sources[bucket];geometry_sources[bucket]=s;return s;
 }
 static void geometry_cancel(void){if(geometry_record){GeometryCache*e=geometry_record;geometry_record=NULL;geometry_clear(e);}}
@@ -328,6 +353,7 @@ void GXSetDrawDone(void){
         OSReport("Vertex shading GPU=%u flat=%u affine=%u fallback=%u\n",gpu_vertices,flat_vertices,affine_vertices,slow_vertices);
         OSReport("Geometry cache hits=%u misses=%u checks=%u bytes=%u\n",geometry_hits,geometry_misses,geometry_checks,geometry_bytes);
         OSReport("Geometry sources compares=%u reuses=%u bytes=%u shared ranges=%u\n",geometry_source_compares,geometry_source_reuses,geometry_source_bytes,geometry_range_shares);
+        OSReport("Shared geometry snapshot growths=%u\n",geometry_source_growths);
         OSReport("Off-screen geometry checks=%u skipped draws=%u vertices=%u\n",mp_geometry_cull_checks,mp_geometry_cull_draws,mp_geometry_cull_vertices);
         OSReport("Profile/60 frames list=%u submit=%u copy=%u audio=%u ticks\n",profile_lists,profile_submit,profile_copy,mp_profile_audio);
         OSReport("Material cache hits=%u misses=%u checks=%u\n",shade_hits,shade_misses,shade_checks);
@@ -489,6 +515,7 @@ static int prepare_gpu_shading(void)
         }
     }
     gpu_uniforms.matrix_rows=descriptors[GX_VA_PNMTXIDX]?30:3;
+    gpu_uniforms.constant_color=flat_shading!=0;
     if(descriptors[GX_VA_PNMTXIDX]){
         memcpy(u+MP_GPU_POS,position_mtx,30*16);memcpy(u+MP_GPU_NORMAL,normal_mtx,30*16);
     }else{

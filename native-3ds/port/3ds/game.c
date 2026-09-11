@@ -165,7 +165,7 @@ int main(void)
     mkdir("sdmc:/3ds",0777);mkdir("sdmc:/3ds/melee",0777);
     mp_log_init();
     bool is_new=false;APT_CheckNew3DS(&is_new);
-    mp_native_log("Melee ARM BE8 engine startup - Stereo rendering and attract stability update 14\n");
+    mp_native_log("Melee ARM BE8 engine startup - Pipelined stereo performance update 15\n");
     mp_native_log("All-stage performance: low-detail fighters, projected shadows off, conservative off-screen mesh rejection; audited Diet scenery where available\n");
     if(is_new)mp_native_log("New 3DS family detected; fast CPU and L2 cache requested\n");
     u32 actual_layout[3]={(u32)mp_image_text_start,(u32)mp_image_rodata_start,(u32)mp_image_data_start};

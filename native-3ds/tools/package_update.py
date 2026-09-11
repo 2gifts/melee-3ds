@@ -44,6 +44,8 @@ def main():
                'texture_bind_disable','texture_bind_hits','texture_bind_updates',
                'draw_packet_disable','draw_packet_validate','draw_packet_checks','draw_packet_draws',
                'gpu_full_heap_flush','gpu_vblank_wait','command_byte_budget',
+               'gpu_pipeline_disable','shader_shortcuts_disable','palette_upload_disable',
+               'shader_verify','verify_shader_paths',
                '__ubsan_handle_type_mismatch_v1'}
     assert not labels&forbidden,sorted(labels&forbidden)
     from test_be8_image import check

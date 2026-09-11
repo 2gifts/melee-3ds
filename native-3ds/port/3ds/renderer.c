@@ -41,6 +41,15 @@ static C3D_RenderTarget*stereo_target,*eye_output[2];
 static C3D_RenderTarget*mono_target;
 unsigned mp_native_stereo_depth;
 static unsigned stereo_active;
+/* Game simulation may run while PICA finishes the previous frame. The
+ * first GPU consumer waits before reusing commands, vertices or textures. */
+static unsigned frame_pending;
+#ifdef MP_SMOKE_TEST
+volatile unsigned gpu_pipeline_disable,shader_shortcuts_disable,palette_upload_disable;
+#endif
+static u64 gpu_wait_ticks;
+static double gpu_draw_ms;
+static unsigned gpu_queue_samples,gpu_queue_pending;
 static int stereo_failed;
 #define OUTPUT_FLAGS (GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGBA8)|GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGB8))
 static int point_program_active;
@@ -109,7 +118,12 @@ static void end_command_frame(u8 flags){command_usage();unsigned previous=mp_log
 #else
 static void end_command_frame(u8 flags){command_usage();unsigned previous=mp_log_phase(MP_LOG_GPU_END);C3D_FrameEnd(flags|GX_CMDLIST_FLUSH);mp_log_phase(previous);}
 #endif
-static bool begin_command_frame(u8 flags){unsigned previous=mp_log_phase(MP_LOG_GPU_BEGIN);bool result=C3D_FrameBegin(flags);mp_log_phase(previous);return result;}
+static bool begin_command_frame(u8 flags){
+    unsigned previous=mp_log_phase(MP_LOG_GPU_BEGIN);u64 start=svcGetSystemTick();
+    bool result=C3D_FrameBegin(flags);gpu_wait_ticks+=svcGetSystemTick()-start;
+    if(result&&gpu_queue_pending){gpu_draw_ms+=C3D_GetDrawingTime();++gpu_queue_samples;gpu_queue_pending=0;}
+    mp_log_phase(previous);return result;
+}
 #define C3D_FrameEnd(flags) end_command_frame(flags)
 #define C3D_FrameBegin(flags) begin_command_frame(flags)
 static void reserve_commands(void);
@@ -120,7 +134,7 @@ static void checked_draw_arrays(GPU_Primitive_t primitive,int first,int count){r
 #define C3D_DrawElements(primitive,count,type,data) checked_draw_elements(primitive,count,type,data)
 #define C3D_DrawArrays(primitive,first,count) checked_draw_arrays(primitive,first,count)
 static const u16*draw_indices;
-typedef struct{unsigned id,frame,bytes,count,index_count;float us,vs;int textured;Vertex*vertices;u16*indices;} NativeGeometry;
+typedef struct{unsigned id,frame,bytes,count,index_count;float us,vs;int textured;Vertex*vertices;u16*indices;unsigned matrix_mask;} NativeGeometry;
 #define NATIVE_GEOMETRY_ENTRIES 2048
 #define NATIVE_GEOMETRY_BUDGET (4*1024*1024)
 static NativeGeometry native_geometry[NATIVE_GEOMETRY_ENTRIES];
@@ -204,6 +218,8 @@ static u32*efb_pixels;
 static u32 uniform_cache[MP_GPU_UNIFORMS][4];
 static u8 uniform_valid[MP_GPU_UNIFORMS];
 static u32 material0_cache[4];static int material0_valid;
+static unsigned shader_branch_mask=~0u;
+unsigned shader_shortcut_draws[3],shader_shortcut_vertices[3];
 /* Citro3D marks the complete effect block dirty on each setter, even if its
  * value is unchanged. Retain normal-draw state across adjacent batches.
  * Copies and frame-target changes invalidate it before the next draw. */
@@ -360,6 +376,17 @@ static void native_geometry_check(const NativeGeometry*e,const Vertex*be,const D
     ++native_geometry_checks;
 }
 #endif
+/* A palette contains ten matrices, but most meshes reference only a few.
+ * Record the exact rows used by immutable converted vertices once, then
+ * leave unused PICA uniforms untouched. CPU-transformed vertices use none. */
+static unsigned vertex_matrix_mask(const Vertex*v,unsigned count){
+    unsigned mask=0;
+    for(unsigned i=0;i<count;++i){float row=v[i].n[3];
+        if(row>=0&&row<30)mask|=7u<<(unsigned)row;
+    }
+    return mask;
+}
+unsigned palette_rows_sent,palette_rows_skipped;
 static NativeGeometry*native_geometry_get(const Vertex*be,unsigned count,const Draw*d,int textured,float us,float vs){
     NATIVE_WORK(0,1);
     if(!d->geometry_id){NATIVE_WORK(1,count);return NULL;}
@@ -386,7 +413,7 @@ static NativeGeometry*native_geometry_get(const Vertex*be,unsigned count,const D
     convert_vertices(v,be,count,textured,us,vs);for(unsigned i=0;i<d->index_count;++i)ib[i]=__builtin_bswap16(src[i]);
     NATIVE_WORK(3,count);
     GSPGPU_FlushDataCache(v,bytes);
-    *slot=(NativeGeometry){d->geometry_id,frame_number,bytes,count,d->index_count,us,vs,textured,v,ib};native_geometry_bytes+=bytes;
+    *slot=(NativeGeometry){d->geometry_id,frame_number,bytes,count,d->index_count,us,vs,textured,v,ib,vertex_matrix_mask(v,count)};native_geometry_bytes+=bytes;
     mp_cache_lru_touch(&native_geometry_lru,(unsigned)(slot-native_geometry)+1);return slot;
 }
 static u32 rgba(unsigned r,unsigned g,unsigned b,unsigned a){return(r<<24)|(g<<16)|(b<<8)|a;}
@@ -576,12 +603,13 @@ int mp_renderer_init(void)
     shaderProgramInit(&stereo_dual_program);shaderProgramSetVsh(&stereo_dual_program,&stereo_dual_dvlb->DVLE[0]);
     vertices=linearAlloc(MAX_VERTICES*sizeof(Vertex));indices=linearAlloc(MAX_INDICES*sizeof(u16));layer_uv=linearAlloc(MAX_VERTICES*8);return vertices!=NULL&&indices!=NULL&&layer_uv!=NULL;
 }
-void mp_renderer_begin(void)
+static void renderer_begin(void)
 {
     /* Melee's pad/VI queue already paces simulation at 60 Hz. Waiting for a
      * second VBlank here quantizes a late frame to 30/20/15 FPS. Still wait
      * for the previous GPU queue before recycling any streaming storage. */
     if(frame_active)return;
+    frame_pending=0;
 #ifdef MP_SMOKE_TEST
     MP_AUDIO_TRACE(2,C3D_FrameBegin(gpu_vblank_wait?C3D_FRAME_SYNCDRAW:0));
 #else
@@ -610,6 +638,12 @@ void mp_renderer_begin(void)
     vertex_base(0);
     for(int i=0;i<6;++i)C3D_TexEnvInit(C3D_GetTexEnv(i));
     C3D_CullFace(GPU_CULL_NONE);vertex_count=index_count=draw_count=render_vertex_count=flushed_vertices=flushed_indices=0;
+}
+void mp_renderer_begin(void){
+    frame_pending=1;
+#ifdef MP_SMOKE_TEST
+    if(gpu_pipeline_disable)renderer_begin();
+#endif
 }
 static unsigned draw_with_alpha(const Draw*d,unsigned first,unsigned count){
     static struct{unsigned key,func,ref;int simple,used;}cache[64];
@@ -641,6 +675,7 @@ static unsigned draw_with_alpha(const Draw*d,unsigned first,unsigned count){
 }
 void mp_native_submit(const Vertex*be,unsigned count,const Draw*state)
 {
+    renderer_begin();
     Draw d;for(unsigned i=0;i<sizeof(d)/4;++i)((u32*)&d)[i]=read32((const u32*)state+i);
     if(d.points&&!d.point_size)return;
     if(d.cull==3)return;
@@ -668,26 +703,6 @@ void mp_native_submit(const Vertex*be,unsigned count,const Draw*state)
     bind_program(two_uv?2:d.points!=0);
     if(state_needed(STATE_SCISSOR,memcmp(clip,raster_state.clip,sizeof(clip))!=0))C3D_SetScissor(GPU_SCISSOR_NORMAL,clip[0],clip[1],clip[2],clip[3]);
     memcpy(raster_state.clip,clip,sizeof(clip));
-    measured=native_detail_begin(1);
-    if(d.gpu){const u32(*u)[4]=(void*)d.gpu;
-        const u32*material=(const void*)((const MPGPUUniforms*)d.gpu)->material0;
-        if(!material0_valid||memcmp(material0_cache,material,16)){
-            union{u32 u[4];float f[4];}m;for(unsigned j=0;j<4;++j)m.u[j]=read32(material+j);
-            C3D_FixedAttribSet(4,m.f[0],m.f[1],m.f[2],m.f[3]);memcpy(material0_cache,material,16);material0_valid=1;
-        }
-        unsigned rows=read32(&((const MPGPUUniforms*)d.gpu)->matrix_rows);int lighting=u[MP_GPU_CONFIG][0]!=0||u[MP_GPU_CONFIG+1][0]!=0;
-        for(unsigned i=0;i<MP_GPU_UNIFORMS;++i){
-        if(i<30&&i>=rows)continue;
-        if(i>=30&&i<60&&(!lighting||i-30>=rows))continue;
-        if(i>=MP_GPU_LIGHT_POS&&i<MP_GPU_SHADE){
-            if(i<MP_GPU_LIGHT_COLOR||i>=MP_GPU_LIGHT_COLOR+4){if(!lighting||!u[MP_GPU_LIGHT_COLOR+(i-MP_GPU_LIGHT_POS)%4][3])continue;}
-        }
-        if(i>=MP_GPU_AMBIENT&&i<MP_GPU_AMBIENT+2&&!u[MP_GPU_CONFIG+i-MP_GPU_AMBIENT][0])continue;
-        if(!uniform_valid[i]||u[i][0]!=uniform_cache[i][0]||u[i][1]!=uniform_cache[i][1]||u[i][2]!=uniform_cache[i][2]||u[i][3]!=uniform_cache[i][3]){
-            union{u32 u[4];float f[4];}v;for(int j=0;j<4;++j)v.u[j]=read32(&u[i][j]);
-            C3D_FVUnifSet(GPU_VERTEX_SHADER,i,v.f[0],v.f[1],v.f[2],v.f[3]);memcpy(uniform_cache[i],u[i],16);uniform_valid[i]=1;
-        }}}
-    native_detail_end(1,measured);
     float us=t?(float)t->w/t->tex.width:1,vs=t?(float)t->h/t->tex.height:1;
     if(d.points){
         static const float offsets[]={0,1.f/16,1.f/8,1.f/4,1.f/2,1};
@@ -709,7 +724,42 @@ void mp_native_submit(const Vertex*be,unsigned count,const Draw*state)
         }
         vertex_count+=count;index_count+=d.index_count;
     }
-    native_detail_end(2,measured);measured=native_detail_begin(3);
+    native_detail_end(2,measured);
+    measured=native_detail_begin(1);
+    unsigned branch=0;
+    if(d.gpu){const MPGPUUniforms*u=(const void*)d.gpu;
+        branch=(read32(&u->constant_color)?1:0)|((read32(&u->value[MP_GPU_CONFIG][0])||read32(&u->value[MP_GPU_CONFIG+1][0]))?2:0);
+    }
+#ifdef MP_SMOKE_TEST
+    if(shader_shortcuts_disable)branch=2;
+#endif
+    if(branch!=shader_branch_mask){C3D_BoolUnifSet(GPU_VERTEX_SHADER,0,branch&1);C3D_BoolUnifSet(GPU_VERTEX_SHADER,1,!(branch&2));shader_branch_mask=branch;}
+    unsigned route=(branch&1)?0:(branch&2)?2:1;++shader_shortcut_draws[route];shader_shortcut_vertices[route]+=count;
+    unsigned matrix_mask=geometry?geometry->matrix_mask:vertex_matrix_mask(submitted,count);
+#ifdef MP_SMOKE_TEST
+    if(palette_upload_disable)matrix_mask=0x3fffffff;
+#endif
+    if(d.gpu){const u32(*u)[4]=(void*)d.gpu;
+        const u32*material=(const void*)((const MPGPUUniforms*)d.gpu)->material0;
+        if(!material0_valid||memcmp(material0_cache,material,16)){
+            union{u32 u[4];float f[4];}m;for(unsigned j=0;j<4;++j)m.u[j]=read32(material+j);
+            C3D_FixedAttribSet(4,m.f[0],m.f[1],m.f[2],m.f[3]);memcpy(material0_cache,material,16);material0_valid=1;
+        }
+        unsigned rows=read32(&((const MPGPUUniforms*)d.gpu)->matrix_rows);int lighting=u[MP_GPU_CONFIG][0]!=0||u[MP_GPU_CONFIG+1][0]!=0;
+        for(unsigned i=0;i<MP_GPU_UNIFORMS;++i){
+        if(i<30&&(i>=rows||!(matrix_mask&(1u<<i)))){++palette_rows_skipped;continue;}
+        if(i>=30&&i<60&&(!lighting||i-30>=rows||!(matrix_mask&(1u<<(i-30))))){++palette_rows_skipped;continue;}
+        if(i>=MP_GPU_LIGHT_POS&&i<MP_GPU_SHADE){
+            if(i<MP_GPU_LIGHT_COLOR||i>=MP_GPU_LIGHT_COLOR+4){if(!lighting||!u[MP_GPU_LIGHT_COLOR+(i-MP_GPU_LIGHT_POS)%4][3])continue;}
+        }
+        if(i>=MP_GPU_AMBIENT&&i<MP_GPU_AMBIENT+2&&!u[MP_GPU_CONFIG+i-MP_GPU_AMBIENT][0])continue;
+        if(!uniform_valid[i]||u[i][0]!=uniform_cache[i][0]||u[i][1]!=uniform_cache[i][1]||u[i][2]!=uniform_cache[i][2]||u[i][3]!=uniform_cache[i][3]){
+            union{u32 u[4];float f[4];}v;for(int j=0;j<4;++j)v.u[j]=read32(&u[i][j]);
+            if(i<60)++palette_rows_sent;
+            C3D_FVUnifSet(GPU_VERTEX_SHADER,i,v.f[0],v.f[1],v.f[2],v.f[3]);memcpy(uniform_cache[i],u[i],16);uniform_valid[i]=1;
+        }}}
+    native_detail_end(1,measured);
+    measured=native_detail_begin(3);
     if(two_uv)layered_vertex_pointer(submitted,submitted_uv);else vertex_pointer(submitted);
     static unsigned sampled;
     if(sampled++<5){char text[200];const Vertex*v=submitted;snprintf(text,sizeof(text),"GX draw texture=%08lx fmt=%lu %lux%lu rgba=%.2f %.2f %.2f %.2f uv=%.2f %.2f\n",(unsigned long)d.image,(unsigned long)d.format,(unsigned long)d.w,(unsigned long)d.h,v->c[0],v->c[1],v->c[2],v->c[3],v->t[0],v->t[1]);mp_native_log(text);}
@@ -812,9 +862,11 @@ void mp_native_submit(const Vertex*be,unsigned count,const Draw*state)
 #include "layered_verify.h"
 #include "shield_verify.h"
 #include "stereo_verify.h"
+#include "shader_verify.h"
 #endif
-void mp_renderer_end(void){if(!frame_active)return;
+void mp_renderer_end(void){if(frame_pending)renderer_begin();if(!frame_active)return;
 #ifdef MP_SMOKE_TEST
+    if(shader_verify)verify_shader_paths();
     if(stereo_verify)verify_stereo();
     if(native_geometry_lru_validate)native_geometry_check_lru();
     if(layered_verify)verify_layered_material();
@@ -832,10 +884,12 @@ void mp_renderer_end(void){if(!frame_active)return;
     }
 #endif
     if(stereo_active){eye_output[0]->used=true;eye_output[1]->used=true;}
-    flush_dynamic();C3D_FrameEnd(0);frame_active=0;
+    flush_dynamic();C3D_FrameEnd(0);gpu_queue_pending=1;frame_active=0;
+    if(frame_number%60==0){char text[160];snprintf(text,sizeof(text),"GPU/60 frames wait=%.2f ms; completed queue mean=%.2f ms (%u queues)\n",gpu_wait_ticks*1000.0/SYSCLOCK_ARM11/60,gpu_queue_samples?gpu_draw_ms/gpu_queue_samples:0,gpu_queue_samples);mp_native_log(text);gpu_wait_ticks=0;gpu_draw_ms=0;gpu_queue_samples=0;}
     if(frame_number%60==0){char text[150];snprintf(text,sizeof(text),"GPU geometry hits=%u bytes=%u dynamic vertices=%u EFB copies=%u\n",native_geometry_hits,native_geometry_bytes,vertex_count,efb_gpu_copies);mp_native_log(text);}
     if(frame_number%60==0){char text[140];snprintf(text,sizeof(text),"Textures=%u bytes=%u barriers=%u stream barriers=%u linear free=%u\n",texture_count,texture_bytes,texture_barriers,stream_barriers,(unsigned)linearSpaceFree());mp_native_log(text);}
     if(frame_number%300==0){char text[100];snprintf(text,sizeof(text),"Texture uploads=%u capacity evictions=%u\n",texture_uploads,texture_evictions);mp_native_log(text);}
+    if(frame_number%300==0){char text[200];snprintf(text,sizeof(text),"Shader vertices constant=%u unlit=%u full=%u; palette rows sent=%u skipped=%u\n",shader_shortcut_vertices[0],shader_shortcut_vertices[1],shader_shortcut_vertices[2],palette_rows_sent,palette_rows_skipped);mp_native_log(text);}
     if(frame_number%60==0){char text[100];snprintf(text,sizeof(text),"GPU command peak=%u bytes, capacity=%u, barriers=%u\n",command_peak_bytes,COMMAND_BUFFER_BYTES,command_barriers);mp_native_log(text);}
 }
 void mp_native_texture_invalidate(void){++texture_generation;}
@@ -963,6 +1017,7 @@ static void efb_copy_cpu_reference(const u32*q,const u32*source,unsigned screen_
  * texture layout expected by HSD shadow and refraction passes. */
 void mp_native_efb_copy(const u32*request)
 {
+    renderer_begin();
     raster_state_invalidate();
     u32 q[14];for(unsigned i=0;i<14;++i)q[i]=read32(request+i);
     unsigned w=q[5],h=q[6],fmt=q[7];

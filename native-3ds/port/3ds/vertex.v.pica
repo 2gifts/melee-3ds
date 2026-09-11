@@ -2,12 +2,16 @@
 .fvec model[30], normal[30], projection[4], lightpos[4], lightdir[4], lightcolor[4]
 .fvec attenuation[4], cosattenuation[4], shade[5], ambient[2], config[2], material1, finalclamp
 .constf constants(0.0,1.0,0.000000000001,2.0)
+.bool constant_color, unlit_color
 .alias zeros constants.xxxx
 .alias ones constants.yyyy
 .out outpos position
 .out outcolor color
 .out outtex texcoord0
 .proc main
+    jmpu constant_color, flat_vertex
+    jmpu unlit_color, unlit_vertex
+full_vertex:
     mov r0, v3.wwww
     cmp zeros, le, le, r0.x
     ifc cmp.x
@@ -324,6 +328,61 @@
         mov outpos, v0
         mov outcolor, v1
     .end
+    mov outtex.xy, v2
+    mov outtex.z, zeros
+    mov outtex.w, ones
+    end
+flat_vertex:
+    mov r0, v3.wwww
+    cmp zeros, le, le, r0.x
+    jmpc !cmp.x, full_vertex
+        mova a0.x, r0.x
+        dp4 r1.x, model[a0.x], v0
+        dp4 r1.y, model[a0.x+1], v0
+        dp4 r1.z, model[a0.x+2], v0
+        mov r1.w, ones
+        dp4 outpos.x, projection[0], r1
+        dp4 outpos.y, projection[1], r1
+        dp4 outpos.z, projection[2], r1
+        dp4 outpos.w, projection[3], r1
+        mov r8, zeros
+        add outcolor, shade[0], r8
+    mov outtex.xy, v2
+    mov outtex.z, zeros
+    mov outtex.w, ones
+    end
+unlit_vertex:
+    mov r0, v3.wwww
+    cmp zeros, le, le, r0.x
+    jmpc !cmp.x, full_vertex
+        mova a0.x, r0.x
+        dp4 r1.x, model[a0.x], v0
+        dp4 r1.y, model[a0.x+1], v0
+        dp4 r1.z, model[a0.x+2], v0
+        mov r1.w, ones
+        dp4 outpos.x, projection[0], r1
+        dp4 outpos.y, projection[1], r1
+        dp4 outpos.z, projection[2], r1
+        dp4 outpos.w, projection[3], r1
+        mov r10, zeros
+        sge r9, v4, r10
+        max r10, zeros, v4
+        add r7, r10, -v1
+        mad r7, r9, r7, v1
+        mov r15, material1
+        mul r8, shade[1], r7
+        mov r9, shade[2]
+        mad r8, r9, r7.w, r8
+        mov r9, shade[3]
+        mad r8, r9, r15, r8
+        mov r9, shade[4]
+        mad r8, r9, r15.w, r8
+        add r8, shade[0], r8
+        max r9, zeros, r8
+        min r9, ones, r9
+        add r9, r9, -r8
+        mov r10, finalclamp
+        mad outcolor, r10, r9, r8
     mov outtex.xy, v2
     mov outtex.z, zeros
     mov outtex.w, ones
