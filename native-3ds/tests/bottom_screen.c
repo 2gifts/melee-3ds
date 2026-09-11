@@ -27,6 +27,7 @@ int main(void){
     s.scene=8;s.players[0].stocks=4;save("css",&s,0,0);
     s.scene=0;save("title",&s,0,0);
     s.scene=1;save("menu",&s,0,0);
+    for(unsigned m=0;m<34;++m){char name[40];s.menu=m;snprintf(name,sizeof(name),"menu-%02u",m);save(name,&s,0,0);}
     s.scene=9;save("stage",&s,0,0);
     save("controls",&s,0,1);
     s.scene=4;s.stock_mode=0;save("training",&s,1,0);

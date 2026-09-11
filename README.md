@@ -2,17 +2,17 @@
 
 An experimental port of **Super Smash Bros. Melee running natively on New Nintendo 3DS hardware**, built from the [doldecomp/melee](https://github.com/doldecomp/melee) decompilation. The original game engine runs as ARM code, with a 3DS graphics, audio and controller layer.
 
-The aim is to make Melee enjoyable on a handheld while keeping its original gameplay and adding features suited to the 3DS. Full matches have been played on a physical New 3DS. **The current milestone is update 11; performance varies, and stable 60 FPS has not been achieved.**
+The aim is to make Melee enjoyable on a handheld while keeping its original gameplay and adding features suited to the 3DS. Full matches have been played on a physical New 3DS. **The current milestone is update 12; performance varies, and stable 60 FPS has not been achieved.**
 
-Update 11 replaces the bottom console with a Melee-style companion screen: original portraits, stocks and damage for up to four fighters, a live CSS roster, contextual menu guidance and a results summary. [Details and controls](native-3ds/docs/BOTTOM_SCREEN_UPDATE_11.md).
+Update 12 fixes menu stack corruption, refines bottom-screen guidance, extends proper widescreen to menu models and enables Start-to-pause by default. The Melee-style bottom screen shows original portraits, stocks and damage for up to four fighters. [Changes and validation](native-3ds/docs/MENU_REFINEMENT_UPDATE_12.md).
 
 ## Project features
 
 - **Touch-screen match dashboard**, with FPS hidden by default. Tap FPS to toggle it, VIEW to change projection, or CONTROLS for the guide. The guide does not pause gameplay.
 - Original menus, character selection, Training and Versus matches against CPU opponents, with music and sound effects.
 - **Native stereoscopic 3D**, controlled by the slider, in gameplay and perspective menus—including a Ready to Fight ribbon that pops forward.
-- **4:3 by default**, with an optional expanded view that reveals more of the sides without stretching the game.
-- All characters and stages unlocked, offline tournament defaults, and native UCF 0.84 input fixes.
+- **4:3 by default**, with an optional expanded view in gameplay and menus that reveals more of the sides without stretching.
+- All characters and stages unlocked, offline tournament settings with pause enabled, and native UCF 0.84 input fixes.
 - Ongoing loading and rendering optimizations, plus optional audited Diet Melee scenery for five stages.
 
 ## What you need
@@ -78,13 +78,13 @@ Audio uses the DSP support supplied by your homebrew setup or your existing `SD:
 | L / R | Shield |
 | ZL / ZR, or L + A | Grab |
 | C-stick | Directional attack |
-| START | Confirm / Training menu; pause when enabled in Rules |
+| START | Confirm / Training menu; pause (enabled by default) |
 | 3D slider | Adjust depth; fully down selects 2D |
 | Hold ZL + ZR, then press SELECT | Toggle 4:3 / expanded view |
 | Touch FPS / VIEW / CONTROLS | Toggle rendered FPS, projection, or the control guide |
 | SELECT | Return to Homebrew Launcher |
 
-Versus defaults to **4 stocks, 8 minutes, items off, team attack on and pause off**. Rules can be changed in the menus for the current session.
+Versus defaults to **4 stocks, 8 minutes, items off, team attack on and pause on**. Rules can be changed in the menus for the current session.
 
 ## Current limitations and updates
 

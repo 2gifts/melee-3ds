@@ -2,6 +2,17 @@
 import re
 from build import ROOT
 def adapt(source):
+    if source.name=='mnmain.c':
+        changed=source.read_text(encoding='utf-8')
+        # The PPC stack's padding masked undersized scratch arrays. On ARM,
+        # the fifth option overwrites fn_8022AFEC's saved r4. Special Melee
+        # also writes ten entries to mn_8022A5D0's seven-entry array.
+        for old in ('HSD_JObj* sp20[4];','HSD_JObj* spA0[7];'):
+            assert changed.count(old)==1
+            changed=changed.replace(old,old[:old.index('[')]+
+                '[sizeof(mn_803EAE68) / sizeof(mn_803EAE68[0])];')
+        out=ROOT/'build/overlays'/source.name;out.parent.mkdir(parents=True,exist_ok=True)
+        out.write_text(changed,encoding='utf-8');return out
     if source.name=='lbcollision.c':
         changed=source.read_text(encoding='utf-8')
         changed='unsigned mp_collision_invalid_count;\nfloat mp_collision_invalid_sample[32];\n'+changed

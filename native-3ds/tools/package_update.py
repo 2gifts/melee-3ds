@@ -100,7 +100,8 @@ The first line of /3ds/melee/game.log identifies this update.
 The bottom screen shows the live roster, damage and stocks for up to four
 fighters, with matching menu guidance and a completed-match summary.
 Tap FPS OFF at the lower left to show FPS; tap again to hide it.
-Tap VIEW to switch between 4:3 and expanded gameplay.
+Tap VIEW to switch between 4:3 and expanded gameplay and menu models.
+START pauses Versus by default; More Rules can disable it.
 Tap CONTROLS for the guide, then CLOSE GUIDE to return. The guide does not
 pause the match. FPS starts hidden each launch; game logs stay on the SD.
 ''')
@@ -112,7 +113,7 @@ Raise the 3D slider for stereo gameplay and menu models; fully down selects 2D.
 Maximum depth is 50% stronger than update 8. The CSS Ready to Fight ribbon
 sits in front of the screen; ordinary HUD/text overlays remain flat.
 The default remains centered 4:3. Hold ZL + ZR and press SELECT to toggle
-expanded gameplay without stretching. Stereo adds GPU drawing work; use 2D
+expanded gameplay and menu models without stretching. Stereo adds GPU drawing work; use 2D
 for the highest available frame rate. Stable physical 60 FPS remains open.
 ''')
             else:
@@ -134,7 +135,7 @@ All stages use the shared off-screen rejection and reduced shadow work.
 The other stages remain selectable and keep their original archives.
 
 All characters/stages and More Rules unlock on launch. Versus defaults to
-4 stocks, 8 minutes, items off, team attack on and pause off. Random uses
+4 stocks, 8 minutes, items off, team attack on and pause on. Random uses
 the six singles stages. Rules can be changed in the menus for this session.
 UCF 0.84's native input fixes are enabled. There is no online mode.
 No-card prompts are skipped; memory-card persistence remains unavailable.

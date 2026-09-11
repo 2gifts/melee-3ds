@@ -219,6 +219,54 @@ static void rules(const MPBottomState* s,int y){
     char b[70];snprintf(b,sizeof(b),s->stock_mode?"%u STOCK  /  %u MIN":"TIME BATTLE  /  %u MIN",s->stock_mode?s->rule_stocks:s->rule_minutes,s->rule_minutes);
     text(17,y,b,15,ink);text(17,y+20,s->items==255?"ITEMS OFF":"ITEMS ON",12,muted);
 }
+typedef struct { const char *title,*lead,*line1,*line2,*hint; unsigned rules; } MenuHelp;
+/* MenuKind values from the original menu table. Advice describes this
+ * screen, not a different mode; only Versus rule screens show VS defaults. */
+static const MenuHelp menu_help[34]={
+    [0]={"MAIN MENU","CHOOSE YOUR MODE","1-P: CHALLENGES AND PRACTICE","VS: BATTLE CPU OPPONENTS","CIRCLE PAD: CHOOSE   A: OPEN",0},
+    [1]={"1-P MODE","PLAY AT YOUR OWN PACE","REGULAR MATCH: SOLO ADVENTURES","TRAINING: PRACTICE YOUR MOVES","A: OPEN   B: MAIN MENU",0},
+    [2]={"VS MODE","YOUR MELEE RULES","MELEE: FIGHT CPU OPPONENTS","RULES: STOCKS, TIME AND ITEMS","A: OPEN   B: MAIN MENU",1},
+    [3]={"TROPHIES","THE MELEE COLLECTION","GALLERY: TAKE A CLOSER LOOK","COLLECTION: VIEW YOUR TROPHIES","A: OPEN   B: MAIN MENU",0},
+    [4]={"OPTIONS","MAKE YOURSELF AT HOME","ADJUST SOUND AND GAME SETTINGS","USE VIEW BELOW FOR 4:3 OR WIDE","A: OPEN   B: MAIN MENU",0},
+    [5]={"DATA","EXPLORE MELEE","STATS AND CHARACTER ARCHIVES","SOUND TEST: PLAY THE SOUNDTRACK","A: OPEN   B: MAIN MENU",0},
+    [6]={"REGULAR MATCH","TAKE ON A SOLO RUN","CLASSIC: A SERIES OF BATTLES","ADVENTURE: EXPLORE THE WORLDS","A: CHOOSE MODE   B: 1-P MODE",0},
+    [7]={"EVENT MATCH","A CHALLENGE WITH A TWIST","EACH EVENT HAS ITS OWN OBJECTIVE","READ THE OBJECTIVE ON THE TOP SCREEN","A: CHOOSE EVENT   B: BACK",0},
+    [9]={"STADIUM","CHASE A PERSONAL BEST","TARGET TEST AND HOME-RUN CONTEST","MULTI-MAN: SURVIVE THE CROWD","A: CHOOSE EVENT   B: 1-P MODE",0},
+    [12]={"SPECIAL MELEE","CHANGE THE WAY YOU PLAY","TRY STAMINA, GIANT OR TINY MELEE","EACH MODE ADDS ITS OWN BATTLE TWIST","A: CHOOSE MODE   B: VS MODE",0},
+    [13]={"MATCH RULES","YOUR MELEE RULES","CHOOSE TIME OR STOCK BATTLES","ITEM SWITCH: FREQUENCY AND TYPES","LEFT / RIGHT: CHANGE   B: BACK",1},
+    [15]={"MORE RULES","REFINE YOUR MATCH","STOCK TIMER: LIMIT MATCH LENGTH","PAUSE: ALLOW START TO PAUSE","LEFT / RIGHT: CHANGE   B: BACK",0},
+    [16]={"ITEM SWITCH","SET THE ITEM POOL","ITEM FREQUENCY IS THE TOP ROW","OFF STOPS RANDOM ITEM SPAWNS","CHOOSE AN ITEM TO ENABLE OR DISABLE IT",0},
+    [17]={"RANDOM STAGES","BUILD YOUR RANDOM POOL","CHOOSE THE STAGES RANDOM MAY PICK","MANUAL PICKS STILL WORK","A: TOGGLE STAGE   B: BACK",0},
+    [18]={"NAME ENTRY","MAKE YOUR MARK","CREATE OR MANAGE YOUR PLAYER TAGS","NAMES LAST UNTIL YOU CLOSE THE APP","FOLLOW THE TOP-SCREEN PROMPTS",0},
+    [19]={"RUMBLE","CONTROLLER FEEDBACK","THE NEW 3DS HAS NO RUMBLE MOTOR","THIS OPTION DOES NOT ADD VIBRATION","B: OPTIONS",0},
+    [20]={"SOUND","TUNE YOUR AUDIO","ADJUST MUSIC AND SOUND EFFECTS","USE THE CONSOLE VOLUME FOR OVERALL LEVEL","FOLLOW THE TOP-SCREEN PROMPTS",0},
+    [21]={"DISPLAY","PICTURE SETTINGS","MELEE USES THE NATIVE LCD RESOLUTION","TAP VIEW BELOW TO CHANGE SCREEN WIDTH","B: OPTIONS",0},
+    [23]={"LANGUAGE","CHOOSE A LANGUAGE","CHANGES THE ORIGINAL GAME'S LANGUAGE","BOTTOM-SCREEN GUIDANCE STAYS IN ENGLISH","FOLLOW THE TOP-SCREEN PROMPTS",0},
+    [24]={"ERASE DATA","MANAGE GAME DATA","THIS BUILD HAS NO MEMORY-CARD SAVING","CLOSING THE APP RESETS SESSION SETTINGS","FOLLOW THE TOP-SCREEN PROMPTS",0},
+    [25]={"SNAPSHOTS","MELEE MOMENTS","THIS MODE USES GAMECUBE MEMORY CARDS","MEMORY-CARD SAVING IS NOT AVAILABLE","FOLLOW THE TOP-SCREEN PROMPTS",0},
+    [26]={"ARCHIVES","MEET THE CAST","EXPLORE THE ORIGINAL CHARACTER ARCHIVES","USE THE TOP SCREEN TO BROWSE","FOLLOW THE TOP-SCREEN PROMPTS",0},
+    [28]={"RECORDS","LOOK BACK AT YOUR PLAY","VIEW MATCH STATS AND BONUS RECORDS","RECORDS ARE NOT SAVED BETWEEN LAUNCHES","A: OPEN   B: DATA",0},
+    [29]={"SPECIAL MOVIE","THE ORIGINAL SHOWCASE","PLAY THE ORIGINAL MELEE PRESENTATION","DISPLAY CONTROLS REMAIN BELOW","FOLLOW THE TOP-SCREEN PROMPTS",0},
+    [30]={"VS RECORDS","MATCH HISTORY","BROWSE YOUR VERSUS STATISTICS","RECORDS ARE NOT SAVED BETWEEN LAUNCHES","FOLLOW THE TOP-SCREEN PROMPTS",0},
+    [31]={"BONUS RECORDS","BONUS COLLECTION","BROWSE THE GAME'S BONUS AWARDS","RECORDS ARE NOT SAVED BETWEEN LAUNCHES","FOLLOW THE TOP-SCREEN PROMPTS",0},
+    [32]={"MISC. RECORDS","BY THE NUMBERS","VIEW YOUR PLAY STATISTICS","RECORDS ARE NOT SAVED BETWEEN LAUNCHES","FOLLOW THE TOP-SCREEN PROMPTS",0},
+    [33]={"MULTI-MAN MELEE","TAKE ON THE CROWD","CHOOSE COUNT, TIME OR ENDLESS","CRUEL MELEE PUTS SURVIVAL TO THE TEST","A: CHOOSE CHALLENGE   B: STADIUM",0}
+};
+static const char* mode_title(unsigned mode){
+    switch(mode){case 3:return "CLASSIC";case 4:return "ADVENTURE";case 5:return "ALL-STAR";
+    case 15:return "TARGET TEST";case 28:return "TRAINING";case 32:return "HOME-RUN";
+    case 43:return "EVENT";default:return "MELEE";}
+}
+static void menu_page(const MPBottomState* s){
+    static const MenuHelp fallback={"MELEE","READY WHEN YOU ARE","FOLLOW THE PROMPTS ON THE TOP SCREEN","TOUCH CONTROLS ARE AVAILABLE BELOW","VIEW: SCREEN WIDTH   CONTROLS: BUTTON GUIDE",0};
+    const MenuHelp* m=s->scene==1&&s->menu<34&&menu_help[s->menu].title?&menu_help[s->menu]:&fallback;
+    header(m->title,"3DS");fit(17,44,m->lead,22,286,gold);
+    if(m->rules)rules(s,76);
+    else{rect(17,82,38,2,gold);text(17,97,"SUPER SMASH BROS. MELEE",12,muted);}
+    rect(17,122,286,1,RGB(74,88,102));
+    fit(17,138,m->line1,15,286,ink);fit(17,163,m->line2,14,286,muted);
+    fit(17,195,m->hint,12,286,gold);
+}
 static void guide_page(void){
     header("CONTROLS","NEW 3DS");
     static const char* labels[]={"CIRCLE PAD","A / B","X / Y","L / R","ZL / ZR","C STICK","START","SELECT"};
@@ -243,12 +291,14 @@ void mp_bottom_draw(uint16_t* pixels,const MPBottomState* s,unsigned fps,unsigne
             if(!count)center(160,100,"GET READY",28,gold);
         }else for(unsigned i=0;i<4;++i)card(8+(i%2)*156,38+(i/2)*86,148,80,&s->players[i],i,1,s->stock_mode,s->stamina);
     }else if(s->scene==8){
-        header("SELECT YOUR FIGHTER",s->mode==28?"TRAINING":"MELEE");
+        header("SELECT YOUR FIGHTER",mode_title(s->mode));
         for(unsigned i=0;i<4;++i)card(8+(i%2)*156,38+(i/2)*76,148,70,&s->players[i],i,0,0,0);
-        center(160,195,"A: SELECT    B: BACK    START: FIGHT",12,gold);
+        center(160,195,"A: SELECT    B: BACK    START: NEXT",12,gold);
     }else if(s->scene==9){
-        header("SELECT A STAGE","MELEE");
-        center(160,47,"SET THE STAGE",28,ink);rules(s,84);
+        header("SELECT A STAGE",mode_title(s->mode));
+        center(160,47,"SET THE STAGE",28,ink);
+        if(s->mode==2)rules(s,84);
+        else center(160,88,s->mode==28?"CHOOSE YOUR PRACTICE ARENA":"CHOOSE YOUR BATTLEFIELD",15,gold);
         text(17,133,"CIRCLE PAD: CHOOSE STAGE",15,ink);text(17,157,"A: CONFIRM     B: FIGHTERS",15,gold);
         text(17,191,"DISPLAY OPTIONS ARE ALWAYS BELOW",11,muted);
     }else if(s->scene==0||s->scene==255){
@@ -259,26 +309,6 @@ void mp_bottom_draw(uint16_t* pixels,const MPBottomState* s,unsigned fps,unsigne
         text(19,102,"A: CONTINUE PAST THE CARD PROMPT",14,gold);
         text(19,139,"ALL FIGHTERS ARE ALREADY UNLOCKED",12,ink);
         text(19,161,"SETTINGS LAST UNTIL YOU CLOSE THE APP",11,muted);
-    }else{
-        static const char* menu_names[34]={"MAIN MENU","1-P MODE","VS MODE","TROPHIES","OPTIONS","DATA","REGULAR MATCH","EVENT MATCH",0,"STADIUM",0,0,"SPECIAL MELEE","MATCH RULES",0,"MORE RULES","ITEM SWITCH","RANDOM STAGES","NAME ENTRY","RUMBLE","SOUND","DISPLAY",0,"LANGUAGE","ERASE DATA","SNAPSHOTS","ARCHIVES",0,"RECORDS","SPECIAL MOVIE","VS RECORDS","BONUS RECORDS","MISC. RECORDS","MULTI-MAN MELEE"};
-        const char* title=s->scene==1&&s->menu<34?menu_names[s->menu]:NULL;
-        header(title?title:s->mode==28?"TRAINING":"MELEE MENU","3DS");
-        text(17,43,"YOUR MATCH RULES",15,gold);rules(s,68);
-        rect(17,116,286,1,RGB(74,88,102));
-        text(17,129,"A: CONFIRM     B: BACK",16,ink);
-        if(s->menu>=13&&s->menu<=17){
-            text(17,159,"CUSTOMIZE YOUR NEXT MATCH",14,muted);
-            text(17,180,"RULE CHANGES LAST THIS SESSION",13,muted);
-        }else if(s->menu==1||s->menu==6||s->menu==9){
-            text(17,159,"TRAINING: PRACTICE YOUR TECH",14,muted);
-            text(17,180,"START OPENS THE TRAINING MENU",13,muted);
-        }else if(s->menu==2||s->menu==12){
-            text(17,159,"MELEE: YOU AND CPU OPPONENTS",13,muted);
-            text(17,180,"ALL FIGHTERS AND STAGES UNLOCKED",12,muted);
-        }else{
-            text(17,159,"VERSUS: PLAY A MATCH",14,muted);
-            text(17,180,"TRAINING: PRACTICE YOUR TECH",14,muted);
-        }
-    }
+    }else menu_page(s);
     footer(fps,show_fps,expanded,guide);
 }

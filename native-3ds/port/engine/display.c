@@ -3,7 +3,8 @@
 
 /* The original camera remains unchanged: zoom/tracking and game rules keep
  * their 4:3 behavior. Only the world projection and visibility frustum expand.
- * HUD/menu cameras and offscreen shadow cameras retain their own projections.
+ * Full-screen menu model cameras expand too. Flat overlays and small
+ * offscreen cameras keep their original scale and centered placement.
  * Adapted from the camera-aspect approach in Dolphin's GALE01r2.ini proper
  * widescreen code (Dan Salvato, mirrorbender), using 5:3 instead of 16:9. */
 unsigned mp_display_expanded;
@@ -35,7 +36,10 @@ void mp_display_ribbon_callback(HSD_GObj*gobj,int pass){
     mp_gx_camera_convergence(distance);
 }
 unsigned mp_display_camera_width(HSD_CObj* cobj){
-    return mp_display_expanded&&cobj&&cobj==world_camera&&cobj->projection_type==1?400:320;
+    if(!mp_display_expanded||!cobj||cobj->projection_type!=PROJ_PERSPECTIVE)return 320;
+    if(world_camera)return cobj==world_camera?400:320;
+    return cobj->viewport.xmax-cobj->viewport.xmin>=600 &&
+           cobj->viewport.ymax-cobj->viewport.ymin>=400?400:320;
 }
 float mp_display_camera_aspect(HSD_CObj* cobj){
     return cobj->projection_param.perspective.aspect*(mp_display_camera_width(cobj)==400?1.25f:1.f);
