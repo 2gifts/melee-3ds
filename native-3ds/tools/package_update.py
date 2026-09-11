@@ -39,6 +39,10 @@ def main():
                'shield_draws','shield_verify','verify_shield_material',
                'raster_state_disable','raster_state_verify','verify_raster_state',
                'mp_test_stall','mp_test_memory_compare','mp_game_memory_check','mp_memory_compare_self_test',
+               'mp_test_rotation_check','mp_game_rotation_check','mp_rotation_self_test',
+               'mp_test_ppc_math_check','mp_game_ppc_math_check','mp_ppc_math_self_test','mp_ppc_vectors','mp_position_probe',
+               'texture_bind_disable','texture_bind_hits','texture_bind_updates',
+               'draw_packet_disable','draw_packet_validate','draw_packet_checks','draw_packet_draws',
                'gpu_full_heap_flush','gpu_vblank_wait','command_byte_budget',
                '__ubsan_handle_type_mismatch_v1'}
     assert not labels&forbidden,sorted(labels&forbidden)
@@ -64,10 +68,11 @@ def main():
             visuals.append({'path':dest.relative_to(directory).as_posix(),'bytes':stage['bytes'],'sha256':stage['sha256'],
                 'source':'Diet Melee Classic 1.0.2 patched locally; native-port corrections preserve original stage settings/control data',
                 'source_url':'https://diet.melee.tv/download/','original_disc_files_modified':False,'audit':stage})
-        for source,name in [(ROOT/'docs/THIRD_PARTY_NOTICES.md','THIRD_PARTY_NOTICES.md'),
-                            (ROOT/'references/slippi-ssbm-asm/LICENSE','SLIPPI-LICENSE.txt'),
-                            (ROOT/'port/3ds/vendor/CITRO3D-LICENSE.txt','CITRO3D-LICENSE.txt')]:
-            dest=directory/name;shutil.copyfile(source,dest);extra_files.append(dest)
+    for source,name in [(ROOT/'docs/THIRD_PARTY_NOTICES.md','THIRD_PARTY_NOTICES.md'),
+                        (ROOT/'references/slippi-ssbm-asm/LICENSE','SLIPPI-LICENSE.txt'),
+                        (ROOT/'port/3ds/vendor/CITRO3D-LICENSE.txt','CITRO3D-LICENSE.txt'),
+                        (ROOT/'port/engine/vendor/DOLPHIN-LICENSE.txt','DOLPHIN-LICENSE.txt')]:
+        dest=directory/name;shutil.copyfile(source,dest);extra_files.append(dest)
     manifest=json.loads((ROOT/'assets/GALE01/manifest.json').read_text())
     report={'built_utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),'binary':info,
             'label':args.label,'game_id':manifest['game_id'],'main_dol_sha1':manifest['main_dol_sha1'],

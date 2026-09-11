@@ -17,7 +17,8 @@ def observe():
         def word(a,endian='big'):return int.from_bytes(read(a,4),endian)
         def floats(a,n):return struct.unpack('>'+n*'f',read(a,n*4))
         try:
-            out={'frame':word(symbols['engine_frames'],'little'),'simulation':word(symbols['gm_80479D58']),'failed':word(symbols['engine_failed'],'little'),'fighters':[],'items':[]}
+            out={'frame':word(symbols['engine_frames'],'little'),'simulation':word(symbols['gm_80479D58']),'failed':word(symbols['engine_failed'],'little'),
+                 'stage_id':word(symbols['selected_stage']),'ground_kind':word(symbols['stage_info']+0x88),'fighters':[],'items':[]}
             head=word(symbols['HSD_GObjPLinkHead'])
             for link in (8,9):
                 g=word(head+link*4);seen=set()

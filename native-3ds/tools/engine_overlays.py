@@ -2,6 +2,76 @@
 import re
 from build import ROOT
 def adapt(source):
+    if source.name=='grzebes.c':
+        changed=source.read_text(encoding='utf-8')
+        old='/* 8049F140 */ static Vec3 grZe_8049F140[2];\n/* 8049F158 */ static Vec3 grZe_8049F158[2];\n/* 8049F170 */ static grZe_BubbleEntry grZe_8049F170[20];'
+        assert changed.count(old)==1
+        changed=changed.replace(old,'extern Vec3 grZe_8049F140[4],grZe_8049F158[2];\nextern grZe_BubbleEntry grZe_8049F170[20];')
+        old='} grZe_BubbleState;'
+        new=old+'\n/* The original views span all four endpoints and the bubble pool. ARM\n * section ordering cannot stand in for the original contiguous allocation. */\ngrZe_BubbleState mp_brinstar_bubbles __attribute__((aligned(8),used));\n_Static_assert(__builtin_offsetof(grZe_BubbleState,bubbles)==0x30,"Brinstar bubble ABI");\n_Static_assert(sizeof(grZe_BubbleState)==0x300,"Brinstar bubble context size");\n__asm__(".global grZe_8049F140\\n.set grZe_8049F140,mp_brinstar_bubbles\\n");\n__asm__(".global grZe_8049F158\\n.set grZe_8049F158,mp_brinstar_bubbles+24\\n");\n__asm__(".global grZe_8049F170\\n.set grZe_8049F170,mp_brinstar_bubbles+48\\n");\n'
+        assert changed.count(old)==1;changed=changed.replace(old,new)
+        old='        heights = column_heights;'
+        assert changed.count(old)==1
+        changed=changed.replace(old,old+'\n        /* A destroyed bubble need not visit every column. Retain the\n         * original uniform x-grid for those columns, rather than stack\n         * contents from unrelated calls. Active bubbles use this same\n         * expression; the two endpoints are still updated below. */\n        for (i = 0; i < 6; ++i) {\n            column_x[i] = (f32)i * column_width + state->positions[0].x;\n        }')
+        out=ROOT/'build/overlays'/source.name;out.parent.mkdir(parents=True,exist_ok=True)
+        out.write_text(changed,encoding='utf-8');return out
+    if source.name=='mtx.c' and 'baselib' in source.parts:
+        changed=source.read_text(encoding='utf-8')
+        old='''    f32 sinX = sinf(vec2->x);
+    f32 cosX = cosf(vec2->x);
+    f32 sinY = sinf(vec2->y);
+    f32 cosY = cosf(vec2->y);
+    f32 sinZ = sinf(vec2->z);
+    f32 cosZ = cosf(vec2->z);'''
+        assert changed.count(old)==1
+        changed=changed.replace(old,'''    f32 sinX, cosX, sinY, cosY, sinZ, cosZ;
+    mp_rotation_sincos(vec2->x, &sinX, &cosX);
+    mp_rotation_sincos(vec2->y, &sinY, &cosY);
+    mp_rotation_sincos(vec2->z, &sinZ, &cosZ);''')
+        changed='extern void mp_rotation_sincos(float,float*,float*);\n'+changed
+        out=ROOT/'build/overlays'/source.name;out.parent.mkdir(parents=True,exist_ok=True)
+        out.write_text(changed,encoding='utf-8');return out
+    if source.name=='lbmthp.c':
+        changed=source.read_text(encoding='utf-8')
+        old='    fn_8001EB14(&MoviePlayer, filename);'
+        assert changed.count(old)==1
+        changed=changed.replace(old,'''    /* Movie decoding is optional on the native port. Report completion
+     * without opening files, allocating decode buffers or starting alarms;
+     * the scene owns the transition and cleanup. No decoded frame is faked. */
+    if (!mp_movie_available()) {
+        OSReport("Optional movie skipped (native decoder unavailable): %s\\n", filename);
+        MoviePlayer = (THPDecComp){0};
+        MoviePlayer.unk_144 = 1;
+        return;
+    }
+'''+old)
+        old='    THPDecComp* streamPlayer = &MoviePlayer;\n    PAD_STACK(8);'
+        assert changed.count(old)==1
+        changed=changed.replace(old,old+'\n    if (!MoviePlayer.power) return;')
+        changed='extern int mp_movie_available(void);\n'+changed
+        out=ROOT/'build/overlays'/source.name;out.parent.mkdir(parents=True,exist_ok=True)
+        out.write_text(changed,encoding='utf-8');return out
+    if source.name in ('gmopening.c','gmmovieend.c'):
+        changed=source.read_text(encoding='utf-8')
+        if source.name=='gmopening.c':
+            old='    lbMthp_8001F578();'
+            new='''    if (!mp_movie_available()) {
+        gmMainLib_8015F500();
+        lbAudioAx_800236DC();
+        lbAudioAx_80023694();
+        gm_801A4B60();
+        gm_SetPendingGameMode(GM_TITLE);
+        gm_SetNewGameModePending();
+        return;
+    }
+'''+old
+        else:
+            old='    if (gm_804D6738 >= 0x1A4 ||'
+            new='    if (!mp_movie_available() || gm_804D6738 >= 0x1A4 ||'
+        assert changed.count(old)==1
+        changed='extern int mp_movie_available(void);\n'+changed.replace(old,new)
+        out=ROOT/'build/overlays'/source.name;out.parent.mkdir(parents=True,exist_ok=True)
+        out.write_text(changed,encoding='utf-8');return out
     if source.name=='gmclassic.c':
         changed=source.read_text(encoding='utf-8')
         # Original code treats the intro plus randomized encounter order as

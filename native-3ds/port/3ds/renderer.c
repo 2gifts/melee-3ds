@@ -113,7 +113,7 @@ static bool begin_command_frame(u8 flags){unsigned previous=mp_log_phase(MP_LOG_
 #define C3D_FrameEnd(flags) end_command_frame(flags)
 #define C3D_FrameBegin(flags) begin_command_frame(flags)
 static void reserve_commands(void);
-static void checked_draw_elements(GPU_Primitive_t primitive,int count,int type,const void*data){reserve_commands();C3D_DrawElements(primitive,count,type,data);}
+static void checked_draw_elements(GPU_Primitive_t primitive,int count,int type,const void*data){reserve_commands();mp_native_draw_elements(primitive,count,type,data);}
 static void checked_draw_arrays(GPU_Primitive_t primitive,int first,int count){reserve_commands();C3D_DrawArrays(primitive,first,count);}
 /* Guard each physical draw, including the multiple passes used to emulate
  * complex alpha comparisons. One GX submission may emit many such draws. */
@@ -213,7 +213,7 @@ static struct {unsigned valid,cull,clip[4],texenv,depth,blend,src,dst,alpha;} ra
 static volatile unsigned raster_state_disable;
 unsigned raster_state_hits,raster_state_updates;
 #endif
-static void raster_state_invalidate(void){raster_state.valid=0;}
+static void raster_state_invalidate(void){raster_state.valid=0;mp_native_tex_bind_invalidate();}
 static int state_needed(unsigned bit,int changed){
     int needed=!(raster_state.valid&bit)||changed;raster_state.valid|=bit;
 #ifdef MP_SMOKE_TEST
@@ -550,6 +550,7 @@ static Texture*texture(const Draw*d)
 #endif
     }
     C3D_TexSetFilter(&t->tex,GPU_LINEAR,GPU_LINEAR);C3D_TexSetWrap(&t->tex,GPU_CLAMP_TO_EDGE,GPU_CLAMP_TO_EDGE);C3D_TexFlush(&t->tex);
+    mp_native_tex_bind_invalidate();
 #ifdef MP_SMOKE_TEST
     unsigned upload_ticks=mp_native_ticks()-upload_start;texture_upload_ticks+=upload_ticks;
     if(upload_ticks>texture_upload_max_ticks)texture_upload_max_ticks=upload_ticks;

@@ -43,6 +43,15 @@ def prepare():
     target = ROOT / "build/compat/Runtime/platform.h"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(src)
+    placeholder=(UPSTREAM/'src/placeholder.h').read_text()
+    old='#define __frsqrte(x) sqrt(x)'
+    assert placeholder.count(old)==1, 'Reciprocal-square-root placeholder changed'
+    placeholder=placeholder.replace(old,'double mp_frsqrte(double);\n#define __frsqrte(x) mp_frsqrte(x)')
+    (ROOT/'build/compat/placeholder.h').write_text(placeholder)
+    vectors=json.loads((ROOT/'tests/fixtures/frsqrte.json').read_text())['vectors']
+    (ROOT/'build/compat/ppc_math_vectors.h').write_text(
+        'static const uint64_t mp_ppc_vectors[][2]={\n'+
+        ',\n'.join('{0x'+a+'ULL,0x'+b+'ULL}' for a,b in vectors)+'\n};\n')
     rtc = UPSTREAM / "extern/dolphin/include/dolphin/os/OSRtc.h"
     target = ROOT / "build/compat/dolphin/os/OSRtc.h"
     target.parent.mkdir(parents=True, exist_ok=True)

@@ -54,6 +54,8 @@ ENGINEBRIDGE mp_game_bottom_snapshot,mp_bottom_snapshot
 ENGINEBRIDGE mp_game_bottom_font,mp_bottom_font
 #ifdef MP_SMOKE_TEST
 ENGINEBRIDGE mp_game_memory_check,mp_memory_compare_self_test
+ENGINEBRIDGE mp_game_rotation_check,mp_rotation_self_test
+ENGINEBRIDGE mp_game_ppc_math_check,mp_ppc_math_self_test
 #endif
 SDKBRIDGE mp_platform_submit,mp_native_submit
 SDKBRIDGE mp_platform_alloc,mp_native_alloc

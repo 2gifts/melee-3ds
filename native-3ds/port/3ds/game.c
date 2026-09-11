@@ -60,6 +60,8 @@ void mp_native_display_keys(unsigned keys){
 volatile unsigned mp_test_capture;
 volatile unsigned mp_test_frame_limit=12000;
 volatile unsigned mp_test_memory_compare;
+volatile unsigned mp_test_rotation_check;
+volatile unsigned mp_test_ppc_math_check;
 volatile unsigned mp_test_stall;
 #endif
 unsigned mp_native_frame_number(void){return engine_frames;}
@@ -96,6 +98,8 @@ void mp_native_frame(void)
 #ifdef MP_SMOKE_TEST
     if(mp_test_stall){mp_test_stall=0;u64 until=svcGetSystemTick()+12ULL*SYSCLOCK_ARM11;while(svcGetSystemTick()<until){}}
     if(mp_test_memory_compare==1){extern unsigned mp_game_memory_check(void);mp_test_memory_compare=mp_game_memory_check();if(!mp_test_memory_compare)mp_native_panic("ARM memory comparison self-test failed");}
+    if(mp_test_rotation_check==1){extern unsigned mp_game_rotation_check(void);mp_test_rotation_check=mp_game_rotation_check();}
+    if(mp_test_ppc_math_check==1){extern unsigned mp_game_ppc_math_check(void);mp_test_ppc_math_check=mp_game_ppc_math_check();}
     if(mp_test_capture){capture_frame();mp_test_capture=0;}
     if(mp_test_async_files==1){extern int mp_native_async_self_test(void);if(mp_native_async_self_test())mp_test_async_files=2;}
 #endif
@@ -161,7 +165,7 @@ int main(void)
     mkdir("sdmc:/3ds",0777);mkdir("sdmc:/3ds/melee",0777);
     mp_log_init();
     bool is_new=false;APT_CheckNew3DS(&is_new);
-    mp_native_log("Melee ARM BE8 engine startup - Classic stability and cache update 13\n");
+    mp_native_log("Melee ARM BE8 engine startup - Stereo rendering and attract stability update 14\n");
     mp_native_log("All-stage performance: low-detail fighters, projected shadows off, conservative off-screen mesh rejection; audited Diet scenery where available\n");
     if(is_new)mp_native_log("New 3DS family detected; fast CPU and L2 cache requested\n");
     u32 actual_layout[3]={(u32)mp_image_text_start,(u32)mp_image_rodata_start,(u32)mp_image_data_start};

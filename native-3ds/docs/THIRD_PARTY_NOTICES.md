@@ -72,6 +72,15 @@ redistribute it freely, subject to the following restrictions:
 
 ## Additional provenance
 
+Update 14 adapts Dolphin Emulator's PowerPC reciprocal-square-root estimate
+and table from `Common/FloatUtils.cpp`, revision
+`a2efdf1197be8132674b90fe9cf4761df39752ed`, under GPL-2.0-or-later.
+Copyright 2018 Dolphin Emulator Project. The reference input vectors are
+copyright 2021 Dolphin Emulator Project under the same terms. Source URLs,
+test-data provenance and the original license are in `port/engine/vendor/`.
+The altered C implementation is in `port/engine/ppc_math.h`; it is not a
+full Dolphin emulator integration. Packages include `DOLPHIN-LICENSE.txt`.
+
 Update 8 vendors Citro3D's unmodified private `internal.h` at commit `9f21cf7b380ce6f9e01a0420f19f0763e5443ca7` to implement a local null-texture binding fix against the pinned SDK. Provenance, the exact header hash and the original license are in `port/3ds/vendor/`; `citro3d_fix.c` is the separately identified port adaptation. The update package includes `CITRO3D-LICENSE.txt`.
 
 The [Super Mario 64 3DS Ultimate renderer](https://github.com/Epic0522/Super-Mario-64-3ds-port---Ultimate/blob/master/src/pc/gfx/gfx_citro3d.c) was studied as a reference for stereoscopic projection and flat HUD separation. This port implements its own Melee camera convergence, shared geometry submission and paired render targets; no Mario assets are included.

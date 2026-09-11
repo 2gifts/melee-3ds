@@ -30,4 +30,8 @@ report={'built_utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),
         'verified_asset_files':count,'verified_asset_bytes':total,
         'physical_hardware_verified':False,'status':'Native engine alpha; performance and hardware validation in progress'}
 (package/'build.json').write_text(json.dumps(report,indent=2)+'\n')
+for source,name in [(ROOT/'docs/THIRD_PARTY_NOTICES.md','THIRD_PARTY_NOTICES.md'),
+                    (ROOT/'port/3ds/vendor/CITRO3D-LICENSE.txt','CITRO3D-LICENSE.txt'),
+                    (ROOT/'port/engine/vendor/DOLPHIN-LICENSE.txt','DOLPHIN-LICENSE.txt')]:
+    shutil.copy2(source,package/name)
 print(f'Verified native 3DSX and {count} game files ({total:,} bytes) in {package}')

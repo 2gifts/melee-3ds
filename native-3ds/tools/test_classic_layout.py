@@ -13,11 +13,13 @@ def main():
     checks=[]
     for base,aliases in [('mp_toy_storage',{'_Toy_804A26B8':0,'_Toy_devtext_buf_804A26C4':0xc,
         '_Toy_devtext_buf_804A2750':0x98,'Toy_804A284C':0x194,'Toy_804A2AA8':0x3f0}),
-        ('mp_classic_runtime',{'gmClassicIntroDataBuffer':0,'gm_804908A0':0x20})]:
+        ('mp_classic_runtime',{'gmClassicIntroDataBuffer':0,'gm_804908A0':0x20}),
+        ('mp_brinstar_bubbles',{'grZe_8049F140':0,'grZe_8049F158':0x18,'grZe_8049F170':0x30})]:
         for name,offset in aliases.items():assert address(name)==address(base)+offset,(base,name)
         checks.append({'storage':base,'aliases':aliases})
     assert elf.symbols['mp_toy_storage'][1]==0x404
     assert elf.symbols['mp_classic_runtime'][1]==0x90
+    assert elf.symbols['mp_brinstar_bubbles'][1]==0x300
     assert data(address('gmClassic_803DDEC8'),0x2f0)==dol_region(dol,0x803ddec8,0x2f0)
     checks.append({'original_classic_matchup_bytes':0x2f0})
     def string(a,original=False):
