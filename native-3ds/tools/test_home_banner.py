@@ -26,7 +26,7 @@ def main():
     fragment = r.ptr(material+648)
     animation = r.dictionary(100)['COMMON']
     member = next(iter(r.dictionary(animation+24).values()))
-    logo_texture = next(t for t in r.dictionary(36).values() if r.u32(t+28)==512)
+    logo_texture = next(t for t in r.dictionary(36).values() if r.u32(t+24)==128)
     cases = [
         ('soft skin', primitive+8, 2),
         ('bone-index stream', attribute+4, 7),
@@ -35,8 +35,8 @@ def main():
         ('baked animation', member+16, 8),
         ('logo transform', bones['Melee logo']+56, 0x3f800000),
         ('billboard fighter', bones['Fox 1']+212, 5),
-        ('downsampled logo', logo_texture+28, 256),
-        ('wrong logo pixel format', logo_texture+52, 4),
+        ('oversized logo', logo_texture+28, 512),
+        ('unverified LA4 pixel format', logo_texture+52, 9),
         ('dangling shape array', model+200, 0x7fffffff),
         ('quantized vertex stream', attribute+36, 0x1402),
         ('nonfinite vertex', r.ptr(attribute+24), 0x7fc00000),

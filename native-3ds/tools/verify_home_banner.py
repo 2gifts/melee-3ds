@@ -91,14 +91,16 @@ def verify_banner(data):
         assert r.u32(texture) == 0x20000011
         height,width = r.read('II',texture+24)
         fmt = r.u32(texture+52)
+        assert fmt == 4, 'Use the physical-tested RGBA4 texture profile'
+        assert width <= 256 and height <= 256, 'Do not bypass the reference texture size cap'
         assert r.u32(texture+40) == 1, 'Expected one complete mip level'
         pixel = r.ptr(texture+56)
         assert r.read('II',pixel) == (height,width)
         size = r.u32(pixel+8)
         start = r.ptr(pixel+12)
-        assert size == width*height*({4:2,9:1}[fmt]) and start+size <= len(data)
+        assert size == width*height*2 and start+size <= len(data)
         profiles.append((width,height,fmt))
-    assert sorted(profiles) == [(256,256,4),(512,256,9)], 'Preserve full-resolution LA4 logo'
+    assert sorted(profiles) == [(256,128,4),(256,256,4)], 'Keep package 5 texture dimensions and byte budget'
     for material in materials.values():
         assert r.u32(material+24) == 1, 'Keep the reference fragment-lighting material path'
         assert r.read('IIfII', material+260) == (0,2,0,2,0x10040), 'Keep reference culling state'
@@ -228,4 +230,4 @@ def verify_banner(data):
                 animation_members=len(members), frames=frames, rigid_only=True,
                 mesh_bindings_verified=True, serialized_curves_verified=True,
                 baked_color_combiners_verified=True, fighter_outward_fraction=winding,
-                logo_resolution=[512,256], logo_format='LA4', fixed_poses_verified=True)
+                logo_resolution=[256,128], logo_format='RGBA4', fixed_poses_verified=True)

@@ -10,6 +10,7 @@ import numpy as np
 from PIL import Image,ImageFilter
 from banner_assets import ROOT,OUT as ASSETS
 from banner_capture_read import read_capture
+from home_banner_texture import prepare_logo
 
 OUT=ROOT/'build/home-menu/art'
 
@@ -49,7 +50,7 @@ class Scene:
         if image is not None:
             im=image.copy();im.thumbnail((32,32),Image.Resampling.LANCZOS)
             w=1<<(max(8,im.width)-1).bit_length();h=1<<(max(8,im.height)-1).bit_length()
-            if name=='Logo':im=image.copy() # Preserve the 512x256 lettering.
+            if name=='Logo':im=prepare_logo(image)
             else:im=im.resize((w,h),Image.Resampling.LANCZOS)
             filename=f'texture-{len(self.images):02d}.png';im.save(OUT/filename)
             self.images.append(dict(uri=filename));self.textures.append(dict(source=len(self.images)-1,sampler=0))

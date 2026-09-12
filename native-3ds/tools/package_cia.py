@@ -12,6 +12,7 @@ from pathlib import Path
 from assets import ROOT
 from be8_image import ElfImage
 from verify_cia import verify
+from verify_home_banner import verify_banner
 
 
 def run(*args):
@@ -24,14 +25,15 @@ def main():
     ap.add_argument('--art', type=Path, default=ROOT/'build/home-menu/art')
     ap.add_argument('--output', type=Path, default=ROOT/'dist/home-menu/melee-3ds.cia')
     ap.add_argument('--development', action='store_true', help='Allow an emulator-only validation ELF')
-    ap.add_argument('--version', type=int, default=5, help='CIA title version; retains the installed title ID')
+    ap.add_argument('--version', type=int, default=6, help='CIA title version; retains the installed title ID')
     ap.add_argument('--cci', type=Path, help='Also emit a local emulator test cartridge')
     args = ap.parse_args()
     image = ElfImage(args.elf.read_bytes())
     if not args.development:
         forbidden = {'mp_test_control', 'mp_test_capture', 'mp_banner_capture', 'mp_test_stereo_slider'}
         assert not forbidden & image.symbols.keys(), 'Development ELF cannot be distributed as the console build'
-    assert (args.art/'banner.cgfx').stat().st_size <= 0x80000
+    # Reject known unsafe profiles before writing any installable output.
+    verify_banner((args.art/'banner.cgfx').read_bytes())
     with wave.open(str(args.art/'announcer.wav'), 'rb') as wav:
         assert wav.getnchannels() == 2 and wav.getsampwidth() == 2
         assert 0 < wav.getnframes()/wav.getframerate() <= 3

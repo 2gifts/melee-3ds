@@ -26,27 +26,37 @@ Target: **New 3DS / New 3DS XL** with CFW and FBI. New 2DS XL uses the same
 application mode without stereo; it has not been physically tested. Original
 3DS/2DS models are excluded by the package metadata.
 
-## HOME package 6
+## HOME package 7
 
-**Package 5 was confirmed to launch and play on physical New 3DS.** Package 6
-keeps its executable, launch splash, title ID, disc icon, audio and compact
-four-draw diorama. It fixes two remaining selection-banner defects:
+**Package 5 launched and played on physical New 3DS. Package 6 is withdrawn:**
+the user reported a HOME Menu freeze when selecting its icon. Package 6 had
+passed emulator rendering checks, which did not establish physical safety.
 
-- The title now uses the original clean letter-face texture instead of the
-  expanded shadow mask. A narrower outline preserves the spaces within letters.
-  The logo remains 512x256 through conversion, instead of being reduced to
-  256x128. Grayscale LA4 preserves the same four-bit luminance/alpha precision
-  as the previous RGBA4 artwork while doubling resolution on each axis.
-- Exported GX triangles had clockwise winding in a counterclockwise format.
-  This made the Foxes render inside out, producing a hollow-face effect during
-  HOME's rotation. Fighter indices now use the correct winding, retaining
-  intentionally two-sided details. Both complete poses are fixed rigid meshes:
-  one original taunt and one idle. Only the title uses camera-facing billboarding.
+Package 7 removes the new 512x256 LA4 texture override and returns to package
+5's stock RGBA4 encoding: a 256x128 title and a 256x256 diorama atlas, totaling
+192 KiB of texture data. Their serialized texture metadata matches package 5
+exactly, and the diorama atlas pixels are unchanged. The dimension/format
+change is the leading suspect, not a hardware-confirmed root cause. These
+conservative constraints describe this project's tested profile, not universal
+PICA or HOME Menu limits.
 
-CIA title version **5** replaces the same installed title. The game executable
-remains update 15. Native HOME rendering in Azahar was checked at six points in
-its rotation, plus the final unmodified composition. Physical confirmation of
-package 6's appearance is pending; package 5's launch is confirmed.
+The clean letter-face artwork, narrower outline and corrected Fox triangle
+winding are retained. Each complete Fox stays in a fixed pose, one taunting and
+one idle. Only the title uses camera-facing billboarding. The title no longer
+uses the expanded shadow mask as its lettering, but its texture resolution
+returns to the working version's size.
+
+CIA title version **6** updates the same title ID. The game executable, launch
+splash, disc icon and audio remain unchanged from package 5. Package 7 passes
+local format/texture checks and native HOME rendering in Azahar; physical
+selection and launch still need confirmation. No stable-hardware claim is made
+from emulator results.
+
+The private release also includes `melee-3ds-last-working.cia`, an exact copy
+of the console-tested package 5, for recovery. It retains the older banner's
+appearance. Install the main `melee-3ds.cia` first, then fully power off/restart
+so HOME reloads the replacement. If the regression persists, the fallback can
+be installed through FBI without rebuilding or changing game data.
 
 Earlier corrections retained here include the standard 8 KiB Homebrew startup
 splash in ExeFS, baked material colors, title framing, grounded Fox poses and
@@ -107,7 +117,7 @@ Never copy a development package to the console.
   filesystem: both launch methods read `/3ds/melee/`.
 - The atlas preserves texture-clamp boundaries. The 1,728 input triangles
   become 2,040 after UV splits, or 2,888 with reverse stage/logo faces. The
-  CGFX is 469,240 bytes, below the 524,288-byte limit. Its four-draw profile is
+  CGFX is 403,704 bytes, below the 524,288-byte limit. Its four-draw profile is
   an authoring budget, not a claimed hardware limit for all banners.
 - Audio combines `nr_title.ssm` sample 1 (sound ID 20001), cropped and shortened
   without a pitch change, with `menu01.hps`. Output: stereo PCM16, 32 kHz,
@@ -123,7 +133,9 @@ Never copy a development package to the console.
   `python tools/test_home_banner.py` exercises malformed variants;
   `python tools/test_home_banner_atlas.py` checks clipping/interpolation.
   `python tools/test_home_banner_texture.py` independently decodes and checks all
-  131,072 logo texels, including alpha, tile addressing and vertical orientation.
+  98,304 atlas/title texels, including alpha, tile addressing and vertical
+  orientation. Packaging rejects oversized/non-RGBA4 textures before producing
+  a CIA; the archived failing package 6 is a regression fixture.
 - The private native HOME harness uses the owner's matching executable in
   Azahar. Actual ARM framebuffer reads materialize GPU output; raw debugger
   memory reads can return stale pixels. Native comparisons cover title clarity and
@@ -153,4 +165,4 @@ Format limits: [3dbrew CBMD](https://3dbrew.org/wiki/CBMD).
 
 The [glTF mesh winding specification](https://github.com/KhronosGroup/glTF/blob/main/specification/2.0/Specification.adoc#meshes)
 and [Azahar's PICA texture decoder](https://github.com/azahar-emu/azahar/blob/master/src/video_core/texture/texture_decode.cpp)
-provide format references for counterclockwise faces and LA4 texel packing.
+provide format references for counterclockwise faces and PICA texel packing.
