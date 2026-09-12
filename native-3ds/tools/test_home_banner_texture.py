@@ -1,5 +1,6 @@
 """Check both serialized RGBA4 textures and the conservative logo resolution."""
 from pathlib import Path
+import argparse
 from PIL import Image
 from home_banner_texture import prepare_logo
 from verify_home_banner import Reader
@@ -23,7 +24,9 @@ def check_pixels(data, width, height, image):
 
 
 def main():
-    art = Path('build/home-menu/art')
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument('--art',type=Path,default=Path('build/home-menu/art'))
+    art = ap.parse_args().art
     r = Reader((art/'banner.cgfx').read_bytes())
     pixels = 0
     for name,texture in r.dictionary(36).items():

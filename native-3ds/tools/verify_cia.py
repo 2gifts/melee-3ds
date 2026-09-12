@@ -52,7 +52,7 @@ def blz(data):
     return bytes(out)
 
 
-def lz11(data):
+def lz11(data, *, return_consumed=False):
     assert data[0] == 0x11
     length = int.from_bytes(data[1:4], 'little')
     assert 0 < length <= 0x80000
@@ -83,7 +83,7 @@ def lz11(data):
             assert 0 < distance <= len(out) and len(out)+count <= length
             for _ in range(count):
                 out.append(out[-distance])
-    return bytes(out)
+    return (bytes(out),src) if return_consumed else bytes(out)
 
 
 def verify_sound(data, wav_path):
@@ -153,7 +153,7 @@ def verify_launch_logo(data):
                 both_screens=True,sha256=hashlib.sha256(data).hexdigest())
 
 
-def verify(path, elf_path, art):
+def verify(path, elf_path, art, *, cosmetic_baseline=None):
     raw = path.read_bytes()
     hdr, _, _, cert, ticket_size, tmd_size, meta_size, size = struct.unpack_from('<IHHIIIIQ', raw)
     assert hdr == 0x2020 and raw[0x20] == 0x80
@@ -217,8 +217,10 @@ def verify(path, elf_path, art):
     cgfx = lz11(banner[u32(banner, 8):])
     assert cgfx == (art/'banner.cgfx').read_bytes()
     assert cgfx[:4] == b'CGFX' and len(cgfx) <= 0x80000
-    verify_release_container(banner)
-    banner_validation = verify_release_model(cgfx)
+    baseline_model = (cosmetic_baseline/'banner.cgfx').read_bytes() if cosmetic_baseline else None
+    baseline_container = (cosmetic_baseline/'banner.bin').read_bytes() if cosmetic_baseline else None
+    verify_release_container(banner,cosmetic_baseline=baseline_container)
+    banner_validation = verify_release_model(cgfx,cosmetic_baseline=baseline_model)
     sound = u32(banner, 0x84)
     assert sound % 16 == 0 and 0x88 < sound < len(banner)
     sound_validation = verify_sound(banner[sound:], art/'announcer.wav')
@@ -239,8 +241,9 @@ def main():
     parser.add_argument('cia', type=Path)
     parser.add_argument('--elf', type=Path, default=Path('build/game-release/melee.elf'))
     parser.add_argument('--art', type=Path, default=Path('build/home-menu/art'))
+    parser.add_argument('--cosmetic-baseline', type=Path)
     args = parser.parse_args()
-    result = verify(args.cia, args.elf, args.art)
+    result = verify(args.cia, args.elf, args.art,cosmetic_baseline=args.cosmetic_baseline)
     args.cia.with_suffix('.verified.json').write_text(json.dumps(result, indent=2)+'\n')
     print(json.dumps(result, indent=2))
 

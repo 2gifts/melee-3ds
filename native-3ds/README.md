@@ -6,7 +6,7 @@ A work-in-progress native ARM port of Super Smash Bros. Melee, built from the [d
 
 Update 15 overlaps game simulation with GPU rendering, uses shorter material programs, uploads only referenced bone matrices, and shares overlapping geometry snapshots. It also fixes a reproduced freeze in Kirby’s copied-model visibility. Stereo rendering and casual-play regressions passed in Azahar; the 60 FPS competitive and 30 FPS casual targets still require physical-console validation. [Changes and validation](docs/STEREO_PERFORMANCE_UPDATE_15.md).
 
-**HOME packages 6 and 7 are withdrawn after physical selection freezes.** Recovery package 8 restores the exact application content of console-tested package 5 with a newer installation version. It also restores the older banner appearance. [Clean reinstall, recovery and validation limits](docs/HOME_MENU.md).
+**HOME package 8 recovery is confirmed working on New 3DS.** Package 9 is a cosmetic candidate that corrects the Fox face orientation and improves the title within the working banner's existing layout. Native decompression/rendering and package checks pass; physical confirmation is pending. Packages 6/7 remain withdrawn. [Installation, recovery and validation limits](docs/HOME_MENU.md).
 
 ## What works
 
