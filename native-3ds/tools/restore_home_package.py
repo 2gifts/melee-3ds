@@ -7,9 +7,12 @@ assets or console keys are embedded in this script.
 import argparse
 import hashlib
 import json
+import os
+import shutil
 import struct
 import subprocess
 import tempfile
+import uuid
 from pathlib import Path
 
 from assets import ROOT
@@ -53,7 +56,19 @@ def restore(source, elf, art, output, version):
                       application_content_sha256=APPROVED_CONTENT,
                       source_cia_sha256=APPROVED_CIA,
                       reinstalled_on_physical_console=False)
-        candidate.replace(output)
+        # TemporaryDirectory may have a private Windows DACL. Moving its file
+        # directly would retain that ACL and block the next process from
+        # reading the release. Create the final staging file in the public
+        # output directory so it inherits that directory's permissions.
+        staged = output.with_name(output.name+'.'+uuid.uuid4().hex+'.pending')
+        try:
+            with candidate.open('rb') as src,staged.open('xb') as dst:
+                shutil.copyfileobj(src,dst)
+                dst.flush();os.fsync(dst.fileno())
+            assert staged.read_bytes()==candidate.read_bytes()
+            staged.replace(output)
+        finally:
+            staged.unlink(missing_ok=True)
     output.with_suffix('.verified.json').write_text(json.dumps(result,indent=2)+'\n')
     return result
 

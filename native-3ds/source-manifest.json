@@ -267,7 +267,7 @@
     "tools/render_update14_test.py": "f9b8918b73302262656b89c5c48d5215d2ef7a4713f7f0bb5691386981f2e047",
     "tools/render_update15_test.py": "3b22ff942457c53f4e4d7936e4a9d0da61dbfd83f61ed1aac3e81e7f52c2ec19",
     "tools/reproduce_attract_match.py": "66f33ccf95b3bbcb3c6439261c6a7b74f641b3a5d2bf9838854edc9cac0696b5",
-    "tools/restore_home_package.py": "c48bada30489c878d56fb07121d6bd449994652694e160681c6c817786ffd7f6",
+    "tools/restore_home_package.py": "7f414962e7af4ce8ba0aa19238000cde3fce7a5ca5539c702ebc442afb59b85b",
     "tools/restore_stage_animations.py": "7f4d87876d0670ea49792352166c991dc727e31e489f4a184fe8c1c5bfdf273e",
     "tools/sample_cpu.py": "196ddaec43aba5dbcf58d1f6917cd375bf82df588889ea54128ec770c85f7497",
     "tools/select_test_stage.py": "127a6097dfec6462a4c2e84eecdbf9eee2a7ebfcf949cbe73c77c25d9680543a",
