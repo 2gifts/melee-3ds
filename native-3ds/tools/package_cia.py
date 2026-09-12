@@ -12,7 +12,7 @@ from pathlib import Path
 from assets import ROOT
 from be8_image import ElfImage
 from verify_cia import verify
-from verify_home_banner import verify_banner
+from home_banner_release import verify_release_model, verify_release_container
 
 
 def run(*args):
@@ -25,7 +25,7 @@ def main():
     ap.add_argument('--art', type=Path, default=ROOT/'build/home-menu/art')
     ap.add_argument('--output', type=Path, default=ROOT/'dist/home-menu/melee-3ds.cia')
     ap.add_argument('--development', action='store_true', help='Allow an emulator-only validation ELF')
-    ap.add_argument('--version', type=int, default=6, help='CIA title version; retains the installed title ID')
+    ap.add_argument('--version', type=int, default=7, help='CIA title version; retains the installed title ID')
     ap.add_argument('--cci', type=Path, help='Also emit a local emulator test cartridge')
     args = ap.parse_args()
     image = ElfImage(args.elf.read_bytes())
@@ -33,7 +33,7 @@ def main():
         forbidden = {'mp_test_control', 'mp_test_capture', 'mp_banner_capture', 'mp_test_stereo_slider'}
         assert not forbidden & image.symbols.keys(), 'Development ELF cannot be distributed as the console build'
     # Reject known unsafe profiles before writing any installable output.
-    verify_banner((args.art/'banner.cgfx').read_bytes())
+    verify_release_model((args.art/'banner.cgfx').read_bytes())
     with wave.open(str(args.art/'announcer.wav'), 'rb') as wav:
         assert wav.getnchannels() == 2 and wav.getsampwidth() == 2
         assert 0 < wav.getnframes()/wav.getframerate() <= 3
@@ -45,6 +45,7 @@ def main():
         '-f', 'visible,allow3d,new3ds,recordusage,extendedbanner')
     run(bannertool, 'makebanner', '-ci', args.art/'banner.cgfx',
         '-a', args.art/'announcer.wav', '-o', args.art/'banner.bin')
+    verify_release_container((args.art/'banner.bin').read_bytes())
     args.output.parent.mkdir(parents=True, exist_ok=True)
     common = ['-target', 't', '-exefslogo', '-elf', args.elf, '-rsf', ROOT/'port/3ds/melee.rsf',
               '-banner', args.art/'banner.bin', '-icon', args.art/'icon.smdh']

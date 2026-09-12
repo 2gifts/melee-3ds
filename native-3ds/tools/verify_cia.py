@@ -7,7 +7,7 @@ import wave
 from pathlib import Path
 
 from be8_image import ElfImage
-from verify_home_banner import verify_banner
+from home_banner_release import verify_release_model, verify_release_container
 
 TITLE_ID = 0x000400000F4D4500
 
@@ -217,7 +217,8 @@ def verify(path, elf_path, art):
     cgfx = lz11(banner[u32(banner, 8):])
     assert cgfx == (art/'banner.cgfx').read_bytes()
     assert cgfx[:4] == b'CGFX' and len(cgfx) <= 0x80000
-    banner_validation = verify_banner(cgfx)
+    verify_release_container(banner)
+    banner_validation = verify_release_model(cgfx)
     sound = u32(banner, 0x84)
     assert sound % 16 == 0 and 0x88 < sound < len(banner)
     sound_validation = verify_sound(banner[sound:], art/'announcer.wav')

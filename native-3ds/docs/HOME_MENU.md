@@ -26,44 +26,58 @@ Target: **New 3DS / New 3DS XL** with CFW and FBI. New 2DS XL uses the same
 application mode without stereo; it has not been physically tested. Original
 3DS/2DS models are excluded by the package metadata.
 
-## HOME package 7
+## HOME package 8 recovery
 
-**Package 5 launched and played on physical New 3DS. Package 6 is withdrawn:**
-the user reported a HOME Menu freeze when selecting its icon. Package 6 had
-passed emulator rendering checks, which did not establish physical safety.
+**Packages 6 and 7 are withdrawn after physical selection freezes.** Package
+8 restores the exact application content from package 5, which the user
+confirmed displayed, launched and played on New 3DS. All 2,842,624 bytes of the
+NCCH content match, including the compressed CBMD banner, audio, icon, launch
+splash, executable, permissions and resource offsets. Only the CIA installation
+wrapper/version is regenerated. The title ID stays `000400000F4D4500`; the new
+CIA title version is **7**, newer than both failed packages.
 
-Package 7 removes the new 512x256 LA4 texture override and returns to package
-5's stock RGBA4 encoding: a 256x128 title and a 256x256 diorama atlas, totaling
-192 KiB of texture data. Their serialized texture metadata matches package 5
-exactly, and the diorama atlas pixels are unchanged. The dimension/format
-change is the leading suspect, not a hardware-confirmed root cause. These
-conservative constraints describe this project's tested profile, not universal
-PICA or HOME Menu limits.
+This is a full restoration, not another inferred graphics fix. It restores the
+older title artwork and its cosmetic Fox-face issue as well. The texture-only
+rollback in package 7 did not resolve the freeze. The remaining cause has not
+been isolated; the failed releases also changed geometry and the compressed
+container layout. There are no new crash dumps identifying it.
 
-The clean letter-face artwork, narrower outline and corrected Fox triangle
-winding are retained. Each complete Fox stays in a fixed pose, one taunting and
-one idle. Only the title uses camera-facing billboarding. The title no longer
-uses the expanded shadow mask as its lettering, but its texture resolution
-returns to the working version's size.
+For recovery after repeated failed updates, perform a clean reinstall:
 
-CIA title version **6** updates the same title ID. The game executable, launch
-splash, disc icon and audio remain unchanged from package 5. Package 7 passes
-local format/texture checks and native HOME rendering in Azahar; physical
-selection and launch still need confirmation. No stable-hardware claim is made
-from emulator results.
+1. In FBI's **Titles**, select **Super Smash Bros. Melee** and verify title ID
+   `000400000F4D4500`. Choose **Delete Title And Ticket** for that title only.
+2. Open **SD > cias > melee-3ds.cia > Install CIA**.
+3. Fully power off, restart, and select the Melee icon.
 
-The private release also includes `melee-3ds-last-working.cia`, an exact copy
-of the console-tested package 5, for recovery. It retains the older banner's
-appearance. Install the main `melee-3ds.cia` first, then fully power off/restart
-so HOME reloads the replacement. If the regression persists, the fallback can
-be installed through FBI without rebuilding or changing game data.
+The game assets in `/3ds/melee/` are separate from the installed title. Keep
+them. `melee-3ds-last-working.cia` remains an exact copy of the original package
+5 archive. Package 8 avoids downgrading the installer version while preserving
+that same application content. Reinstallation on the console still needs user
+confirmation; no new physical test has been performed by the agent.
 
-Earlier corrections retained here include the standard 8 KiB Homebrew startup
-splash in ExeFS, baked material colors, title framing, grounded Fox poses and
-the announcer mixed over Menu 1. Packages 1-3 failed during unwrapping; package
-4 first displayed the diorama. The missing launch splash was corrected in 5.
+Release checks now pin the **complete console-confirmed CBMD**, not just its
+model format. The model-only native harness bypassed CBMD decompression and
+sound playback, so its successful runs did not validate the whole HOME
+selection path. A changed model, compressed stream, padding or audio cannot
+silently become a normal release. Hashes contain no game assets.
 
-## Local authoring
+To reissue the local confirmed archive without rebuilding its content:
+
+```powershell
+python tools/restore_home_package.py --source path/to/confirmed-package-5.cia --art path/to/package-5-art
+```
+
+The command checks the archived CIA hash, all package resources and the game
+ELF, uses makerom to rewrap the unchanged NCCH, verifies byte-for-byte content
+equality, then replaces the output only after validation. The default output
+is `dist/home-menu/melee-3ds.cia`. The local archive is required and is not
+published in this repository.
+
+## Local authoring (experimental)
+
+Newly authored banners are experimental and the production packager now
+refuses anything except the complete console-confirmed package 5 banner.
+Hardware confirmation is required before changing the release hashes.
 
 First follow the normal native build and asset extraction instructions. Banner
 authoring additionally needs Python 3.12+, NumPy, Pillow, FFmpeg on PATH and the
@@ -115,9 +129,9 @@ Never copy a development package to the console.
 - Title ID `000400000F4D4500`, product `CTR-P-M3LE`; native executable, 124 MB
   application mode, 804 MHz CPU request and L2 cache enabled. No embedded game
   filesystem: both launch methods read `/3ds/melee/`.
-- The atlas preserves texture-clamp boundaries. The 1,728 input triangles
-  become 2,040 after UV splits, or 2,888 with reverse stage/logo faces. The
-  CGFX is 403,704 bytes, below the 524,288-byte limit. Its four-draw profile is
+- The atlas preserves texture-clamp boundaries. The restored package 5 model has 2,014 triangles after
+  UV splits, or 2,862 with reverse stage/logo faces. The
+  CGFX is 403,544 bytes, below the 524,288-byte limit. Its four-draw profile is
   an authoring budget, not a claimed hardware limit for all banners.
 - Audio combines `nr_title.ssm` sample 1 (sound ID 20001), cropped and shortened
   without a pitch change, with `menu01.hps`. Output: stereo PCM16, 32 kHz,
@@ -130,21 +144,24 @@ Never copy a development package to the console.
   constant pose curves, outward fighter winding, texture sizes/formats, indices,
   finite float attributes and color combiners. Soft skins,
   weight/index streams and non-identity billboard transforms are rejected.
-  `python tools/test_home_banner.py` exercises malformed variants;
+  `python tools/test_home_banner.py` exercises experimental geometry variants;
   `python tools/test_home_banner_atlas.py` checks clipping/interpolation.
   `python tools/test_home_banner_texture.py` independently decodes and checks all
   98,304 atlas/title texels, including alpha, tile addressing and vertical
   orientation. Packaging rejects oversized/non-RGBA4 textures before producing
-  a CIA; the archived failing package 6 is a regression fixture.
+  a CIA. `test_home_release.py --approved-art path/to/package-5-art` checks
+  the complete release lock; `--failed-art` can be repeated for the withdrawn
+  package 6/7 archives.
 - The private native HOME harness uses the owner's matching executable in
   Azahar. Actual ARM framebuffer reads materialize GPU output; raw debugger
   memory reads can return stale pixels. Native comparisons cover title clarity and
   fighter faces through the rotating preview. A temporary position-offset
   fixture exposes both Foxes outside the harness's unrelated system-icon
   overlay. That offset is not in the shipped banner.
-- Local startup validation compares the installed content to the built CIA and
-  starts its executable in Azahar. Local tests do not replace console
-  verification of a new banner or establish suspension behavior or frame rate.
+- Package 8 compares the entire reissued NCCH with the console-confirmed
+  package 5 bytes. A new emulator launch of identical code does not test the
+  user's installation state. Local checks do not establish console recovery,
+  suspension behavior or frame rate.
 
 ## References
 

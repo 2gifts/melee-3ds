@@ -72,7 +72,7 @@ class Reader:
         return result
 
 
-def verify_banner(data):
+def verify_banner(data, *, require_outward=True):
     r = Reader(data)
     assert data[:4] == b'CGFX' and r.read('HH', 4) == (0xfeff, 20)
     assert r.u32(12) == len(data) <= 0x80000
@@ -186,7 +186,8 @@ def verify_banner(data):
                     triangles += len(indices)//3
                     if name.startswith('Fox '):
                         fraction = outward_fraction(vectors[0],vectors[1],indices)
-                        assert fraction > .9, f'Inside-out fighter geometry: {name}'
+                        if require_outward:
+                            assert fraction > .9, f'Inside-out fighter geometry: {name}'
                         winding[name] = fraction
     animations = r.dictionary(28+9*8)
     assert set(animations) == {'COMMON'}
@@ -230,4 +231,5 @@ def verify_banner(data):
                 animation_members=len(members), frames=frames, rigid_only=True,
                 mesh_bindings_verified=True, serialized_curves_verified=True,
                 baked_color_combiners_verified=True, fighter_outward_fraction=winding,
-                logo_resolution=[256,128], logo_format='RGBA4', fixed_poses_verified=True)
+                logo_resolution=[256,128], logo_format='RGBA4', fixed_poses_verified=True,
+                outward_facing_verified=require_outward)
