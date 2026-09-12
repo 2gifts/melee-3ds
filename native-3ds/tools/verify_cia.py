@@ -124,6 +124,35 @@ def verify_sound(data, wav_path):
     return dict(channels=channels,rate=rate,frames=frames,pcm_matches_source=True)
 
 
+def verify_launch_logo(data):
+    assert len(data) == 0x2000, 'HOME launch splash must be exactly 8 KiB'
+    splash=lz11(data)
+    assert splash[:4] == b'darc', 'Invalid launch splash archive'
+    assert struct.unpack_from('<HH',splash,4)==(0xfeff,0x1c)
+    archive_size=u32(splash,12)
+    assert archive_size+32==len(splash), 'Expected the splash archive and its 32-byte footer'
+    table=u32(splash,16);count=u32(splash,table+8);names=table+count*12
+    assert table==0x1c and 0<count<128 and names<archive_size
+    entries={}
+    for i in range(count):
+        flags,offset,size=struct.unpack_from('<III',splash,table+i*12)
+        start=end=names+(flags&0xffffff)
+        while end+2<=archive_size and splash[end:end+2]!=b'\0\0':end+=2
+        assert end+2<=archive_size
+        name=splash[start:end].decode('utf-16le')
+        if flags>>24:
+            assert i<size<=count
+        else:
+            assert u32(splash,24)<=offset<offset+size<=archive_size
+            entries[name]=splash[offset:offset+size]
+    # The standard Homebrew splash retains HOME's upper/lower layout names.
+    for screen in ('U','D'):
+        name=f'NintendoLogo_{screen}_00.bclyt'
+        assert entries[name][:4]==b'CLYT', f'Missing {screen} screen splash layout'
+    return dict(bytes=len(data),decoded_bytes=len(splash),files=len(entries),
+                both_screens=True,sha256=hashlib.sha256(data).hexdigest())
+
+
 def verify(path, elf_path, art):
     raw = path.read_bytes()
     hdr, _, _, cert, ticket_size, tmd_size, meta_size, size = struct.unpack_from('<IHHIIIIQ', raw)
@@ -164,7 +193,10 @@ def verify(path, elf_path, art):
         data = exefs[512+off:512+off+count]
         assert hashlib.sha256(data).digest() == exefs[0xc0+(9-i)*32:0xe0+(9-i)*32]
         files[name.rstrip(b'\0').decode()] = data
-    assert set(files) == {'.code', 'icon', 'banner'}
+    assert set(files) == {'.code', 'icon', 'banner', 'logo'}
+    # HOME reads the boot splash independently of the selected-title banner.
+    # A missing/wrong-sized splash can produce the misleading SD-removed error.
+    launch_logo=verify_launch_logo(files['logo'])
     image = ElfImage(elf_path.read_bytes())
     code = blz(files['.code']) if exhdr[13] & 1 else files['.code']
     cursor = 0
@@ -193,7 +225,10 @@ def verify(path, elf_path, art):
                 sha256=hashlib.sha256(raw).hexdigest(),
                 code_bytes_verified=len(code), elf_sha256=hashlib.sha256(image.data).hexdigest(),
                 cgfx_bytes=len(cgfx), banner_validation=banner_validation, sound_validation=sound_validation,
-                smdh_flags=f'{u32(icon, 0x2028):08x}', native_app=True, new_3ds_only=True,
+                smdh_flags=f'{u32(icon, 0x2028):08x}', launch_logo_bytes=len(files['logo']),
+                launch_logo_sha256=hashlib.sha256(files['logo']).hexdigest(),
+                launch_logo_validation=launch_logo,
+                native_app=True, new_3ds_only=True,
                 memory_mode='124MB', cpu_mhz=804, l2_cache=True,
                 services=[s for s in services if s], embedded_game_romfs=False)
 

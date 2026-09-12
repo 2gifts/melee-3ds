@@ -1,62 +1,65 @@
 # Standalone HOME Menu app
 
-The native port can now be packaged as a New 3DS CIA for FBI. This contains
-the game executable, a full-color Melee disc icon, an animated 3D Final Destination
-diorama with two Foxes, the original title lettering, and the intro announcer's
-“Melee!” call. It uses the same SD assets as the Homebrew Launcher version.
+The native port can be packaged as a New 3DS CIA for FBI. It contains the game
+executable, a full-color Melee disc icon, a 3D Final Destination diorama, the
+original title lettering, and the announcer's "Melee!" call over the Menu 1 theme.
+It uses the same SD assets as the Homebrew Launcher version.
 
-This is an unofficial homebrew port. The public repository contains the
-authoring and packaging source; disc artwork, banner images, meshes, audio,
-captures and finished CIAs remain local.
+This is unofficial homebrew. The public repository contains authoring and
+packaging source. Disc artwork, banner images, meshes, audio, captures and
+finished CIAs remain local.
 
-## Install an already built CIA
+## Installation
 
 1. Keep `SD:/3ds/melee/files/` and any `SD:/3ds/melee/visuals/` folder.
 2. Copy the locally built `melee-3ds.cia` to `SD:/cias/`.
-3. On the console, open **FBI → SD → cias → melee-3ds.cia → Install CIA**.
-4. After updating an existing installation, fully power the console off and on
-   before selecting Melee, so HOME reloads the banner.
-5. Unwrap the new gift if shown, and launch the Melee disc icon.
+3. Open **FBI > SD > cias > melee-3ds.cia > Install CIA**.
+4. Fully power off and restart the console after updating, so HOME reloads the
+   banner. Unwrap the gift if shown and launch the Melee disc icon.
 
-The existing `.3dsx` can stay on the card as a fallback. Reinstall a newer CIA
-with the same title ID to update the HOME app; replacing the `.3dsx` alone does
-not update it. SELECT exits the game. Existing touch-screen controls, pause,
-aspect options and slider-controlled stereo are unchanged.
+Reinstalling the newer CIA updates the same title; replacing the `.3dsx` alone
+does not update the installed app. The existing `.3dsx` can stay as a fallback.
+SELECT exits. Touch controls, pause, aspect options and stereo are unchanged.
+Game data and DSP support still come from the existing homebrew setup.
 
-Supported target: **New 3DS / New 3DS XL** with CFW and FBI. New 2DS XL uses the
-same application mode without stereoscopic output; it has not been tested on
-physical hardware. Original 3DS/2DS models are excluded by the package metadata.
-Audio still needs the DSP support from the existing homebrew setup.
+Target: **New 3DS / New 3DS XL** with CFW and FBI. New 2DS XL uses the same
+application mode without stereo; it has not been physically tested. Original
+3DS/2DS models are excluded by the package metadata.
 
-### HOME banner compatibility
+## HOME package 5
 
-The first CIA crashed during unwrapping; packages 2 and 3 still froze HOME Menu.
-Package 4 rebuilds the scene as **four rigid draws, four materials and two
-textures**, following the compact animated reference. Previously there were
-75 draws, 42 materials and 40 textures. A padded atlas preserves the original
-texture resolution; triangles crossing texture-clamp boundaries are split
-before their UVs are remapped. The logo keeps its separate texture.
+**Package 4 was confirmed to unwrap and display on physical New 3DS.** Its four
+rigid draws, four materials, two textures and seven bones are retained. Packages
+1-3 crashed or froze during unwrapping.
 
-Both fighters now have complete scale, rotation and translation curves,
-including constant channels. Two-sided stage/logo surfaces use the reference
-converter's geometry and render state. Scene-control data shrinks from 197,716
-to 22,404 bytes. This is an authoring budget, not a claim about a documented
-four-mesh hardware limit. The disc icon and announcer clip stay the same.
-CIA title version 3 replaces version 2 using the same title ID.
+Package 5 addresses the next reported issues:
 
-The earlier dump belongs to US HOME Menu (`0004003000008F02`). Analysis of the
-matching executable places the fault in a heap-list traversal, consistent with
-prior memory corruption. No new dump accompanied the later freezes. The exact
-corrupting instruction has not been isolated. Local native HOME loading and
-animation tests also accept the failing package 3, so they do not reproduce
-the physical freeze. **Package 4 still needs physical unwrapping validation;
-neither its smaller resource footprint nor the local tests prove a fix.**
+- The old CIA omitted the separate launch splash. This package includes
+  makerom's standard **8 KiB Homebrew logo in ExeFS**, with both screen layouts.
+  This differs from the disc icon and selection banner. An incorrectly sized
+  splash independently produced the same misleading "SD card was removed"
+  error in [another homebrew project's tests](https://github.com/astronautlevel2/Anemone3DS/issues/146#issuecomment-381389090).
+  This is the identified package defect and proposed fix; physical launch
+  confirmation is still needed. It does not rule out a separate SD fault.
+- Texture and baked vertex colors pass directly through the texture combiners.
+  They no longer multiply by HOME's fragment-light result, which produced black
+  silhouettes. The reference shader/material layout stays intact. Gentle
+  directional shading is baked into the geometry.
+- The complete title fits below the status bar. The left Fox uses the original
+  taunt (motion 264/265); the other retains the captured idle pose. Both meet the
+  actual tilted stage plane. The hopping/lunging loop has been removed.
+- The original Menu 1 theme plays underneath the announcer, with headroom and
+  short fades. Stereo PCM stays below three seconds.
 
-## Local authoring and packaging
+CIA title version **4** updates the existing title ID. The game executable is
+still update 15. Physical validation of the new launch and appearance changes
+is pending. Luma intentionally does not save logs for card-removal errors.
 
-First follow the normal native port build and asset extraction instructions.
-Banner authoring additionally needs Python 3.12+, NumPy, Pillow, FFmpeg on PATH,
-and the project's configured Azahar development environment. On Windows:
+## Local authoring
+
+First follow the normal native build and asset extraction instructions. Banner
+authoring additionally needs Python 3.12+, NumPy, Pillow, FFmpeg on PATH and the
+configured Azahar development environment.
 
 ```powershell
 python -m pip install numpy Pillow
@@ -65,79 +68,70 @@ python tools/banner_assets.py
 python tools/build_game.py --smoke --audio-hle --boot --banner-capture --skip-engine
 ```
 
-Launch `dist/3ds/melee/melee-development.3dsx` in the configured New 3DS Azahar
-environment, using the existing extracted SD assets and GDB port 24689. Then:
+Start the development `.3dsx` in the configured New 3DS emulator with GDB port
+24689 and the extracted SD assets. Run the first capture from a fresh boot:
 
 ```powershell
 python tools/capture_banner_scene.py
+```
+
+Restart the development application, then capture the taunt and build the art:
+
+```powershell
+python tools/capture_banner_scene.py --taunt
 python tools/make_home_menu_art.py --disc-image path/to/local-disc-artwork.png
 python tools/convert_home_menu_banner.py
 python tools/build_game.py --release --skip-engine --output dist/home-menu/3ds/melee/melee.3dsx
 python tools/package_cia.py
 ```
 
-`capture_banner_scene.py` starts from a fresh boot, navigates ordinary Versus
-controls, verifies both fighters are Fox on Final Destination, and captures
-45 complete rendered frames. This is an offline authoring step; the release
-executable has no capture hooks or test controller injection. The separate
-banner bakes two captured fighter poses and animates their complete meshes
-rigidly through a lunge/evade/counterattack loop. This avoids soft skins and
-cracks between separately transformed envelopes. Fighters are enlarged and
-repositioned for the small HOME display. Its compact purple stage material
-replaces the gameplay renderer's multipass effects.
+The capture script navigates ordinary Versus controls, selects Fox on Final
+Destination and records rendered frames. The taunt pass sends D-pad Up, checks
+the original action state and writes `capture-taunt/pose.json`. The production
+executable has no capture or input-injection hooks. Entire captured poses become
+rigid meshes, avoiding soft skins and cracks between separately moved envelopes.
+Complete constant TRS curves preserve the working banner profile.
 
 Supply a square, full-color disc-label image at least 256 pixels across.
-Transparent corners and the hub are composited onto a light background before
-downsampling to HOME Menu's 48×48 RGB565 icon. The image remains a local input;
-no disc artwork is bundled with this repository.
+Transparency is composited onto a light background before downsampling to the
+48x48 RGB565 icon. This remains a local input, not a bundled asset.
 
-Once `build/home-menu/art/` exists, ordinary executable updates only need the
-release build and `package_cia.py` commands. The output is
-`dist/home-menu/melee-3ds.cia`, with a machine-readable verification report.
-The CIA builder accepts `--elf`, `--art`, and `--output` for explicit paths.
-`--cci` optionally creates an emulator test cartridge. Development packages
-require the explicit `--development` option and must not be copied to consoles.
+Once the art exists, executable updates need only the release build and CIA
+packaging commands. Output: `dist/home-menu/melee-3ds.cia` and a verification
+report. `package_cia.py` accepts `--elf`, `--art`, `--output`, optional `--cci`
+for an emulator cartridge, and explicit `--development` for test-only ELFs.
+Never copy a development package to the console.
 
-## Package and verification details
+## Validation and limits
 
-- Homebrew title ID: `000400000F4D4500`; product code: `CTR-P-M3LE`.
-- Native executable, 124 MB application mode, 804 MHz CPU request, L2 enabled.
-- No embedded game filesystem. Both launch methods read `/3ds/melee/`.
-- Banner: the original 1,702 triangles become 2,014 after UV-boundary splits,
-  or 2,862 with reverse faces for the stage/logo. A looping 3.2-second rigid
-  animation and the float RGB vertex streams occupy a 404,776-byte CGFX under
-  HOME's 524,288-byte limit. There are seven bones and two animated objects.
-- Sound: original English intro bank `nr_title.ssm`, sample 1 (game sound ID
-  20001), final word isolated and shortened without changing pitch to fit
-  HOME's audio limit. Output: stereo, 32 kHz, approximately 2.92 seconds.
-- The verifier reads back the CIA content hash, ExeFS hashes, icon, compressed
-  CGFX, application permissions and memory mode. It decompresses `.code` and
-  compares all three initialized segments against the finalized BE8 ELF.
-- Serialized CGFX verification follows relative pointers, validates mesh/bone/
-  animation bindings and curve values, checks triangle indices and rejects
-  soft skins, bone-weight/index streams and non-identity billboard transforms.
-  It enforces this scene's four-draw/seven-bone atlas profile, complete TRS
-  curves and finite float attributes. Atlas tests check coverage, interpolation
-  and clamping; a local before/after render comparison retained every pixel
-  within 4/255 per channel in the checked view.
-  The sound verifier checks both CWAV channel pointers, block sizes and sample
-  bounds, and compares every PCM sample against the local source WAV.
-  Run `python tools/test_home_banner.py` after generating the banner to check
-  that malformed variants are rejected. This does not render HOME Menu.
-- `python tools/test_home_banner_atlas.py` checks the triangle splitting.
+- Title ID `000400000F4D4500`, product `CTR-P-M3LE`; native executable, 124 MB
+  application mode, 804 MHz CPU request and L2 cache enabled. No embedded game
+  filesystem: both launch methods read `/3ds/melee/`.
+- The atlas preserves texture-clamp boundaries. The 1,702 original triangles
+  become 2,014 after UV splits, or 2,862 with reverse stage/logo faces. The
+  CGFX is 403,544 bytes, below the 524,288-byte limit. Its four-draw profile is
+  an authoring budget, not a claimed hardware limit for all banners.
+- Audio combines `nr_title.ssm` sample 1 (sound ID 20001), cropped and shortened
+  without a pitch change, with `menu01.hps`. Output: stereo PCM16, 32 kHz,
+  approximately 2.92 seconds. `home_banner_audio.py` can rebuild the mix alone.
+- The verifier checks CIA/ExeFS hashes, the 8 KiB splash and both layout files,
+  memory mode and permissions. Decompressed `.code` is compared byte-for-byte
+  with all three initialized segments of the finalized BE8 ELF. CWAV pointers,
+  block sizes and every PCM sample are checked against the source WAV.
+- Serialized CGFX checks cover relative pointers, mesh/bone/animation bindings,
+  curve values, indices, finite float attributes and color combiners. Soft skins,
+  weight/index streams and non-identity billboard transforms are rejected.
+  `python tools/test_home_banner.py` exercises malformed variants;
+  `python tools/test_home_banner_atlas.py` checks clipping/interpolation.
 - The private native HOME harness uses the owner's matching executable in
-  Azahar to construct the model through its real loader and advance banner
-  animation. A working reference and the earlier failing banner serve as
-  controls. This bypasses UI selection; it does not validate gift unwrapping,
-  physical GPU behavior or end-to-end HOME display.
-  Captured native graphics commands fell from 267,280 to 142,864 bytes in
-  the checked frame (including HOME UI), close to the animated reference's
-  142,256 bytes. The captured vertex shader programs match the references.
-  These measurements demonstrate reduced work, not a proven freeze cause.
-- Local validation includes CIA installation and installed-executable startup
-  in Azahar, original menu navigation into Versus, stereo pixel checks and
-  Start pause/resume. This does not validate the physical HOME Menu's banner
-  renderer, audio playback, suspension behavior, or console frame rate.
+  Azahar. Actual ARM framebuffer reads materialize GPU output; raw debugger
+  memory reads can return stale pixels. Native comparison shows the old black
+  stage and corrected purple materials. A temporary position-offset fixture
+  exposes both colored Foxes outside the harness's unrelated system-icon
+  overlay. That offset is not in the shipped banner.
+- Local startup validation compares the installed content to the built CIA and
+  starts its executable in Azahar. These tests do not prove physical HOME
+  launch, banner audio playback, suspension behavior or console frame rate.
 
 ## References
 

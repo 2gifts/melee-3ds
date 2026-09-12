@@ -32,6 +32,12 @@ def main():
         for name in model.materials:
             material = model.materials[name]
             material.material_color.constant[0] = ColorFloat(0, 0, 0, 1)
+            # Captured vertices carry our baked ambient/directional shading.
+            # HOME's light rig must not multiply that color by zero. Keep
+            # the proven shader/material layout, but pass texture * vertex
+            # color through the remaining TEV stages unchanged.
+            diffuse = material.fragment_shader.texture_combiners[1]
+            diffuse.src_rgb, diffuse.combine_rgb = 0xFFF, 0
             specular = material.fragment_shader.texture_combiners[2]
             specular.src_rgb, specular.combine_rgb = 0xFFF, 0
             material.fragment_shader.fragment_lighting.flags = FragmentLightingFlags(0)

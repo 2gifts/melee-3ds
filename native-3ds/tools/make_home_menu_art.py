@@ -55,6 +55,11 @@ class Scene:
         if alpha:mat.update(alphaMode='MASK',alphaCutoff=.3)
         index=len(self.materials);self.materials.append(mat);self.texture_ids[key]=index;return index
     def mesh(self,name,pos,norm,uv,color,ix,material,joints=None,weights=None,skin=None,node=None):
+        if name != 'Melee logo':
+            # Bake gentle shape shading once, independent of HOME's light set.
+            light=np.array([-.3,.75,.6]);light/=np.linalg.norm(light)
+            color=np.asarray(color,dtype=float).copy()
+            color[:,:3]*=(.68+.32*np.maximum(0,np.asarray(norm)@light))[:,None]
         # Collapse repeated GX vertices before encoding seven attribute streams.
         arrays=[np.asarray(x) for x in (pos,norm,uv,color)]
         if joints is not None:arrays += [np.asarray(joints),np.asarray(weights)]
@@ -114,6 +119,15 @@ def mesh_key(d):
 
 def build_scene():
     captures=[read_capture(ROOT/f'build/home-menu/capture/banner-{i:04d}.bin') for i in range(45)]
+    taunt=ROOT/'build/home-menu/capture-taunt'
+    pose=json.loads((taunt/'pose.json').read_text())
+    assert pose['motion'] in (264,265) and not pose['airborne'], 'Expected a grounded Fox taunt'
+    captures.append(read_capture(taunt/pose['file']))
+    states=json.loads((ROOT/'build/home-menu/capture/states.json').read_text())
+    idle=[i for i,s in enumerate(states) if s['fighters'][1]['motion']==14
+          and not s['fighters'][1]['airborne']]
+    assert idle, 'Capture a grounded idle pose for the second Fox'
+    idle_frame=24 if 24 in idle else idle[0]
     # Use the original platform as a stable camera reference. No screen-space
     # vertices or HUD are included in the HOME Menu model.
     stages=[];groups=[];reference=[];image_groups=None
@@ -139,7 +153,12 @@ def build_scene():
         stages.append(stage);groups.append(f);reference.append(matrix(stage[0]))
     s=Scene();stage0=stages[0];base=reference[0]
     allp=np.concatenate([d['positions'] for d in stage0]);center=(allp.min(0)+allp.max(0))/2
-    ground=np.percentile(allp[:,1],95)
+    surface=stage0[-1]['positions'];surface_center=surface.mean(0)
+    _,_,vectors=np.linalg.svd(surface-surface_center)
+    ground_normal=vectors[-1];ground_normal*=1 if ground_normal[1]>0 else -1
+    assert np.max(abs((surface-surface_center)@ground_normal))<.01
+    plane=float(surface_center@ground_normal)
+    ground=(plane-center[0]*ground_normal[0]-center[2]*ground_normal[2])/ground_normal[1]
     # Stage below the logo, with room for stereoscopic depth and spinning.
     root=np.eye(4);root[:3,:3]*=.10;root[:3,3]=[-center[0]*.10,-1.8-ground*.10,-center[2]*.10]
     s.nodes[0]['matrix']=root.T.ravel().tolist()
@@ -169,22 +188,26 @@ def build_scene():
     # Bake complete captured poses, then animate each material part with the
     # same rigid transform. Physical HOME Menu cannot safely animate soft
     # skins. Keeping the whole fighter rigid avoids cracks between envelopes.
-    times=[0,.35,.65,.85,1.15,1.6,1.95,2.25,2.5,2.85,3.2]
+    times=[0,3.2]
+    metrics['poses']=[]
     for player in range(2):
-        frame=16 if player==0 else 24
+        frame=45 if player==0 else idle_frame
         normalize=base@np.linalg.inv(reference[frame])
         parts=[d for d in groups[frame][player] if d['d']['geometry_id']]
         pos=np.concatenate([(normalize@np.c_[d['positions'],np.ones(len(d['v']))].T).T[:,:3] for d in parts])
         foot=np.array([np.median(pos[:,0]),pos[:,1].min(),np.median(pos[:,2])])
-        desired=np.array([center[0]+(-19 if player==0 else 19),ground,center[2]+22])
-        # A short lunge, evade and counterattack loop; original triangle/UV
-        # data is retained. This animation belongs only to the HOME diorama.
-        motion=([0,0,9,13,4,0,-3,0,3,0,0] if player==0 else [0,0,0,5,7,0,-9,-13,-4,0,0])
-        hops=([0,0,1,0,0,0,4,2,0,0,0] if player==0 else [0,0,0,3,4,0,1,0,0,0,0])
-        transforms=[]
-        for dx,dy in zip(motion,hops):
-            transform=np.eye(4);transform[:3,3]=desired+[dx,dy,0]
-            transforms.append(transform)
+        desired=np.array([center[0]+(-22 if player==0 else 22),ground,center[2]+15])
+        # Place the lowest point against the actual tilted platform plane.
+        # A percentile of stage Y ignored depth and left both figures hovering.
+        local=(pos-foot)*2.3
+        clearance=float(np.min(local@ground_normal))
+        desired[1]=(plane-clearance-desired[0]*ground_normal[0]-desired[2]*ground_normal[2])/ground_normal[1]
+        transform=np.eye(4);transform[:3,3]=desired
+        transforms=[transform.copy() for _ in times]
+        gap=(local+desired)@ground_normal-plane
+        assert abs(gap.min())<.001 and gap.max()>0
+        metrics['poses'].append(dict(player=player+1,pose='taunt' if player==0 else 'idle',
+                                    minimum_surface_gap=float(gap.min())))
         # One transform/animation per fighter, regardless of material count.
         # Creating a bone for each draw needlessly balloons HOME's matrices.
         node=None
@@ -202,7 +225,7 @@ def build_scene():
     # Logo sits above and slightly in front of the stage. Put it outside the
     # scaled diorama hierarchy so its original aspect ratio stays exact.
     im=Image.open(OUT/'logo.png');mi=s.material(im,'Logo',True)
-    n=s.mesh('Melee logo',[[-11.5,1.5,2],[11.5,1.5,2],[11.5,13,2],[-11.5,13,2]],[[0,0,1]]*4,[[0,1],[1,1],[1,0],[0,0]],[[1,1,1,1]]*4,[0,1,2,0,2,3],mi)
+    n=s.mesh('Melee logo',[[-9.25,1,2],[9.25,1,2],[9.25,10.25,2],[-9.25,10.25,2]],[[0,0,1]]*4,[[0,1],[1,1],[1,0],[0,0]],[[1,1,1,1]]*4,[0,1,2,0,2,3],mi)
     # Y-axis billboarding requires an identity logo node beside the world.
     s.nodes[0]['children'].remove(n)
     from home_banner_atlas import compact_scene

@@ -23,6 +23,7 @@ def main():
     skeleton = r.ptr(model+224)
     bones = r.dictionary(skeleton+24)
     material = next(iter(r.dictionary(model+188).values()))
+    fragment = r.ptr(material+648)
     animation = r.dictionary(100)['COMMON']
     member = next(iter(r.dictionary(animation+24).values()))
     cases = [
@@ -38,6 +39,7 @@ def main():
         ('incomplete transform tracks', member, 0x3f0000),
         ('custom unlit material', material+24, 0),
         ('custom culling command', material+272, 0),
+        ('HOME-light-dependent colors', fragment+44+28+4, 0x0fff00f1),
     ]
     for name, offset, value in cases:
         bad = bytearray(data)

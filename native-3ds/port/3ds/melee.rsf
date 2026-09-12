@@ -2,6 +2,8 @@
 BasicInfo:
   Title: Melee3DS
   ProductCode: CTR-P-M3LE
+  # HOME reads this launch resource separately from the selected-title banner.
+  Logo: Homebrew
 TitleInfo:
   Category: Application
   Platform: snake

@@ -24,7 +24,7 @@ def main():
     ap.add_argument('--art', type=Path, default=ROOT/'build/home-menu/art')
     ap.add_argument('--output', type=Path, default=ROOT/'dist/home-menu/melee-3ds.cia')
     ap.add_argument('--development', action='store_true', help='Allow an emulator-only validation ELF')
-    ap.add_argument('--version', type=int, default=3, help='CIA title version; retains the installed title ID')
+    ap.add_argument('--version', type=int, default=4, help='CIA title version; retains the installed title ID')
     ap.add_argument('--cci', type=Path, help='Also emit a local emulator test cartridge')
     args = ap.parse_args()
     image = ElfImage(args.elf.read_bytes())
@@ -44,7 +44,7 @@ def main():
     run(bannertool, 'makebanner', '-ci', args.art/'banner.cgfx',
         '-a', args.art/'announcer.wav', '-o', args.art/'banner.bin')
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    common = ['-target', 't', '-elf', args.elf, '-rsf', ROOT/'port/3ds/melee.rsf',
+    common = ['-target', 't', '-exefslogo', '-elf', args.elf, '-rsf', ROOT/'port/3ds/melee.rsf',
               '-banner', args.art/'banner.bin', '-icon', args.art/'icon.smdh']
     run(makerom, '-f', 'cia', *common, '-ver', args.version, '-o', args.output)
     result = verify(args.output, args.elf, args.art)

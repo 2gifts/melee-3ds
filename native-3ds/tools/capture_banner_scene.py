@@ -1,5 +1,5 @@
 """Authoring capture: configure a Fox ditto demo, export its real draw data."""
-import json,socket,time,sys
+import argparse,json,socket,time,sys
 from pathlib import Path
 from gameplay_test import ROOT,symbols,packet,receive,exchange
 from profile_switch import set_word
@@ -7,7 +7,10 @@ import select_test_stage as select
 import bottom_screen_test as bottom
 
 def main():
-    out=ROOT/'build/home-menu/capture';out.mkdir(parents=True,exist_ok=True)
+    ap=argparse.ArgumentParser(description=__doc__)
+    ap.add_argument('--taunt',action='store_true',help='Capture the left Fox taunting, on a separate fresh boot')
+    args=ap.parse_args()
+    out=ROOT/('build/home-menu/capture-taunt' if args.taunt else 'build/home-menu/capture');out.mkdir(parents=True,exist_ok=True)
     select.observe((0,1,0,0));set_word('mp_test_stereo_slider',0)
     for _ in range(90):
         state=select.observe()
@@ -23,7 +26,9 @@ def main():
     saved=sys.argv;sys.argv=['select_test_stage.py',str(index)]
     try:select.main()
     finally:sys.argv=saved
-    select.act(frames=130)
+    if args.taunt:
+        select.act(frames=100);select.act(8,2);select.act(frames=12)
+    else:select.act(frames=130)
     assert bottom.snapshot()['scene']==2
     records=[]
     sd=ROOT/'.toolchain/azahar/azahar-windows-msys2-2126.1/user/sdmc/3ds/melee'
@@ -42,6 +47,13 @@ def main():
         print(i,records[-1]['simulation'],(out/name).stat().st_size,flush=True)
         time.sleep(.02)
     (out/'states.json').write_text(json.dumps(records,indent=2)+'\n')
+    if args.taunt:
+        poses=[i for i,s in enumerate(records) if s['fighters'][0]['motion'] in (264,265)
+               and not s['fighters'][0]['airborne']]
+        assert poses, 'Taunt input did not produce a grounded taunt; repeat this authoring capture'
+        index=poses[min(2,len(poses)-1)];pose=records[index]['fighters'][0]
+        (out/'pose.json').write_text(json.dumps(dict(file=f'banner-{index:04d}.bin',
+            motion=pose['motion'],airborne=pose['airborne']),indent=2)+'\n')
     bottom.OUT=out;bottom.capture('fox-ditto')
 
 if __name__=='__main__':main()

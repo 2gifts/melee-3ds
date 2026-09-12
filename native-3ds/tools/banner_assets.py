@@ -109,9 +109,5 @@ if __name__=='__main__':
     print('title textures',len(inspect_title()))
     print(json.dumps(extract_announcer(),indent=2))
     art=ROOT/'build/home-menu/art';art.mkdir(parents=True,exist_ok=True)
-    # gmopening.c plays English bank ID 20001 (nr_title sample 1). Isolate
-    # the final word and shorten its sustain, preserving pitch, to fit HOME.
-    subprocess.run(['ffmpeg','-y','-hide_banner','-loglevel','error','-ss','2.43',
-        '-i',str(OUT/'announcer-1.wav'),'-af',
-        'atempo=1.455,afade=t=in:st=0:d=0.01,afade=t=out:st=2.86:d=0.06',
-        '-t','2.95','-ar','32000','-ac','2','-c:a','pcm_s16le',str(art/'announcer.wav')],check=True)
+    from home_banner_audio import make_banner_audio
+    print(json.dumps(make_banner_audio(art),indent=2))

@@ -73,6 +73,16 @@ def verify_banner(data):
     for material in materials.values():
         assert r.u32(material+24) == 1, 'Keep the reference fragment-lighting material path'
         assert r.read('IIfII', material+260) == (0,2,0,2,0x10040), 'Keep reference culling state'
+        fragment=r.ptr(material+648)
+        for stage in range(6):
+            combiner=fragment+44+stage*28
+            constant,src_rgb,src_alpha,header,ops,rgb,alpha=r.read('IHHIIHH',combiner)
+            assert header == 0x804F0000 | ((0xC0 if stage<4 else 0xD0)+stage*8)
+            assert ops==0
+            if stage==0:
+                assert (src_rgb,src_alpha,rgb,alpha)==(0x030,0x030,1,1), 'Expected texture times vertex color'
+            else:
+                assert (src_rgb,src_alpha,rgb,alpha)==(0xFFF,0xFFF,0,0), 'Baked colors must not depend on HOME lighting'
     skel = r.ptr(model+224)
     assert r.u32(skel) == 0x2000000
     bones = r.dictionary(skel+24)
@@ -175,4 +185,5 @@ def verify_banner(data):
     return dict(meshes=len(meshes), materials=len(materials), textures=2,
                 scene_data_bytes=r.u32(24), bones=len(bones), triangles=triangles,
                 animation_members=len(members), frames=frames, rigid_only=True,
-                mesh_bindings_verified=True, serialized_curves_verified=True)
+                mesh_bindings_verified=True, serialized_curves_verified=True,
+                baked_color_combiners_verified=True)

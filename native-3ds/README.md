@@ -6,7 +6,7 @@ A work-in-progress native ARM port of Super Smash Bros. Melee, built from the [d
 
 Update 15 overlaps game simulation with GPU rendering, uses shorter material programs, uploads only referenced bone matrices, and shares overlapping geometry snapshots. It also fixes a reproduced freeze in Kirby’s copied-model visibility. Stereo rendering and casual-play regressions passed in Azahar; the 60 FPS competitive and 30 FPS casual targets still require physical-console validation. [Changes and validation](docs/STEREO_PERFORMANCE_UPDATE_15.md).
 
-**Standalone HOME Menu packaging is experimental.** A locally built CIA adds the disc icon, animated Final Destination/Fox diorama and announcer call. The first three packages crashed or froze during physical unwrapping. HOME package 4 rebuilds the banner with four atlas draws and the animated reference's material/animation profile, preserving its appearance and substantially reducing native graphics commands. Local native HOME loading/animation checks pass, but they also accept the failing older banner: physical unwrapping is still unverified. [Installation, authoring and test limits](docs/HOME_MENU.md).
+**Standalone HOME Menu packaging is experimental.** HOME package 4 was confirmed to unwrap and display on a physical New 3DS. Package 5 retains its compact rigid diorama, restores the missing launch splash, corrects the colors and title framing, grounds an idle Fox and a taunting Fox on Final Destination, and mixes the announcer over the menu theme. Local renderer and installed-executable checks pass; physical launch confirmation is still pending. [Installation, authoring and test limits](docs/HOME_MENU.md).
 
 ## What works
 
