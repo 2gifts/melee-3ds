@@ -6,7 +6,7 @@ A work-in-progress native ARM port of Super Smash Bros. Melee, built from the [d
 
 Update 15 overlaps game simulation with GPU rendering, uses shorter material programs, uploads only referenced bone matrices, and shares overlapping geometry snapshots. It also fixes a reproduced freeze in Kirby’s copied-model visibility. Stereo rendering and casual-play regressions passed in Azahar; the 60 FPS competitive and 30 FPS casual targets still require physical-console validation. [Changes and validation](docs/STEREO_PERFORMANCE_UPDATE_15.md).
 
-**Standalone HOME Menu packaging is experimental.** HOME package 4 was confirmed to unwrap and display on a physical New 3DS. Package 5 retains its compact rigid diorama, restores the missing launch splash, corrects the colors and title framing, grounds an idle Fox and a taunting Fox on Final Destination, and mixes the announcer over the menu theme. Local renderer and installed-executable checks pass; physical launch confirmation is still pending. [Installation, authoring and test limits](docs/HOME_MENU.md).
+**Standalone HOME Menu launch and gameplay are confirmed on New 3DS with package 5.** Package 6 sharpens the title lettering and corrects inside-out Fox surfaces that made their heads appear to turn separately. Local native-renderer checks pass; the new banner appearance awaits console confirmation. [Installation, authoring and test limits](docs/HOME_MENU.md).
 
 ## What works
 

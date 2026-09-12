@@ -15,11 +15,13 @@ OUT=ROOT/'build/home-menu/art'
 
 def logo_and_icon(disc_image):
     logo=Image.new('RGBA',(512,256))
-    top=Image.open(ASSETS/'title-0023b0.png').resize((432,128),Image.Resampling.LANCZOS)
+    # Use the actual letter faces, not the expanded extrusion/shadow mask.
+    # The latter fills in the counters in SMASH BROS at HOME's small size.
+    top=Image.open(ASSETS/'title-002724.png').convert('RGBA')
     lower=Image.open(ASSETS/'title-0028b0.png').resize((300,61),Image.Resampling.LANCZOS)
     logo.alpha_composite(top,(40,18));logo.alpha_composite(lower,(106,150))
-    alpha=logo.getchannel('A');outline=alpha.filter(ImageFilter.MaxFilter(9))
-    shadow=Image.new('RGBA',logo.size,(17,14,22,255));shadow.putalpha(outline)
+    alpha=logo.getchannel('A');outline=alpha.filter(ImageFilter.MaxFilter(5))
+    shadow=Image.new('RGBA',logo.size,(17,17,17,255));shadow.putalpha(outline)
     shadow.alpha_composite(logo);shadow.save(OUT/'logo.png')
     im=Image.open(disc_image).convert('RGBA')
     assert min(im.size)>=256 and abs(im.width-im.height)<=2, 'Supply a square disc image, at least 256px'
@@ -47,7 +49,7 @@ class Scene:
         if image is not None:
             im=image.copy();im.thumbnail((32,32),Image.Resampling.LANCZOS)
             w=1<<(max(8,im.width)-1).bit_length();h=1<<(max(8,im.height)-1).bit_length()
-            if name=='Logo':im=image.resize((256,128),Image.Resampling.LANCZOS)
+            if name=='Logo':im=image.copy() # Preserve the 512x256 lettering.
             else:im=im.resize((w,h),Image.Resampling.LANCZOS)
             filename=f'texture-{len(self.images):02d}.png';im.save(OUT/filename)
             self.images.append(dict(uri=filename));self.textures.append(dict(source=len(self.images)-1,sampler=0))
@@ -112,6 +114,20 @@ def decompose(m):
 
 def matrix(d,row=0):
     m=np.eye(4);m[:3]=d['u'][row:row+3];return m
+
+
+def captured_indices(d):
+    # GX capture uses clockwise front faces; glTF/CGFX use counterclockwise.
+    # An inside-out head produces the hollow-face illusion as HOME rotates
+    # the model: its face appears to turn independently of the body.
+    triangles=d['indices'].reshape(-1,3)[:,[0,2,1]]
+    # Preserve deliberately two-sided details without changing the shared
+    # material or adding a draw. Stage is already made two-sided downstream.
+    if d['d']['cull']==0:
+        triangles=np.concatenate((triangles,triangles[:,[0,2,1]]))
+    else:
+        assert d['d']['cull']==2, 'Unexpected captured face-culling mode'
+    return triangles.reshape(-1)
 
 def mesh_key(d):
     # Native geometry IDs can change after visibility/animation invalidation.
@@ -219,7 +235,7 @@ def build_scene():
                 mask=d['v'][:,13].astype(int)==row
                 norm[mask]=d['v'][mask,10:13]@np.linalg.inv((normalize@matrix(d,int(row)))[:3,:3])
             norm/=np.maximum(1e-6,np.linalg.norm(norm,axis=1))[:,None]
-            node=s.mesh(f'Fox {player+1}',p,norm,d['v'][:,8:10],color(d),d['indices'],material(d,captures[frame][1]),node=node)
+            node=s.mesh(f'Fox {player+1}',p,norm,d['v'][:,8:10],color(d),captured_indices(d),material(d,captures[frame][1]),node=node)
         s.nodes[node]['translation']=desired.tolist()
         s.animation(node,times,transforms)
     # Logo sits above and slightly in front of the stage. Put it outside the

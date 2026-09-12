@@ -27,6 +27,8 @@ def main():
     # Follow the reference converter's two-sided geometry and render state.
     # Four atlas draws keep the duplicated stage/logo geometry affordable.
     banner = converter.convert_gltf(source)
+    from home_banner_texture import replace_logo_texture
+    replace_logo_texture(banner, source, ART)
     for model_name in banner.data.models:
         model = banner.data.models[model_name]
         for name in model.materials:
@@ -49,6 +51,7 @@ def main():
             mesh.mesh_node_name = model.skeleton.bones[next(iter(bone_ids))].name
         for name in model.skeleton.bones:
             bone = model.skeleton.bones[name]
+            bone.billboard_mode = BillboardMode.Off
             if name == 'Melee logo':
                 bone.billboard_mode = BillboardMode.YAxial
         for shape in model.shapes.data.contents:

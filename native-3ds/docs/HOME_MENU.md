@@ -26,34 +26,32 @@ Target: **New 3DS / New 3DS XL** with CFW and FBI. New 2DS XL uses the same
 application mode without stereo; it has not been physically tested. Original
 3DS/2DS models are excluded by the package metadata.
 
-## HOME package 5
+## HOME package 6
 
-**Package 4 was confirmed to unwrap and display on physical New 3DS.** Its four
-rigid draws, four materials, two textures and seven bones are retained. Packages
-1-3 crashed or froze during unwrapping.
+**Package 5 was confirmed to launch and play on physical New 3DS.** Package 6
+keeps its executable, launch splash, title ID, disc icon, audio and compact
+four-draw diorama. It fixes two remaining selection-banner defects:
 
-Package 5 addresses the next reported issues:
+- The title now uses the original clean letter-face texture instead of the
+  expanded shadow mask. A narrower outline preserves the spaces within letters.
+  The logo remains 512x256 through conversion, instead of being reduced to
+  256x128. Grayscale LA4 preserves the same four-bit luminance/alpha precision
+  as the previous RGBA4 artwork while doubling resolution on each axis.
+- Exported GX triangles had clockwise winding in a counterclockwise format.
+  This made the Foxes render inside out, producing a hollow-face effect during
+  HOME's rotation. Fighter indices now use the correct winding, retaining
+  intentionally two-sided details. Both complete poses are fixed rigid meshes:
+  one original taunt and one idle. Only the title uses camera-facing billboarding.
 
-- The old CIA omitted the separate launch splash. This package includes
-  makerom's standard **8 KiB Homebrew logo in ExeFS**, with both screen layouts.
-  This differs from the disc icon and selection banner. An incorrectly sized
-  splash independently produced the same misleading "SD card was removed"
-  error in [another homebrew project's tests](https://github.com/astronautlevel2/Anemone3DS/issues/146#issuecomment-381389090).
-  This is the identified package defect and proposed fix; physical launch
-  confirmation is still needed. It does not rule out a separate SD fault.
-- Texture and baked vertex colors pass directly through the texture combiners.
-  They no longer multiply by HOME's fragment-light result, which produced black
-  silhouettes. The reference shader/material layout stays intact. Gentle
-  directional shading is baked into the geometry.
-- The complete title fits below the status bar. The left Fox uses the original
-  taunt (motion 264/265); the other retains the captured idle pose. Both meet the
-  actual tilted stage plane. The hopping/lunging loop has been removed.
-- The original Menu 1 theme plays underneath the announcer, with headroom and
-  short fades. Stereo PCM stays below three seconds.
+CIA title version **5** replaces the same installed title. The game executable
+remains update 15. Native HOME rendering in Azahar was checked at six points in
+its rotation, plus the final unmodified composition. Physical confirmation of
+package 6's appearance is pending; package 5's launch is confirmed.
 
-CIA title version **4** updates the existing title ID. The game executable is
-still update 15. Physical validation of the new launch and appearance changes
-is pending. Luma intentionally does not save logs for card-removal errors.
+Earlier corrections retained here include the standard 8 KiB Homebrew startup
+splash in ExeFS, baked material colors, title framing, grounded Fox poses and
+the announcer mixed over Menu 1. Packages 1-3 failed during unwrapping; package
+4 first displayed the diorama. The missing launch splash was corrected in 5.
 
 ## Local authoring
 
@@ -107,9 +105,9 @@ Never copy a development package to the console.
 - Title ID `000400000F4D4500`, product `CTR-P-M3LE`; native executable, 124 MB
   application mode, 804 MHz CPU request and L2 cache enabled. No embedded game
   filesystem: both launch methods read `/3ds/melee/`.
-- The atlas preserves texture-clamp boundaries. The 1,702 original triangles
-  become 2,014 after UV splits, or 2,862 with reverse stage/logo faces. The
-  CGFX is 403,544 bytes, below the 524,288-byte limit. Its four-draw profile is
+- The atlas preserves texture-clamp boundaries. The 1,728 input triangles
+  become 2,040 after UV splits, or 2,888 with reverse stage/logo faces. The
+  CGFX is 469,240 bytes, below the 524,288-byte limit. Its four-draw profile is
   an authoring budget, not a claimed hardware limit for all banners.
 - Audio combines `nr_title.ssm` sample 1 (sound ID 20001), cropped and shortened
   without a pitch change, with `menu01.hps`. Output: stereo PCM16, 32 kHz,
@@ -119,19 +117,22 @@ Never copy a development package to the console.
   with all three initialized segments of the finalized BE8 ELF. CWAV pointers,
   block sizes and every PCM sample are checked against the source WAV.
 - Serialized CGFX checks cover relative pointers, mesh/bone/animation bindings,
-  curve values, indices, finite float attributes and color combiners. Soft skins,
+  constant pose curves, outward fighter winding, texture sizes/formats, indices,
+  finite float attributes and color combiners. Soft skins,
   weight/index streams and non-identity billboard transforms are rejected.
   `python tools/test_home_banner.py` exercises malformed variants;
   `python tools/test_home_banner_atlas.py` checks clipping/interpolation.
+  `python tools/test_home_banner_texture.py` independently decodes and checks all
+  131,072 logo texels, including alpha, tile addressing and vertical orientation.
 - The private native HOME harness uses the owner's matching executable in
   Azahar. Actual ARM framebuffer reads materialize GPU output; raw debugger
-  memory reads can return stale pixels. Native comparison shows the old black
-  stage and corrected purple materials. A temporary position-offset fixture
-  exposes both colored Foxes outside the harness's unrelated system-icon
+  memory reads can return stale pixels. Native comparisons cover title clarity and
+  fighter faces through the rotating preview. A temporary position-offset
+  fixture exposes both Foxes outside the harness's unrelated system-icon
   overlay. That offset is not in the shipped banner.
 - Local startup validation compares the installed content to the built CIA and
-  starts its executable in Azahar. These tests do not prove physical HOME
-  launch, banner audio playback, suspension behavior or console frame rate.
+  starts its executable in Azahar. Local tests do not replace console
+  verification of a new banner or establish suspension behavior or frame rate.
 
 ## References
 
@@ -149,3 +150,7 @@ Tools: [pycgfx](https://github.com/skyfloogle/pycgfx/tree/1f78850086f3a77c41e071
 [bannertool](https://github.com/Epicpkmn11/bannertool/releases/tag/v1.2.2), and
 [makerom](https://github.com/3DSGuy/Project_CTR/releases/tag/makerom-v0.19.0).
 Format limits: [3dbrew CBMD](https://3dbrew.org/wiki/CBMD).
+
+The [glTF mesh winding specification](https://github.com/KhronosGroup/glTF/blob/main/specification/2.0/Specification.adoc#meshes)
+and [Azahar's PICA texture decoder](https://github.com/azahar-emu/azahar/blob/master/src/video_core/texture/texture_decode.cpp)
+provide format references for counterclockwise faces and LA4 texel packing.

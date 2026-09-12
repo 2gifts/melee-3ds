@@ -26,6 +26,7 @@ def main():
     fragment = r.ptr(material+648)
     animation = r.dictionary(100)['COMMON']
     member = next(iter(r.dictionary(animation+24).values()))
+    logo_texture = next(t for t in r.dictionary(36).values() if r.u32(t+28)==512)
     cases = [
         ('soft skin', primitive+8, 2),
         ('bone-index stream', attribute+4, 7),
@@ -33,6 +34,9 @@ def main():
         ('non-mesh animation', member+4, r.ptr(bones['Scene root'])-(member+4)),
         ('baked animation', member+16, 8),
         ('logo transform', bones['Melee logo']+56, 0x3f800000),
+        ('billboard fighter', bones['Fox 1']+212, 5),
+        ('downsampled logo', logo_texture+28, 256),
+        ('wrong logo pixel format', logo_texture+52, 4),
         ('dangling shape array', model+200, 0x7fffffff),
         ('quantized vertex stream', attribute+36, 0x1402),
         ('nonfinite vertex', r.ptr(attribute+24), 0x7fc00000),
@@ -50,6 +54,24 @@ def main():
             print(f'PASS: rejects {name}')
         else:
             raise AssertionError(f'Accepted {name}')
+    # Reverse a whole fighter's winding, reproducing the hollow-face defect.
+    bad = bytearray(data)
+    fox_mesh = next(m for m in r.array(model+180) if r.string(m+112)=='Fox 1')
+    fox_shape = r.array(model+196)[r.u32(fox_mesh+24)]
+    for ps in r.array(fox_shape+44):
+        for p in r.array(ps+12):
+            for stream in r.array(p):
+                width = 1 if r.u32(stream)==0x1401 else 2
+                start,size = r.ptr(stream+12),r.u32(stream+8)
+                for i in range(start,start+size,3*width):
+                    bad[i+width:i+3*width] = bad[i+2*width:i+3*width]+bad[i+width:i+2*width]
+    try:
+        verify_banner(bytes(bad))
+    except AssertionError as error:
+        assert 'Inside-out' in str(error)
+        print('PASS: rejects inside-out fighter')
+    else:
+        raise AssertionError('Accepted inside-out fighter')
     if args.previous:
         try:
             verify_banner(args.previous.read_bytes())

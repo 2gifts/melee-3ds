@@ -8,6 +8,21 @@ import math
 import struct
 
 
+def outward_fraction(positions, normals, indices):
+    """Area/normal-weighted winding agreement; tiny folded edges may differ."""
+    positive = total = 0.0
+    for i in range(0,len(indices),3):
+        ids = indices[i:i+3]
+        a,b,c = [positions[j] for j in ids]
+        u = [b[k]-a[k] for k in range(3)]
+        v = [c[k]-a[k] for k in range(3)]
+        face = (u[1]*v[2]-u[2]*v[1],u[2]*v[0]-u[0]*v[2],u[0]*v[1]-u[1]*v[0])
+        dot = sum(face[k]*sum(normals[j][k] for j in ids) for k in range(3))
+        total += abs(dot)
+        positive += max(0,dot)
+    return positive/total if total else 0
+
+
 class Reader:
     def __init__(self, data):
         self.data = data
@@ -69,7 +84,21 @@ def verify_banner(data):
     meshes, shapes = r.array(model+180), r.array(model+196)
     materials = r.dictionary(model+188)
     assert len(meshes) == len(shapes) == len(materials) == 4, 'Use four atlas draws for this diorama'
-    assert len(r.dictionary(36)) == 2, 'Expected a shared diorama atlas and separate logo'
+    textures = r.dictionary(36)
+    assert len(textures) == 2, 'Expected a shared diorama atlas and separate logo'
+    profiles = []
+    for name,texture in textures.items():
+        assert r.u32(texture) == 0x20000011
+        height,width = r.read('II',texture+24)
+        fmt = r.u32(texture+52)
+        assert r.u32(texture+40) == 1, 'Expected one complete mip level'
+        pixel = r.ptr(texture+56)
+        assert r.read('II',pixel) == (height,width)
+        size = r.u32(pixel+8)
+        start = r.ptr(pixel+12)
+        assert size == width*height*({4:2,9:1}[fmt]) and start+size <= len(data)
+        profiles.append((width,height,fmt))
+    assert sorted(profiles) == [(256,256,4),(512,256,9)], 'Preserve full-resolution LA4 logo'
     for material in materials.values():
         assert r.u32(material+24) == 1, 'Keep the reference fragment-lighting material path'
         assert r.read('IIfII', material+260) == (0,2,0,2,0x10040), 'Keep reference culling state'
@@ -98,11 +127,13 @@ def verify_banner(data):
         assert index not in bone_ids
         bone_ids[index] = name
         assert all(math.isfinite(x) for x in r.read('45f', bone+32))
+        assert r.u32(bone+212) == (5 if name == 'Melee logo' else 0), 'Only the logo may billboard'
     logo = bones['Melee logo']
     assert r.u32(logo+212) == 5
     assert r.read('9f', logo+32) == (1,1,1,0,0,0,0,0,0), 'Logo must have identity TRS'
     assert r.ptr(logo+16) == r.ptr(skel+32), 'Logo must be a sibling of the world'
     bindings = {}
+    winding = {}
     triangles = 0
     for mesh in meshes:
         assert r.u32(mesh) == 0x1000000
@@ -116,6 +147,7 @@ def verify_banner(data):
         attributes = r.array(shape+56)
         counts = []
         usages = []
+        vectors = {}
         for attr in attributes:
             assert r.u32(attr) == 0x40000001, 'Expected independent vertex stream'
             usage = r.u32(attr+4)
@@ -130,6 +162,9 @@ def verify_banner(data):
             assert count % (components*unit) == 0 and stream+count <= len(data)
             assert r.read('f', attr+44)[0] == 1
             assert all(math.isfinite(v) for v in r.read(f'{count//4}f', stream))
+            if usage in (0,1):
+                values = r.read(f'{count//4}f',stream)
+                vectors[usage] = list(zip(values[::3],values[1::3],values[2::3]))
             counts.append(count//(components*unit))
         assert set(usages) == {0,1,3,4} and len(set(counts)) == 1
         for primitive_set in r.array(shape+44):
@@ -147,6 +182,10 @@ def verify_banner(data):
                     indices = r.read(f'{size//width}{"B" if width == 1 else "H"}', ptr)
                     assert max(indices) < counts[0]
                     triangles += len(indices)//3
+                    if name.startswith('Fox '):
+                        fraction = outward_fraction(vectors[0],vectors[1],indices)
+                        assert fraction > .9, f'Inside-out fighter geometry: {name}'
+                        winding[name] = fraction
     animations = r.dictionary(28+9*8)
     assert set(animations) == {'COMMON'}
     animation = animations['COMMON']
@@ -161,8 +200,9 @@ def verify_banner(data):
         assert r.u32(member+16) == 5, 'Only ordinary Transform animation is supported'
         flags = r.u32(member)
         assert flags == 0, 'Use complete TRS curves, matching the animated reference'
-        for off, constant, ignore in zip((20,24,28,32,36,40,48,52,56),
-                (6,7,8,9,10,11,13,14,15), (16,17,18,19,20,21,23,24,25)):
+        for off, constant, ignore, expected in zip((20,24,28,32,36,40,48,52,56),
+                (6,7,8,9,10,11,13,14,15), (16,17,18,19,20,21,23,24,25),
+                r.read('9f',bones[name]+32)):
             if flags & (1 << ignore):
                 continue
             if flags & (1 << constant):
@@ -179,6 +219,7 @@ def verify_banner(data):
                 assert start <= a < b <= end and mode == 196 and 2 <= keys <= 4096
                 values = r.read(f'{keys*2}f', segment+20)
                 assert all(math.isfinite(v) for v in values)
+                assert all(abs(v-expected)<.0001 for v in values[1::2]), 'Fighter poses must remain fixed'
                 times = values[::2]
                 assert all(x < y for x,y in zip(times,times[1:]))
                 assert abs(times[0]-a) < .001 and abs(times[-1]-b) < .001 and speed > 0
@@ -186,4 +227,5 @@ def verify_banner(data):
                 scene_data_bytes=r.u32(24), bones=len(bones), triangles=triangles,
                 animation_members=len(members), frames=frames, rigid_only=True,
                 mesh_bindings_verified=True, serialized_curves_verified=True,
-                baked_color_combiners_verified=True)
+                baked_color_combiners_verified=True, fighter_outward_fraction=winding,
+                logo_resolution=[512,256], logo_format='LA4', fixed_poses_verified=True)
