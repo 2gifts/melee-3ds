@@ -3,6 +3,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include "../port/3ds/efb_rgb565.h"
+#ifdef MP_TEST_RGB5A3
+#include "../port/3ds/efb_rgb5a3.h"
+#define mp_efb_rgb565 mp_efb_rgb5a3
+#endif
 static uint32_t source[400*240],seed=0x87cd1;
 static uint32_t random_word(void){seed=seed*1664525+1013904223;return seed;}
 static unsigned cases;static unsigned long long pixels;
@@ -13,6 +17,10 @@ static void reference(uint8_t*dst,unsigned w,unsigned h,unsigned left,unsigned t
         if(sx>=400)sx=399;if(sy>=240)sy=239;
         uint32_t c=source[sx*240+239-sy];
         unsigned r=c>>24,g=(c>>16)&255,b=(c>>8)&255,v=((r>>3)<<11)|((g>>2)<<5)|(b>>3);
+#ifdef MP_TEST_RGB5A3
+        unsigned a=c&255;
+        v=a>=224?0x8000|((r>>3)<<10)|((g>>3)<<5)|(b>>3):((a>>5)<<12)|((r>>4)<<8)|((g>>4)<<4)|(b>>4);
+#endif
         unsigned offset=((y/4)*pitch+x/4)*32+2*((y%4)*4+x%4);
         dst[offset]=v>>8;dst[offset+1]=v;
     }
@@ -40,10 +48,16 @@ int main(void){
         check(w,h,(random_word()>>8)%700,(random_word()>>8)%500,1+(random_word()>>8)%1024,1+(random_word()>>8)%1024,i&1?400:320);
     }
     uint8_t guard[128];memset(guard,0xcd,sizeof(guard));
+#ifdef MP_TEST_RGB5A3
+    for(unsigned alpha=0;alpha<256;++alpha){
+        for(unsigned i=0;i<400*240;++i)source[i]=(random_word()&0xffffff00)|alpha;
+        check(113,75,270,124,113,75,alpha&1?400:320);
+    }
+#endif
     for(unsigned offset=1;offset<4;++offset)assert(!mp_efb_rgb565(guard+offset,source,4,4,0,0,4,4,320));
     assert(!mp_efb_rgb565(guard,source,1025,1,0,0,1,1,320));
     assert(!mp_efb_rgb565(guard,source,1,1025,0,0,1,1,320));
     assert(!mp_efb_rgb565(guard,source,0,1,0,0,1,1,320));
     for(unsigned i=0;i<sizeof(guard);++i)assert(guard[i]==0xcd);
-    printf("RGB565 EFB copy: %u cases, %llu exact pixels; padding, crop, clamping, 4:3/expanded views and destination guards passed\n",cases,pixels);
+    printf("16-bit EFB copy: %u cases, %llu exact pixels; padding, crop, clamping, 4:3/expanded views and destination guards passed\n",cases,pixels);
 }

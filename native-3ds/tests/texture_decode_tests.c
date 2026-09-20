@@ -53,4 +53,5 @@ int main(void){
     assert(colors[3]==0x7f7f7f00);
     puts("All 131072 RGB565/RGB5A3 words match bit replication");
     printf("CMPR: %u pixels across 256 padded/tiled textures match the independent GameCube reference\n",pixels);
+    return 0;
 }

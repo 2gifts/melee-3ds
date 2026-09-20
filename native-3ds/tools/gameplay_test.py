@@ -3,11 +3,23 @@
 No fighter memory is changed. The result records positions, motion IDs and
 damage from the original engine, alongside each bounded controller input.
 """
-import json,socket,struct,subprocess,time
+import json,os,socket,struct,subprocess,time
+from pathlib import Path
 from gdb_probe import ROOT,packet,receive
 
-listing=subprocess.check_output([str(ROOT/'.toolchain/llvm-mingw-20260908-ucrt-x86_64/bin/llvm-nm.exe'),str(ROOT/'build/game/melee.elf')],text=True)
+TEST_ELF=Path(os.environ.get('MP_TEST_ELF',ROOT/'build/game/melee.elf'))
+listing=subprocess.check_output([str(ROOT/'.toolchain/llvm-mingw-20260908-ucrt-x86_64/bin/llvm-nm.exe'),str(TEST_ELF)],text=True)
 symbols={p[2]:int(p[0],16) for line in listing.splitlines() if len(p:=line.split())==3}
+# ThinLTO promotes some private support symbols with a module suffix. Only
+# resolve an absent name when exactly one suffixed definition exists; never
+# choose between unrelated private variables with the same source spelling.
+symbol_aliases={}
+promoted={}
+for name,address in symbols.items():
+    if '.llvm.' in name:promoted.setdefault(name.split('.llvm.',1)[0],[]).append((name,address))
+for name,entries in promoted.items():
+    if name not in symbols and len(entries)==1:
+        label,address=entries[0];symbols[name]=address;symbol_aliases[name]=label
 
 def exchange(control=None):
     with socket.create_connection(('127.0.0.1',24689),3) as sock:

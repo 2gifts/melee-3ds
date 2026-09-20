@@ -11,6 +11,8 @@ from pathlib import Path
 EH = '16sHHIIIIIHHHHHH'
 SH = '10I'
 SYM = 'IIIBBH'
+SHN_LORESERVE = 0xff00
+SHN_XINDEX = 0xffff
 
 
 def convert(source, output):
@@ -18,11 +20,16 @@ def convert(source, output):
     header = list(struct.unpack_from('>' + EH, raw))
     if raw[:6] != b'\x7fELF\x01\x02' or header[1:3] != [1,40]:
         raise ValueError('Expected ELF32 ARM big-endian relocatable object')
+    if header[11] != 40 or not header[6]:
+        raise ValueError('Expected ELF32 section headers')
+    section0 = struct.unpack_from('>' + SH, raw, header[6])
+    section_count = header[12] or section0[5]
+    shstridx = section0[6] if header[13] == SHN_XINDEX else header[13]
     sections = [list(struct.unpack_from('>' + SH, raw, header[6] + 40*i))
-                for i in range(header[12])]
-    payload = [bytearray(raw[s[4]:s[4]+s[5]]) if s[1] != 8 else bytearray()
+                for i in range(section_count)]
+    payload = [bytearray(raw[s[4]:s[4]+s[5]]) if s[1] not in (0,8) else bytearray()
                for s in sections]
-    shstrings = payload[header[13]]
+    shstrings = payload[shstridx]
     def string(data, offset):
         return bytes(data[offset:data.index(0,offset)]).decode()
     def name(i): return string(shstrings, sections[i][0])
@@ -31,8 +38,21 @@ def convert(source, output):
     symstr = payload[symsec[6]]
     symbols = [list(struct.unpack_from('>' + SYM,payload[symidx],i))
                for i in range(0,len(payload[symidx]),16)]
-    for sym in symbols:
+    # ThinLTO's aggregate object can exceed 65K sections. ELF32 stores those
+    # indices in a parallel word array, not in the symbol's 16-bit st_shndx.
+    xidx = next((i for i,s in enumerate(sections) if s[1] == 18 and s[6] == symidx),None)
+    extended = ([v[0] for v in struct.iter_unpack('>I',payload[xidx])]
+                if xidx is not None else [0]*len(symbols))
+    if len(extended) != len(symbols):
+        raise ValueError('Section-index table must have one entry per symbol')
+    mapping_by_section = {}
+    for n,sym in enumerate(symbols):
         label = string(symstr,sym[0])
+        if sym[5] == SHN_XINDEX and (xidx is None or not 0 < extended[n] < section_count):
+            raise ValueError('Missing or invalid extended symbol section index')
+        actual_section = extended[n] if sym[5] == SHN_XINDEX else sym[5]
+        if label[:2] in ('$a','$t','$d'):
+            mapping_by_section.setdefault(actual_section,[]).append((sym[1],label[:2]))
         if sym[5] == 0 and (label.startswith('__aeabi_') or label in ('memcpy','memmove','memset','memcmp')):
             sym[0] = len(symstr)
             symstr.extend(('mp_be_'+label).encode()+b'\0')
@@ -42,8 +62,7 @@ def convert(source, output):
         if s[1] in (1,8) and s[2]&3==3 and s[5]>=32:
             s[8]=max(s[8],32)
         if s[1] == 1 and s[2] & 4:
-            mapping = sorted((v[1],string(symstr,v[0])[:2]) for v in symbols
-                             if v[5] == i and string(symstr,v[0])[:2] in ('$a','$t','$d'))
+            mapping = sorted(mapping_by_section.get(i,()))
             if not mapping or mapping[0][0] != 0: mapping.insert(0,(0,'$a'))
             mapping.append((len(payload[i]),'$d'))
             for (start,kind),(end,_) in zip(mapping,mapping[1:]):
@@ -55,6 +74,9 @@ def convert(source, output):
             # The outer application's native objects supply validated CPU/ABI attributes.
             payload[i] = bytearray(b'A')
             s[5] = 1
+        elif s[1] == 17: # SHT_GROUP: flags and section indices are ELF words.
+            payload[i] = bytearray(b''.join(struct.pack('<I',v[0])
+                                  for v in struct.iter_unpack('>I',payload[i])))
     fixups = []
     tag = hashlib.sha256(str(source).encode()).hexdigest()[:16]
     for i,s in enumerate(sections):
@@ -67,7 +89,9 @@ def convert(source, output):
                 # ARM32 REL relocations store their addend in the relocated word.
                 payload[target][offset:offset+4] = payload[target][offset:offset+4][::-1]
                 symbol_name = f'mp_be_fix_{tag}_{target}_{offset}'.encode()+b'\0'
-                symbols.append([len(symstr),offset,4,0x11,0,target])
+                symbols.append([len(symstr),offset,4,0x11,0,
+                                SHN_XINDEX if target >= SHN_LORESERVE else target])
+                extended.append(target if target >= SHN_LORESERVE else 0)
                 symstr.extend(symbol_name)
                 fixups.append(len(symbols)-1)
             elif kind in (2,3,38,41,42) and name(target).startswith(('.debug','.ARM.exidx')):
@@ -82,6 +106,10 @@ def convert(source, output):
         return len(sections)-1
     # The two-pass linker collects only fixup symbols in reachable sections.
     # A table attached here would keep otherwise unused engine functions alive.
+    if xidx is None and any(extended):
+        xidx = add_section('.symtab_shndx',18,0,b'',link=symidx,entsize=4)
+    if xidx is not None:
+        payload[xidx] = bytearray(b''.join(struct.pack('<I',v) for v in extended))
     result = bytearray(52)
     for s,data in zip(sections,payload):
         if s[1] == 0: continue
@@ -93,7 +121,10 @@ def convert(source, output):
             result.extend(data)
     result.extend(b'\0'*((-len(result))%4))
     header[6] = len(result)
-    header[12] = len(sections)
+    header[12] = 0 if len(sections) >= SHN_LORESERVE else len(sections)
+    sections[0][5] = len(sections) if header[12] == 0 else 0
+    header[13] = SHN_XINDEX if shstridx >= SHN_LORESERVE else shstridx
+    sections[0][6] = shstridx if header[13] == SHN_XINDEX else 0
     header[0] = raw[:5]+b'\x01'+raw[6:16]
     header[7] &= ~0x00800000
     for s in sections: result.extend(struct.pack('<'+SH,*s))

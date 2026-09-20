@@ -9,6 +9,7 @@
 #include "audio_trace.h"
 #include "log_progress.h"
 #include "bottom.h"
+#include "render_worker.h"
 
 extern const char mp_image_text_start[],mp_image_rodata_start[],mp_image_data_start[];
 /* Filled after linking, without relocation records. Volatile prevents the
@@ -83,14 +84,52 @@ static void capture_frame(void){
     }
     C3D_FrameEnd(0);
 }
+#include "frame_stats.h"
 void mp_native_frame(void)
 {
     extern unsigned mp_native_ticks(void);
     static unsigned previous_tick,samples;static u64 frame_ticks;
     mp_renderer_end();++engine_frames;mp_log_frame(engine_frames);
+#ifdef MP_SMOKE_TEST
+    extern void mp_renderer_benchmark_frame(unsigned);
+    mp_renderer_benchmark_frame(engine_frames);
+#endif
     unsigned now=mp_native_ticks();if(previous_tick){frame_ticks+=(u32)(now-previous_tick);++samples;}
+    static MPFrameStats pacing;
+    extern u64 mp_gpu_total_wait_ticks,mp_early_queue_wait_ticks;
+    static u64 previous_gpu_wait,previous_early_wait,worst_gpu_wait,worst_early_wait;
+    static unsigned worst_ticks,worst_vertices,worst_draws,worst_frame;
+    extern unsigned mp_native_context_serial;
+    static unsigned pacing_context=~0u,pacing_display=~0u,pacing_stereo=~0u;
+    if(pacing_context!=mp_native_context_serial||pacing_display!=mp_native_expanded||pacing_stereo!=!!mp_native_stereo_depth){
+        pacing.count=pacing.ready=0;pacing_context=mp_native_context_serial;
+        pacing_display=mp_native_expanded;pacing_stereo=!!mp_native_stereo_depth;
+        worst_ticks=0;
+    }
+    if(pacing.ready&&(u32)(now-pacing.previous)>worst_ticks){
+        worst_ticks=now-pacing.previous;worst_frame=engine_frames;
+        mp_renderer_counts(&worst_vertices,&worst_draws);
+        worst_gpu_wait=mp_gpu_total_wait_ticks-previous_gpu_wait;
+        worst_early_wait=mp_early_queue_wait_ticks-previous_early_wait;
+    }
+    previous_gpu_wait=mp_gpu_total_wait_ticks;previous_early_wait=mp_early_queue_wait_ticks;
+    if(mp_frame_stats_sample(&pacing,now)){
+        unsigned over60=0,over30=0;char text[224];
+        for(unsigned i=0;i<pacing.count;++i){over60+=pacing.ticks[i]>680400;over30+=pacing.ticks[i]>1360800;}
+        mp_frame_stats_sort(&pacing);
+        snprintf(text,sizeof(text),"Frame pacing/120: p50=%.2f p95=%.2f p99=%.2f max=%.2f ms; over16.8=%u over33.6=%u; stereo=%u\n",
+            pacing.ticks[59]/40500.0,pacing.ticks[113]/40500.0,pacing.ticks[118]/40500.0,pacing.ticks[119]/40500.0,over60,over30,mp_native_stereo_depth);
+        mp_native_log(text);pacing.count=0;
+        snprintf(text,sizeof(text),"Worst paced frame %u: %.2f ms; vertices=%u draws=%u previous-GPU wait=%.2f ms in-frame-GPU wait=%.2f ms\n",
+            worst_frame,worst_ticks/40500.0,worst_vertices,worst_draws,
+            worst_gpu_wait*1000.0/SYSCLOCK_ARM11,worst_early_wait*1000.0/SYSCLOCK_ARM11);
+        mp_native_log(text);worst_ticks=0;
+    }
     if((engine_frames%60)==0){extern unsigned mp_native_idle_count;char text[180];unsigned v,d;mp_renderer_counts(&v,&d);snprintf(text,sizeof(text),"Original engine frame %u: %u vertices, %u draws; frame %.2f ms (excluding capture), %u idle calls\n",engine_frames,v,d,samples?(double)frame_ticks/samples/40500:0,mp_native_idle_count);mp_native_log(text);frame_ticks=0;samples=0;mp_native_idle_count=0;
     }
+#ifdef MP_RENDER_WORKER
+    mp_render_worker_report(engine_frames);
+#endif
     if(engine_frames%300==0){extern unsigned mp_file_cache_hits,mp_file_cache_read_bytes,mp_file_sd_reads,mp_file_sd_bytes;char text[224];snprintf(text,sizeof(text),"Log batches=%u flush time=%.2f ms dropped=%u errors=%u; menu cache hits=%u bytes=%u; SD reads=%u bytes=%u\n",__atomic_load_n(&log_flushes,__ATOMIC_RELAXED),__atomic_load_n(&log_flush_ticks,__ATOMIC_RELAXED)/40500.0,log_dropped,__atomic_load_n(&log_errors,__ATOMIC_RELAXED),mp_file_cache_hits,mp_file_cache_read_bytes,mp_file_sd_reads,mp_file_sd_bytes);mp_native_log(text);flush_log();}
     if(engine_frames%300==0){extern unsigned __ctru_heap_size;struct mallinfo heap=mallinfo();char text[128];
         mp_native_heap_used=heap.uordblks;mp_native_heap_available=__ctru_heap_size>mp_native_heap_used?__ctru_heap_size-mp_native_heap_used:0;
@@ -136,12 +175,22 @@ void mp_native_frame(void)
 }
 void *mp_native_alloc(unsigned size){return memalign(32,size);}
 void mp_native_free(void*p){free(p);}
+void mp_native_geometry_retire(void){
+#ifdef MP_RENDER_WORKER
+    /* Cached BE8 vertex/index bytes are immutable until this fence. */
+    mp_render_worker_retire_geometry();
+#endif
+}
 static void flush_log(void){mp_log_flush(0);}
 static void native_log(const char*s){mp_log_append(s);
     if(strstr(s,"Preload complete"))flush_log();
 }
 void mp_native_log(const char*s){MP_AUDIO_TRACE(0,native_log(s));}
-void mp_native_panic(const char*s){mp_native_log(s);mp_renderer_end();mp_log_flush(1);engine_failed=1;
+void mp_native_panic(const char*s){
+#ifdef MP_RENDER_WORKER
+    mp_render_worker_panic(s);
+#endif
+    mp_native_log(s);mp_renderer_end();mp_log_flush(1);engine_failed=1;
 #ifdef MP_SMOKE_TEST
     capture_frame();
 #else
@@ -165,7 +214,12 @@ int main(void)
     mkdir("sdmc:/3ds",0777);mkdir("sdmc:/3ds/melee",0777);
     mp_log_init();
     bool is_new=false;APT_CheckNew3DS(&is_new);
-    mp_native_log("Melee ARM BE8 engine startup - Pipelined stereo performance update 15\n");
+#ifdef MP_FEASIBILITY_AUTO
+    mp_native_log("Melee feasibility capture 1 - update 21 baseline, sparse instrumentation, physical controls\n");
+    mp_native_log("Measurement only: all rendering and simulation retained; profiling can affect FPS. Log: /3ds/melee/feasibility.log\n");
+#else
+    mp_native_log("Melee ARM BE8 engine startup - GPU material and early visibility update 22\n");
+#endif
     mp_native_log("All-stage performance: low-detail fighters, projected shadows off, conservative off-screen mesh rejection; audited Diet scenery where available\n");
     if(is_new)mp_native_log("New 3DS family detected; fast CPU and L2 cache requested\n");
     u32 actual_layout[3]={(u32)mp_image_text_start,(u32)mp_image_rodata_start,(u32)mp_image_data_start};
@@ -186,13 +240,20 @@ int main(void)
         mp_game_configure_cache(geometry);
         /* Retain the existing non-cache reserve when assigning more heap to
          * decoded geometry. The known title/menu sources still fit fully. */
-        unsigned reserve=50*1024*1024+geometry,budget=__ctru_heap_size>reserve?__ctru_heap_size-reserve:0;
+        unsigned reserve=50*1024*1024+geometry;
+#ifdef MP_RENDER_WORKER
+        reserve+=9*1024*1024; /* Eight MiB of packets/source copies, plus metadata and worker stack. */
+#endif
+        unsigned budget=__ctru_heap_size>reserve?__ctru_heap_size-reserve:0;
         char text[160];
         unsigned cached=mp_native_cache_menus(budget);
         snprintf(text,sizeof(text),"Menu sources cached=%u bytes; ordinary heap=%u bytes, reserve=%u\n",cached,__ctru_heap_size,reserve);mp_native_log(text);flush_log();
         snprintf(text,sizeof(text),"Decoded geometry cache capacity=%u bytes\n",geometry);mp_native_log(text);
     }
     unsigned size=0;void*model=NULL;
+#ifdef MP_RENDER_WORKER
+    mp_render_worker_start(is_new);
+#endif
 #ifdef MP_BOOTMODE
     if(!setjmp(failure_return)){mp_renderer_begin();mp_game_boot();mp_renderer_end();}
     else if(exit_requested)goto cleanup;
@@ -228,6 +289,9 @@ int main(void)
 #endif
     }
 cleanup:
+#ifdef MP_RENDER_WORKER
+    mp_render_worker_stop();
+#endif
     mp_native_cpu_exit();
     {extern void mp_native_audio_exit(void);mp_native_audio_exit();}
     {extern void mp_native_files_exit(void);mp_native_files_exit();}

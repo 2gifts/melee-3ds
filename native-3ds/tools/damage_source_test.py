@@ -2,7 +2,7 @@
 import argparse,json,socket,struct,time
 from gameplay_test import ROOT,symbols,packet,receive
 
-def observe():
+def observe(*, include_hitboxes=True):
     with socket.create_connection(('127.0.0.1',24689),3) as s:
         s.settimeout(5);packet(s,'?');receive(s);cache={}
         def read(a,n):
@@ -28,7 +28,7 @@ def observe():
                         out['fighters'].append({'gobj':g,'kind':word(p+4),'position':floats(p+0xb0,3),'damage':floats(p+0x1830,1)[0],'source':word(p+0x1868),'collision':floats(p+0x1854,3),'since_hit':word(p+0x18ac)})
                     else:
                         row={'gobj':g,'kind':word(p+0x10),'motion':word(p+0x24),'position':floats(p+0x4c,3),'hitboxes':[]}
-                        for i in range(4):
+                        for i in range(4 if include_hitboxes else 0):
                             h=p+0x5d4+0x13c*i
                             row['hitboxes'].append({'state':word(h),'damage':floats(h+12,1)[0],'radius':floats(h+28,1)[0],'position':floats(h+0x4c,3),'previous':floats(h+0x58,3)})
                         out['items'].append(row)

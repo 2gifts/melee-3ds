@@ -19,7 +19,8 @@ def main():
         assert repacked.read_bytes()==binary.read_bytes(),'Release ELF does not match the packaged executable'
     symbol_text=subprocess.check_output([str(ROOT/'.toolchain/llvm-mingw-20260908-ucrt-x86_64/bin/llvm-nm.exe'),str(elf)],text=True)
     labels={line.split()[-1] for line in symbol_text.splitlines() if line.split()}
-    forbidden={'mp_test_control','mp_test_capture','mp_test_frame_limit','audio_snapshot_pcm','audio_snapshot_request',
+    forbidden={'geometry_planes','mp_bounds_outside_cached','clamped_verify','verify_clamped_paths','audio_decoder_validate','gpu_clamped_disable','geometry_range_dirty_disable','geometry_planes_disable','geometry_planes_validate','geometry_early_disable','geometry_early_validate','audio_decoder_disable','mp_probe_request','mp_probe_mode','mp_probe_rows','shade_program_disable',
+               'mp_test_control','mp_test_capture','mp_test_frame_limit','audio_snapshot_pcm','audio_snapshot_request',
                'mp_test_bottom_touch','mp_test_bottom_disabled','mp_bottom_observed','mp_bottom_fps_visible','mp_bottom_guide_visible',
                'mp_test_stereo_slider','stereo_verify','verify_stereo','stereo_order_reference',
                'stereo_eye_switches','stereo_pairs','stereo_attribute_writes',
@@ -45,7 +46,26 @@ def main():
                'draw_packet_disable','draw_packet_validate','draw_packet_checks','draw_packet_draws',
                'gpu_full_heap_flush','gpu_vblank_wait','command_byte_budget',
                'gpu_pipeline_disable','shader_shortcuts_disable','palette_upload_disable',
+               'gpu_early_queue_disable','gpu_early_queue_bytes','gpu_stream_queue_disable','affine_identity_disable','affine_verify',
                'shader_verify','verify_shader_paths',
+               'uniform_scope_disable','uniform_scope_draws','uniform_scope_checks','uniform_scope_writes',
+               'uniform_dispatch_disable','uniform_dispatch_validate','uniform_dispatch_checks',
+               'shader_boolean_checks','shader_boolean_routes','audio_flush_disable',
+               'audio_service_flush','audio_flush_calls','audio_flush_ticks','audio_flush_last_result',
+               'mp_render_bench_request','mp_renderer_benchmark_frame','mp_render_command_bytes',
+               'stereo_reuse_disable','stereo_reuse_bounds_reference','stereo_reuse_shared_disable','stereo_reuse_parameters_reference','stereo_reuse_draws','stereo_reuse_vertices','stereo_reuse_checks','mp_stereo_reuse_shader',
+               'lighting_uniform_disable','lighting_uniform_checks','lighting_uniform_draws','lighting_verify','lighting_verify_page',
+               'mp_light_reference_base','mp_light_reference_dual','mp_light_reference_stereo','mp_light_reference_dual_stereo',
+               'gpu_projection_cache_disable','gpu_projection_cache_validate',
+               'gpu_light_cache_disable','gpu_light_cache_validate',
+               'gpu_async_present_disable','unlit_affine_disable','unlit_affine_draws','unlit_affine_verify',
+               'efb_rgb5a3_disable','efb_rgb5a3_validate','efb_rgb5a3_checks','efb_rgb5a3_pixels','efb_rgb5a3_ticks',
+               'efb_discard_disable','efb_discard_verify','verify_efb_discard','discarded_image','discarded_image_bytes',
+               'unit_attenuation_disable','lighting_unit_verify',
+               'shade_clamped_disable','shade_clamped_validate','shade_clamped_checks',
+               'mp_render_worker_disable','mp_render_worker_test_failure','mp_render_worker_async',
+               'mp_render_worker_source_cache_disable','mp_render_worker_source_cache_validate','mp_render_worker_geometry_borrow',
+               'results_capture_disable','results_capture_verify','verify_results_capture','capture_fixture_quad',
                '__ubsan_handle_type_mismatch_v1'}
     assert not labels&forbidden,sorted(labels&forbidden)
     from test_be8_image import check

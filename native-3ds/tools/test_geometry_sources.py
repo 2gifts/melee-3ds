@@ -88,6 +88,7 @@ int main(void){
     assert(!geometry_cache[0].list&&!geometry_cache[1].list&&!geometry_cache[2].list);clear_all();
     a=acquire(0,data[0],data[0],17);geometry_budget=130;
     assert(!acquire(1,data[0],data[0],128));clear_all();
+    a=acquire(0,data[0],data[0],512);data[0][0]^=1;mp_gx_invalidate_sources();assert(!source_valid(a));clear_all();
     uint32_t random=0x31415926;
     for(unsigned i=0;i<20000;++i){
         random=random*1664525+1013904223;unsigned bank=(random>>16)&3,offset=(random>>20)&3;
@@ -115,7 +116,7 @@ def main():
     out=ROOT/'build/update15-sources';out.mkdir(exist_ok=True)
     c=out/'test.c';c.write_text(PRE+typedef+'\n'+STATE+functions+TEST)
     exe=out/'test.exe'
-    subprocess.run([local_clang(),'-O2','-Wno-pointer-to-int-cast',str(c),'-o',str(exe)],check=True)
+    subprocess.run([local_clang(),'-O2','-Wno-pointer-to-int-cast','-I'+str(ROOT/'port/engine'),str(c),'-o',str(exe)],check=True)
     result=json.loads(subprocess.check_output([str(exe)],text=True))
     result['production_functions_sha256']=hashlib.sha256(functions.encode()).hexdigest()
     (ROOT/'build/update15-qa/source-cache-host.json').write_text(json.dumps(result,indent=2)+'\n');print(json.dumps(result))

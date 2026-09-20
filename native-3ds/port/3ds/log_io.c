@@ -13,6 +13,9 @@ static LightEvent wake;
 static char queue[LOG_CAPACITY],stdio_buffer[8192];
 static unsigned read_cursor,write_cursor,flush_request,flush_done,stopping;
 static unsigned progress;
+#ifdef MP_RENDER_WORKER
+static LightLock producer_lock;
+#endif
 unsigned log_flushes,log_flush_ticks,log_dropped,log_errors;
 extern unsigned mp_native_ticks(void);
 unsigned mp_log_phase(unsigned phase){
@@ -60,14 +63,22 @@ static void log_worker(void* unused){
     }
 }
 void mp_log_init(void){
-    file=fopen("sdmc:/3ds/melee/game.log","w");if(!file)return;
+#ifdef MP_RENDER_WORKER
+    LightLock_Init(&producer_lock);
+#endif
+#ifdef MP_FEASIBILITY_AUTO
+    file=fopen("sdmc:/3ds/melee/feasibility.log","w");
+#else
+    file=fopen("sdmc:/3ds/melee/game.log","w");
+#endif
+    if(!file)return;
     setvbuf(file,stdio_buffer,_IOFBF,sizeof(stdio_buffer));
     mp_native_ticks(); /* Initialize the shared clock origin before spawning. */
     LightEvent_Init(&wake,RESET_ONESHOT);
     s32 priority=0x30;svcGetThreadPriority(&priority,CUR_THREAD_HANDLE);
     worker=threadCreate(log_worker,NULL,16384,priority>0x18?priority-1:priority,-2,false);
 }
-void mp_log_append(const char* text){
+static void append_text(const char* text){
     if(!file)return;
     if(!worker){fputs(text,file);return;}
     unsigned size=strlen(text),cursor=__atomic_load_n(&write_cursor,__ATOMIC_RELAXED);
@@ -76,6 +87,15 @@ void mp_log_append(const char* text){
     unsigned offset=cursor%LOG_CAPACITY,first=LOG_CAPACITY-offset;if(first>size)first=size;
     memcpy(queue+offset,text,first);memcpy(queue,text+first,size-first);
     __atomic_store_n(&write_cursor,cursor+size,__ATOMIC_RELEASE);LightEvent_Signal(&wake);
+}
+void mp_log_append(const char* text){
+#ifdef MP_RENDER_WORKER
+    LightLock_Lock(&producer_lock);
+#endif
+    append_text(text);
+#ifdef MP_RENDER_WORKER
+    LightLock_Unlock(&producer_lock);
+#endif
 }
 void mp_log_flush(int wait){
     if(!file)return;

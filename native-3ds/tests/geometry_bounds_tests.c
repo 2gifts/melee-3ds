@@ -4,6 +4,7 @@
 #include "../port/engine/geometry_bounds.h"
 #include "../port/engine/stereo_config.h"
 static unsigned random_state=19;
+static MPGeometryPlaneCache plane_cache;
 static float random_float(void){random_state=random_state*1664525u+1013904223u;return (int)(random_state>>8)/8388608.f-1;}
 int main(void){
     MPGPUVertex v[2]={0};MPGeometryBounds b;MPGPUUniforms u={0};
@@ -36,7 +37,9 @@ int main(void){
         float maximum_strength=1000*MP_STEREO_PIXELS_PER_SLIDER/320;
         float strength=test%4?fabsf(random_float())*maximum_strength*1.25f:maximum_strength;
         float convergence=fabsf(random_float())*300;
-        if(mp_bounds_outside_stereo(&b,&u,strength,convergence)){
+        int reference=mp_bounds_outside_stereo(&b,&u,strength,convergence);
+        for(unsigned repeat=0;repeat<4;++repeat)assert(reference==mp_bounds_outside_cached(&plane_cache,&b,&u,strength,convergence));
+        if(reference){
             ++stereo_rejected;unsigned outside=15;
             for(unsigned view=0;view<2;++view)for(unsigned corner=0;corner<8;++corner){
                 double x[4],eye[4]={0,0,0,1},clip[4]={0};
@@ -50,5 +53,16 @@ int main(void){
             assert(outside);
         }
     }
+    assert(plane_cache.hits>=300000&&plane_cache.misses>90000);
+    for(unsigned i=0;i<26;++i){
+        float special[]={NAN,INFINITY,-INFINITY,0,-0.f,1e30f,-1e30f,1e-30f};
+        for(unsigned k=0;k<sizeof(special)/sizeof(*special);++k){
+            if(i<12)u.value[b.row+i/4][i%4]=special[k];
+            else if(i<24)u.value[MP_GPU_PROJECTION+(i-12)/4][i%4]=special[k];
+            float strength=i==24?special[k]:.025f,convergence=i==25?special[k]:100;
+            for(unsigned repeat=0;repeat<2;++repeat)assert(mp_bounds_outside_stereo(&b,&u,strength,convergence)==mp_bounds_outside_cached(&plane_cache,&b,&u,strength,convergence));
+        }
+    }
+    printf("Plane cache: %u exact-key hits, %u misses; finite and nonfinite classifications unchanged\n",plane_cache.hits,plane_cache.misses);
     assert(rejected>1000&&stereo_rejected>1000);printf("Conservative bounds: 100000 mono/stereo transforms, %u/%u rejected; all corners in both eyes outside a shared plane\n",rejected,stereo_rejected);
 }

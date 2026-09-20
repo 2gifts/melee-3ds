@@ -5,6 +5,55 @@ extern void mp_native_log(const char*);
 enum{AUDIO_BLOCKS=8,AUDIO_SLICES=4,AUDIO_SAMPLES=96*AUDIO_SLICES};
 static ndspWaveBuf wave[AUDIO_BLOCKS];static s16*pcm;static int ready,next,partial,prebuffering;
 static unsigned audio_queued,audio_dropped,audio_underruns;
+static unsigned audio_direct_flush_unavailable;
+unsigned audio_flush_failures;
+#ifdef MP_SMOKE_TEST
+volatile unsigned audio_service_flush;
+unsigned audio_flush_calls[2],audio_flush_ticks[2];
+unsigned audio_flush_last_result;
+#endif
+
+static int flush_audio_block(const void*buffer,unsigned bytes){
+    /* Flush the same virtual range in this process before publishing it to
+     * NDSP. This avoids the DSP service's scheduling/IPC round trip. The
+     * existing CIA already permits svcFlushProcessDataCache (SVC 0x54).
+     * Keep the service fallback for environments that return an error.
+     * Reference: SM64 3DS audio_3ds.c and devkitPro/libctru issue 556. */
+    Result result=-1;
+    unsigned service=audio_direct_flush_unavailable;
+#ifdef MP_SMOKE_TEST
+    service|=audio_service_flush!=0;
+#endif
+    if(!service){
+#ifdef MP_SMOKE_TEST
+        u64 start=svcGetSystemTick();
+#endif
+        result=svcFlushProcessDataCache(CUR_PROCESS_HANDLE,(u32)(uintptr_t)buffer,bytes);
+#ifdef MP_SMOKE_TEST
+        ++audio_flush_calls[0];audio_flush_ticks[0]+=(unsigned)(svcGetSystemTick()-start);
+        audio_flush_last_result=(unsigned)result;
+#endif
+        if(R_FAILED(result)){
+            audio_direct_flush_unavailable=1;
+            mp_native_log("Direct audio cache flush unavailable; using DSP service\n");
+        }
+    }
+    if(service||R_FAILED(result)){
+#ifdef MP_SMOKE_TEST
+        u64 start=svcGetSystemTick();
+#endif
+        result=DSP_FlushDataCache(buffer,bytes);
+#ifdef MP_SMOKE_TEST
+        ++audio_flush_calls[1];audio_flush_ticks[1]+=(unsigned)(svcGetSystemTick()-start);
+#endif
+    }
+    if(R_FAILED(result)){
+        ++audio_flush_failures;
+        mp_native_log("Audio cache flush failed; block withheld from DSP\n");
+        return 0;
+    }
+    return 1;
+}
 #ifdef MP_SMOKE_TEST
 static volatile unsigned audio_prefill_blocks=16;
 #define AUDIO_PREFILL_BLOCKS audio_prefill_blocks
@@ -49,6 +98,11 @@ static void audio_test_snapshot(void*unused){
 #endif
 void mp_native_audio(const u8*be,unsigned samples){
     if(!ready){ready=-1;
+#ifdef MP_RENDER_WORKER
+        /* libctru's linear allocator is not synchronized. Audio allocates
+         * once; wait for renderer allocation work before its initialization. */
+        extern void mp_render_worker_barrier(void);mp_render_worker_barrier();
+#endif
 #ifdef MP_AUDIO_HLE_TEST
         ndspUseComponent(hle_component,sizeof(hle_component),0xff,0xff);mp_native_log("Azahar HLE audio fixture enabled; no physical DSP program\n");
 #endif
@@ -75,7 +129,9 @@ void mp_native_audio(const u8*be,unsigned samples){
      * coverage instead of 15 ms, and reduces cache/queue IPC frequency. */
     s16*out=pcm+next*AUDIO_SAMPLES*2+partial*192;for(unsigned i=0;i<192;++i)out[i]=(be[i*2]<<8)|be[i*2+1];++audio_queued;
     if(++partial<AUDIO_SLICES)return;
-    partial=0;DSP_FlushDataCache(pcm+next*AUDIO_SAMPLES*2,AUDIO_SAMPLES*4);ndspChnWaveBufAdd(0,w);next=(next+1)%AUDIO_BLOCKS;
+    partial=0;
+    if(!flush_audio_block(pcm+next*AUDIO_SAMPLES*2,AUDIO_SAMPLES*4)){audio_dropped+=AUDIO_SLICES;return;}
+    ndspChnWaveBufAdd(0,w);next=(next+1)%AUDIO_BLOCKS;
     if(prebuffering&&(queued+1)*AUDIO_SLICES>=AUDIO_PREFILL_BLOCKS){prebuffering=0;ndspChnSetPaused(0,false);}
 }
 void mp_native_audio_exit(void){if(ready==1){ndspChnWaveBufClear(0);ndspExit();linearFree(pcm);}ready=-1;}

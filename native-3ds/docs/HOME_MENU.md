@@ -1,247 +1,40 @@
-# Standalone HOME Menu app
+# Install Melee on the HOME Menu
 
-The native port can be packaged as a New 3DS CIA for FBI. It contains the game
-executable, a full-color Melee disc icon, a 3D Final Destination diorama, the
-original title lettering, and the announcer's "Melee!" call over the Menu 1 theme.
-It uses the same SD assets as the Homebrew Launcher version.
+The CIA installs a native Melee application with its own disc icon, Final Destination/Fox preview, and menu-theme/announcer sound. It reads game assets from the SD card. It does not require Homebrew Launcher to start after installation.
 
-This is unofficial homebrew. The public repository contains authoring and
-packaging source. Disc artwork, banner images, meshes, audio, captures and
-finished CIAs remain local.
+You need a supported **New 3DS-family console**, an existing custom-firmware setup, **[FBI](https://github.com/Steveice10/FBI)**, your locally built CIA, and the extracted files from your own US Melee v1.02 dump. [Build and packaging guide](../README.md).
 
-## Installation
+## Install
 
-1. Keep `SD:/3ds/melee/files/` and any `SD:/3ds/melee/visuals/` folder.
-2. Copy the locally built `melee-3ds.cia` to `SD:/cias/`.
-3. Open **FBI > SD > cias > melee-3ds.cia > Install CIA**.
-4. Fully power off and restart the console after updating, so HOME reloads the
-   banner. Unwrap the gift if shown and launch the Melee disc icon.
+1. Power off your console and insert its SD card into your computer.
+2. Copy the generated `3ds` folder from `dist/native-alpha/` to the SD root, merging folders.
+3. Copy `dist/home-menu/melee-3ds.cia` into `SD:/cias/`.
+4. Safely eject the card, return it to the console, and power on.
+5. Open **FBI → SD → cias → melee-3ds.cia → Install CIA** and confirm.
+6. Return to HOME, unwrap the icon if prompted, and launch Melee. If the new icon has not appeared, restart the console.
 
-Reinstalling the newer CIA updates the same title; replacing the `.3dsx` alone
-does not update the installed app. The existing `.3dsx` can stay as a fallback.
-SELECT exits. Touch controls, pause, aspect options and stereo are unchanged.
-Game data and DSP support still come from the existing homebrew setup.
+Your card should contain:
 
-Target: **New 3DS / New 3DS XL** with CFW and FBI. New 2DS XL uses the same
-application mode without stereo; it has not been physically tested. Original
-3DS/2DS models are excluded by the package metadata.
-
-## HOME package 9 cosmetic candidate
-
-The owner confirmed that recovery package 8 works on New 3DS. Package 9 is an
-explicitly requested cosmetic trial based on those same package 5 resources.
-It is **not yet confirmed on physical HOME Menu**. CIA title version is **8**;
-the title ID, game executable and launch settings remain unchanged.
-
-The Fox meshes were inside out: their rear-facing head surfaces created a
-hollow-face illusion as the diorama rotated. Each complete fighter is already
-a rigid, fixed pose. This update exchanges the second and third indices of
-each existing Fox triangle. It neither adds faces nor rebuilds the model.
-The logo uses the actual letter faces and a thinner outline in the existing
-256x128 RGBA4 texture, improving the counters and spacing at HOME's resolution.
-
-Unlike withdrawn packages 6/7, this update preserves every model resource
-offset and size. The CGFX remains 403,544 bytes with 2,862 triangles, four
-draws, seven bones and the same constant animation tracks. Only the two
-3,498-byte Fox index streams and the 65,536-byte logo pixel payload may differ.
-Everything else, including vertices, materials, shader commands, atlas,
-transforms and billboard flags, must match the console-tested baseline.
-
-The new compressed stream fits inside the original slot. The CBMD header,
-total length (499,896 bytes), CWAV offset (126,016), and all sound bytes are
-preserved exactly. Extra space after the LZ11 stream is zero-filled; the CBMD
-header explicitly locates the sound. This avoids moving audio as a side effect
-of editing artwork. The underlying cause of the earlier freezes has not been
-isolated; preserving layout is a bounded change, not proof of hardware safety.
-
-Validation includes native HOME LZ11 decompression with a byte-for-byte model
-comparison, native rendering across four preview angles in Azahar, a separate
-12-second model continuity check, all 98,304 texture pixels, CIA/ExeFS hashes,
-and the unchanged game code and launch splash. The harness does not exercise
-physical installation, icon selection or sound playback. The complete sound
-resource is instead checked against the console-confirmed bytes and location.
-
-Install `melee-3ds.cia` with FBI, then fully power off and restart. The archived
-`melee-3ds-last-working.cia` remains available as the known-working fallback.
-No game asset files need recopying. Default packaging still requires the exact
-confirmed banner; a cosmetic candidate requires the explicit baseline option:
-
-```powershell
-python tools/patch_home_banner.py --baseline-art path/to/package-5-art --output-art path/to/candidate-art --logo path/to/locally-authored-logo.png
-python tools/test_home_cosmetic.py --baseline path/to/package-5-art --candidate path/to/candidate-art
-python tools/test_home_banner_texture.py --art path/to/candidate-art
-python tools/package_cia.py --art path/to/candidate-art --cosmetic-baseline path/to/package-5-art --version 8
+```text
+SD:/cias/melee-3ds.cia           Installer
+SD:/3ds/melee/files/            Required game assets
+SD:/3ds/melee/visuals/          Optional prepared Diet scenery
+SD:/3ds/melee/melee.3dsx        Optional Homebrew Launcher executable
 ```
 
-The logo input is the local 512x256 composition generated by
-`make_home_menu_art.py`. Baseline files and artwork remain local. Regression
-checks reject both withdrawn banners, changed animation/vertices, moved audio,
-and attempts to silently treat a cosmetic candidate as console-confirmed.
+Installing the CIA alone is insufficient. **Keep the `files` folder on the SD card.** After installation, you may remove the CIA installer from `cias`; the installed application remains on HOME. Allow roughly 1.5 GB for the game data plus space for the application.
 
-## HOME package 8 recovery
+## Updates and alternate launch
 
-**Packages 6 and 7 are withdrawn after physical selection freezes.** Package
-8 restores the exact application content from package 5, which the user
-confirmed displayed, launched and played on New 3DS. All 2,842,624 bytes of the
-NCCH content match, including the compressed CBMD banner, audio, icon, launch
-splash, executable, permissions and resource offsets. Only the CIA installation
-wrapper/version is regenerated. The title ID stays `000400000F4D4500`; the new
-CIA title version is **7**, newer than both failed packages.
+Install a replacement CIA through FBI to update the HOME Menu application. There is normally no need to delete the title first. Keep the existing game files and optional scenery.
 
-This is a full restoration, not another inferred graphics fix. It restores the
-older title artwork and its cosmetic Fox-face issue as well. The texture-only
-rollback in package 7 did not resolve the freeze. The remaining cause has not
-been isolated; the failed releases also changed geometry and the compressed
-container layout. There are no new crash dumps identifying it.
+The `.3dsx` is a separate launch option. Select **melee** in Homebrew Launcher to use it. Replacing that file does **not** update the application installed from a CIA, and reinstalling a CIA does not replace the `.3dsx`.
 
-For recovery after repeated failed updates, perform a clean reinstall:
+## If something is wrong
 
-1. In FBI's **Titles**, select **Super Smash Bros. Melee** and verify title ID
-   `000400000F4D4500`. Choose **Delete Title And Ticket** for that title only.
-2. Open **SD > cias > melee-3ds.cia > Install CIA**.
-3. Fully power off, restart, and select the Melee icon.
+- **Missing game files:** check for `SD:/3ds/melee/files/`, rather than an extra nested `native-alpha/3ds/` directory. Use the supported unmodified base dump.
+- **No audio:** the port needs your homebrew setup's DSP support or an existing `SD:/3ds/dspfirm.cdc`. Firmware is not bundled.
+- **Low frame rate:** try 2D and 1v1 on prepared Diet scenery. See the [performance expectations](../../README.md#performance-to-expect); crowded scenes remain demanding.
+- **Crash or freeze:** note the console model, launch method, fighters, stage, and 2D/3D setting. The readable log is `SD:/3ds/melee/game.log`. Check it before sharing; do not upload game files, firmware, or raw memory dumps.
 
-The game assets in `/3ds/melee/` are separate from the installed title. Keep
-them. `melee-3ds-last-working.cia` remains an exact copy of the original package
-5 archive. Package 8 avoids downgrading the installer version while preserving
-that same application content. The user subsequently confirmed that package 8
-works on the physical console.
-
-Release checks now pin the **complete console-confirmed CBMD**, not just its
-model format. The model-only native harness bypassed CBMD decompression and
-sound playback, so its successful runs did not validate the whole HOME
-selection path. A changed model, compressed stream, padding or audio cannot
-silently become a normal release. Hashes contain no game assets.
-
-To reissue the local confirmed archive without rebuilding its content:
-
-```powershell
-python tools/restore_home_package.py --source path/to/confirmed-package-5.cia --art path/to/package-5-art
-```
-
-The command checks the archived CIA hash, all package resources and the game
-ELF, uses makerom to rewrap the unchanged NCCH, verifies byte-for-byte content
-equality, then replaces the output only after validation. The default output
-is `dist/home-menu/melee-3ds.cia`. The local archive is required and is not
-published in this repository.
-
-## Local authoring (experimental)
-
-Newly authored banners are experimental. Default packaging requires the
-complete console-confirmed package 5 banner. The explicit cosmetic candidate
-path above accepts only in-place corrections verified against that baseline.
-Hardware confirmation is required before changing the default release hashes.
-
-First follow the normal native build and asset extraction instructions. Banner
-authoring additionally needs Python 3.12+, NumPy, Pillow, FFmpeg on PATH and the
-configured Azahar development environment.
-
-```powershell
-python -m pip install numpy Pillow
-python tools/bootstrap_home_menu.py
-python tools/banner_assets.py
-python tools/build_game.py --smoke --audio-hle --boot --banner-capture --skip-engine
-```
-
-Start the development `.3dsx` in the configured New 3DS emulator with GDB port
-24689 and the extracted SD assets. Run the first capture from a fresh boot:
-
-```powershell
-python tools/capture_banner_scene.py
-```
-
-Restart the development application, then capture the taunt and build the art:
-
-```powershell
-python tools/capture_banner_scene.py --taunt
-python tools/make_home_menu_art.py --disc-image path/to/local-disc-artwork.png
-python tools/convert_home_menu_banner.py
-python tools/build_game.py --release --skip-engine --output dist/home-menu/3ds/melee/melee.3dsx
-python tools/package_cia.py
-```
-
-The capture script navigates ordinary Versus controls, selects Fox on Final
-Destination and records rendered frames. The taunt pass sends D-pad Up, checks
-the original action state and writes `capture-taunt/pose.json`. The production
-executable has no capture or input-injection hooks. Entire captured poses become
-rigid meshes, avoiding soft skins and cracks between separately moved envelopes.
-Complete constant TRS curves preserve the working banner profile.
-
-Supply a square, full-color disc-label image at least 256 pixels across.
-Transparency is composited onto a light background before downsampling to the
-48x48 RGB565 icon. This remains a local input, not a bundled asset.
-
-Once the art exists, executable updates need only the release build and CIA
-packaging commands. Output: `dist/home-menu/melee-3ds.cia` and a verification
-report. `package_cia.py` accepts `--elf`, `--art`, `--output`, optional `--cci`
-for an emulator cartridge, and explicit `--development` for test-only ELFs.
-Never copy a development package to the console.
-
-## Validation and limits
-
-- Title ID `000400000F4D4500`, product `CTR-P-M3LE`; native executable, 124 MB
-  application mode, 804 MHz CPU request and L2 cache enabled. No embedded game
-  filesystem: both launch methods read `/3ds/melee/`.
-- The atlas preserves texture-clamp boundaries. The restored package 5 model has 2,014 triangles after
-  UV splits, or 2,862 with reverse stage/logo faces. The
-  CGFX is 403,544 bytes, below the 524,288-byte limit. Its four-draw profile is
-  an authoring budget, not a claimed hardware limit for all banners.
-- Audio combines `nr_title.ssm` sample 1 (sound ID 20001), cropped and shortened
-  without a pitch change, with `menu01.hps`. Output: stereo PCM16, 32 kHz,
-  approximately 2.92 seconds. `home_banner_audio.py` can rebuild the mix alone.
-- The verifier checks CIA/ExeFS hashes, the 8 KiB splash and both layout files,
-  memory mode and permissions. Decompressed `.code` is compared byte-for-byte
-  with all three initialized segments of the finalized BE8 ELF. CWAV pointers,
-  block sizes and every PCM sample are checked against the source WAV.
-- Serialized CGFX checks cover relative pointers, mesh/bone/animation bindings,
-  constant pose curves, outward fighter winding, texture sizes/formats, indices,
-  finite float attributes and color combiners. Soft skins,
-  weight/index streams and non-identity billboard transforms are rejected.
-  `python tools/test_home_banner.py` exercises experimental geometry variants;
-  `python tools/test_home_banner_atlas.py` checks clipping/interpolation.
-  `python tools/test_home_banner_texture.py` independently decodes and checks all
-  98,304 atlas/title texels, including alpha, tile addressing and vertical
-  orientation. Packaging rejects oversized/non-RGBA4 textures before producing
-  a CIA. `test_home_release.py --approved-art path/to/package-5-art` checks
-  the complete release lock; `--failed-art` can be repeated for the withdrawn
-  package 6/7 archives.
-- The private native HOME harness uses the owner's matching executable in
-  Azahar. Actual ARM framebuffer reads materialize GPU output; raw debugger
-  memory reads can return stale pixels. Native comparisons cover title clarity and
-  fighter faces through the rotating preview. A temporary position-offset
-  fixture exposes both Foxes outside the harness's unrelated system-icon
-  overlay. That offset is not in the shipped banner.
-- Package 8 compares the entire reissued NCCH with the console-confirmed
-  package 5 bytes. A new emulator launch of identical code does not test the
-  user's installation state. Local checks do not establish console recovery,
-  suspension behavior or frame rate.
-
-## References
-
-The [Mario 64 Ultimate port's banner pipeline](https://github.com/Epic0522/Super-Mario-64-3ds-port---Ultimate/tree/ded2ad283290436687bc81cc4b52c9833e7b09c3/tools/banner_3d)
-provided the HOME camera and glTF/CGFX packaging reference. This project's
-banner uses Melee assets extracted locally, not Mario's artwork.
-
-The [ClouDS hardware banner notes](https://github.com/Epic0522/ClouDS-Music-FA/tree/b9ab67788fd480bea7870a5508daf322562aa06a#readme)
-and its `tools/banner/convert_banner_cgfx.py` document soft-skin crashes on
-physical HOME Menu and the rigid mesh-node animation/billboard layout used
-for this correction. Our scene builder and byte-level verifier are local
-implementations; the reference application's artwork is not included.
-
-Tools: [pycgfx](https://github.com/skyfloogle/pycgfx/tree/1f78850086f3a77c41e07162e842f97a5bf3c18a),
-[bannertool](https://github.com/Epicpkmn11/bannertool/releases/tag/v1.2.2), and
-[makerom](https://github.com/3DSGuy/Project_CTR/releases/tag/makerom-v0.19.0).
-Format limits: [3dbrew CBMD](https://3dbrew.org/wiki/CBMD).
-
-The [bannertool CBMD writer](https://github.com/Epicpkmn11/bannertool/blob/master/source/3ds/cbmd.cpp)
-defines its 136-byte header, explicit compressed-model and sound offsets, and
-16-byte BNR sound alignment. The [pycgfx writer](https://github.com/skyfloogle/pycgfx/blob/1f78850086f3a77c41e07162e842f97a5bf3c18a/cgfx/shared.py)
-aligns binary streams to 16 bytes; its README documents the 512 KiB CGFX limit.
-These references provide concrete layout rules. The smaller texture/draw
-budgets in this project are conservative choices, not universal HOME limits.
-[Luma's GDB implementation](https://github.com/LumaTeam/Luma3DS/blob/master/sysmodules/rosalina/source/gdb/server.c)
-provides debugging facilities; it is not a banner-authoring specification.
-
-The [glTF mesh winding specification](https://github.com/KhronosGroup/glTF/blob/main/specification/2.0/Specification.adoc#meshes)
-and [Azahar's PICA texture decoder](https://github.com/azahar-emu/azahar/blob/master/src/video_core/texture/texture_decode.cpp)
-provide format references for counterclockwise faces and PICA texel packing.
+The project is complete for now. [Issues](https://github.com/2gifts/melee-3ds/issues) remain available for documenting problems, without a promise of further fixes.

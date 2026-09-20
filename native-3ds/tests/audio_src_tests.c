@@ -18,7 +18,7 @@ int main(void){
     }
     int n=1;uint32_t phase=123;int16_t h[4]={0},out[96];
     mp_src_block(out,96,123456,&phase,h,1,ramp,&n);
-    for(unsigned i=0;i<96;++i)assert(out[i]==13*(i+1));
+    for(unsigned i=0;i<96;++i)assert(out[i]==(int)(13*(i+1)));
     assert(phase==123&&h[0]==13*93&&h[3]==13*96);
     printf("AX source conversion: %u fractional samples, block continuity and direct mode passed\n",tests);
 }

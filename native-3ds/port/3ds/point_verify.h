@@ -29,7 +29,7 @@ static void verify_points(void){
             reserve_dynamic(count,0);
             for(unsigned i=0;i<count;++i){MPGPUVertex*q=&quad[gpu?0:corners[i]];Vertex*n=&vertices[vertex_count+i];memcpy(n,q,sizeof(*n));
                 n->p[0]=q->pos[1];n->p[1]=-q->pos[0];n->t[0]=q->uv[0]*.625f;n->t[1]=1-q->uv[1]*.75f;}
-            if(count){vertex_base(0);C3D_DrawArrays(gpu?GPU_GEOMETRY_PRIM:GPU_TRIANGLES,vertex_count,count);vertex_count+=count;}
+            if(count){vertex_base(0);C3D_DrawArrays(gpu?GPU_GEOMETRY_PRIM:GPU_TRIANGLES,vertex_count,count);vertex_count+=count;submit_early_prefix();}
         }
         flush_dynamic();C3D_SyncDisplayTransfer(test->frameBuf.colorBuf,GX_BUFFER_DIM(256,256),(u32*)readback,GX_BUFFER_DIM(256,256),0);
         bool used=target->used;target->used=false;C3D_FrameEnd(0);C3D_FrameBegin(0);target->used=used;

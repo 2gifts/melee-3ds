@@ -60,6 +60,7 @@ ENGINEBRIDGE mp_game_ppc_math_check,mp_ppc_math_self_test
 SDKBRIDGE mp_platform_submit,mp_native_submit
 SDKBRIDGE mp_platform_alloc,mp_native_alloc
 SDKBRIDGE mp_platform_free,mp_native_free
+SDKBRIDGE mp_platform_geometry_retire,mp_native_geometry_retire
 SDKBRIDGE mp_platform_log,mp_native_log
 SDKBRIDGE mp_platform_panic,mp_native_panic
 SDKBRIDGE mp_platform_ticks,mp_native_ticks

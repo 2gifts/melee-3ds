@@ -1,76 +1,58 @@
 # Melee for New Nintendo 3DS
 
-An experimental port of **Super Smash Bros. Melee running natively on New Nintendo 3DS hardware**, built from the [doldecomp/melee](https://github.com/doldecomp/melee) decompilation. The original game engine runs as ARM code, with a 3DS graphics, audio and controller layer.
+Super Smash Bros. Melee, running natively on a homebrewed **New Nintendo 3DS**. This fork of [doldecomp/melee](https://github.com/doldecomp/melee) brings the original game engine to ARM, with stereoscopic 3D, handheld controls, and a Melee-inspired touch-screen companion.
 
-The aim is to make Melee enjoyable on a handheld while keeping its original gameplay and adding features suited to the 3DS. Full matches have been played on a physical New 3DS. **The current milestone is update 15; performance varies, and stable 60 FPS has not been achieved.**
+Play Versus against CPUs, practice in Training, and explore Melee on a different kind of handheld. The port aims to preserve the original mechanics while adapting the presentation to the 3DS. **Development is complete for now at a playable community milestone. Performance varies, and this is not a locked-60-FPS or fully compatible replacement for the GameCube game.**
 
-Update 15 overlaps game simulation with GPU rendering, uses shorter material programs, uploads only referenced bone matrices, and shares overlapping geometry snapshots. It also fixes a reproduced freeze in Kirby’s copied-model visibility. Stereo rendering and casual-play regressions passed in Azahar; the 60 FPS competitive and 30 FPS casual targets still require physical-console validation. [Changes and validation](native-3ds/docs/STEREO_PERFORMANCE_UPDATE_15.md).
+## Features
 
-**HOME package 8 recovery is confirmed working on New 3DS.** Package 9 is a cosmetic candidate that corrects the Fox face orientation and improves the title within the working banner's existing layout. Native decompression/rendering and package checks pass; physical confirmation is pending. Packages 6/7 remain withdrawn. [Installation, recovery and validation limits](native-3ds/docs/HOME_MENU.md).
+- Native stereoscopic **3D in gameplay and perspective menus**, adjusted with the system slider.
+- **4:3 by default**, with an optional expanded view that reveals more of the scene without stretching it.
+- A **touch-screen dashboard** with portraits, stocks, and damage for up to four fighters, plus menu guidance and an optional FPS display.
+- Original music and sound effects, all characters and stages unlocked, **UCF 0.84 input fixes**, and editable tournament-friendly defaults.
+- **HOME Menu launch through an installable CIA**, with a disc icon and a Final Destination/Fox diorama. Homebrew Launcher is also supported.
+- Optional **Diet Melee scenery** for five stages, simplifying visuals while retaining the original stage gameplay and collision.
 
-## Project features
+## Performance to expect
 
-- **Touch-screen match dashboard**, with FPS hidden by default. Tap FPS to toggle it, VIEW to change projection, or CONTROLS for the guide. The guide does not pause gameplay.
-- Original menus, character selection, Training and Versus matches against CPU opponents, with music and sound effects.
-- **Native stereoscopic 3D**, controlled by the slider, in gameplay and perspective menus—including a Ready to Fight ribbon that pops forward.
-- **4:3 by default**, with an optional expanded view in gameplay and menus that reveals more of the sides without stretching.
-- All characters and stages unlocked, offline tournament settings with pause enabled, and native UCF 0.84 input fixes.
-- Ongoing loading and rendering optimizations, plus optional audited Diet Melee scenery for five stages.
+These are approximate observations on a physical New 3DS, not guarantees or emulator benchmarks:
+
+| Scenario | Typical experience |
+|---|---|
+| Lighter 1v1 matches on Diet stages, 2D | Roughly **55–60 FPS** |
+| Lighter 1v1 matches on Diet stages, 3D | Often **around 50–55 FPS**, with heavier matchups/effects dipping into the 40s |
+| Large casual stages with four fighters, 3D | Can fall into the **teens or low 20s** |
+
+Stages, fighters, items, and effects all matter. For the smoothest experience, use 1v1 matches, prepared Diet scenery, and 2D. **Neither stable 60 FPS in 3D nor a 30 FPS minimum in crowded matches is achieved.** The optional display distinguishes rendered FPS from game updates; a 60 Hz update reading does not mean 60 rendered frames.
 
 ## What you need
 
-- A **New Nintendo 3DS or New Nintendo 3DS XL** with homebrew already installed and access to **Homebrew Launcher**. New 2DS XL is a 2D target but has not been physically tested. Original 3DS/3DS XL/2DS models are not supported.
-- Your own **US Melee v1.02 disc dump** (`GALE01`, revision 2), in uncompressed `.iso` or `.gcm` format. Other regions, revisions and modified base images are not accepted.
-- About **1.5 GB of free SD space** for the extracted game files.
-- To build: a **64-bit Windows PC**, **Git**, **Python 3.11 or newer**, several GB of free disk space and an internet connection for the build tools.
+- A homebrewed **New Nintendo 3DS or New Nintendo 3DS XL**, with custom firmware and **FBI** for CIA installation. New 2DS XL is also targeted in 2D, but has not been physically tested. Original 3DS, 3DS XL, and 2DS models are unsupported.
+- Your own **US Melee v1.02 disc dump** (`GALE01`, revision 2).
+- About **1.5 GB of free SD space**, plus space for the installed application.
 
-**This repository contains source code and build tools. There is currently no prebuilt game download.** Game assets, fonts and firmware are not included; the build uses your own disc dump. The steps below assume your console's homebrew setup is already working.
+**This repository distributes source and build tools, not a prebuilt CIA or game data.** Build with your own disc dump using the [build guide](native-3ds/README.md). CIA packaging additionally requires locally prepared HOME Menu artwork; the guide explains that requirement. No ISO, extracted assets, fonts, or firmware are included.
 
-## Set up the game
+## Install with FBI
 
-### 1. Build on your PC
+Once you have your locally built `melee-3ds.cia` and extracted SD package:
 
-Open PowerShell and run:
+1. Power off the console and put its SD card in your computer.
+2. Copy the generated **`3ds` folder from `native-3ds/dist/native-alpha/`** to the SD root, merging folders. The game files must end up in **`SD:/3ds/melee/files/`**.
+3. Copy **`melee-3ds.cia`** to **`SD:/cias/`**; create that folder if needed.
+4. Safely eject the card, return it to the console, and power on.
+5. Open **FBI → SD → cias → melee-3ds.cia → Install CIA**, and confirm.
+6. Return to the HOME Menu, unwrap the Melee icon if prompted, and launch it.
 
-```powershell
-git clone --branch 3ds https://github.com/2gifts/melee-3ds.git
-cd melee-3ds/native-3ds
-python tools/bootstrap.py --portable-windows
-python tools/assets.py extract "C:\path\to\Melee-US-1.02.iso" assets/GALE01
-python tools/assets.py fonts assets/GALE01/sys/main.dol build/generated
-python tools/build_game.py --release
-python tools/package_native.py
-```
+**The CIA does not contain the game assets.** Keep `SD:/3ds/melee/files/` on the card after installation. Optional prepared scenery goes in `SD:/3ds/melee/visuals/`. [Installation, updating, and troubleshooting](native-3ds/docs/HOME_MENU.md).
 
-Replace the example ISO path with the location of your own dump. Bootstrap downloads the pinned compiler and SDK tools automatically. Extraction checks the supported game version. If your dump is an RVZ, convert it to ISO with Dolphin first.
+For Homebrew Launcher, select **melee** after copying the same SD package. Updating `melee.3dsx` updates only that launch method; an installed HOME Menu version needs its CIA reinstalled through FBI.
 
-The finished local SD package is in **`melee-3ds/native-3ds/dist/native-alpha/`**. Run the asset and font extraction steps only once; they deliberately refuse to overwrite existing outputs. [Detailed build instructions](native-3ds/README.md#build-and-install).
+## Playing
 
-### 2. Copy to your SD card
+Choose **VS Mode → Melee**, select your fighter and CPU opponents, press START, and pick a stage. Training is under **1-P Mode → Training**. Only **one human player** is supported; the other fighters are CPUs.
 
-1. Power off the console and insert its SD card into your PC.
-2. Copy the **`3ds` folder inside `dist/native-alpha/`** to the **root of the SD card**, merging it with the existing `3ds` folder.
-3. Safely eject the card, return it to the console and power on.
-
-Your SD card should contain:
-
-```text
-SD:/3ds/melee/melee.3dsx
-SD:/3ds/melee/files/          ← all extracted game files
-SD:/3ds/melee/visuals/        ← optional prepared Diet scenery
-```
-
-Copy the whole generated package for the first installation; the executable alone does not contain the game files. Optional scenery setup is explained in the [Diet Melee instructions](native-3ds/README.md#optional-diet-scenery).
-
-### 3. Launch and play
-
-Open **Homebrew Launcher** using your existing homebrew setup and select **melee**. Alternatively, install a locally built CIA through FBI to launch from HOME. See the [HOME Menu instructions](native-3ds/docs/HOME_MENU.md).
-
-At the title screen, press START. Choose **VS Mode → Melee**, select your fighter and a CPU opponent, press START, and pick a stage. For practice, choose **1-P Mode → Training**.
-
-Audio uses the DSP support supplied by your homebrew setup or your existing `SD:/3ds/dspfirm.cdc`; firmware is not bundled with this project.
-
-## Controls
+Versus starts with **4 stocks, 8 minutes, items off, team attack on, and pause enabled**. Change the rules in the usual menus for casual play. Settings reset when the application restarts.
 
 | Input | Action |
 |---|---|
@@ -80,29 +62,20 @@ Audio uses the DSP support supplied by your homebrew setup or your existing `SD:
 | L / R | Shield |
 | ZL / ZR, or L + A | Grab |
 | C-stick | Directional attack |
-| START | Confirm / Training menu; pause (enabled by default) |
+| START | Confirm / pause / Training menu |
 | 3D slider | Adjust depth; fully down selects 2D |
+| Touch FPS / VIEW / CONTROLS | Toggle FPS, change the view, or show controls |
 | Hold ZL + ZR, then press SELECT | Toggle 4:3 / expanded view |
-| Touch FPS / VIEW / CONTROLS | Toggle rendered FPS, projection, or the control guide |
-| SELECT | Exit to the launcher or HOME, depending on how the game was opened |
+| SELECT | Exit to HOME or Homebrew Launcher |
 
-Versus defaults to **4 stocks, 8 minutes, items off, team attack on and pause on**. Rules can be changed in the menus for the current session.
+The touch-screen controls guide does not pause a match.
 
-## Current limitations and updates
+## Scope and credits
 
-Only one physical player is mapped. Multiplayer, online/rollback, replay recording, persistent saving and optional movies are unfinished. Some materials, shadows and reflections remain approximate. Stereo adds rendering work; lowering the slider fully provides the best available performance. The lower screen reports rendered FPS separately from simulation updates.
+This is an unofficial homebrew port. There is **no multiplayer connection, Slippi rollback, replay recording, or persistent memory-card saving**. Optional movies are skipped, some graphics are simplified or approximate, and single-player modes have less coverage than Versus and Training. Bugs may remain. See [project status](native-3ds/docs/PORT_STATUS.md).
 
-For source updates, run `git pull --ff-only`, rebuild with `python tools/build_game.py --release`, and rerun `python tools/package_native.py` from `native-3ds/`. Back up your previous SD executable, then replace `SD:/3ds/melee/melee.3dsx`. Keep the existing `files` directory and any optional visuals unless an update specifically changes them.
+Thanks to **doldecomp/melee and its contributors**, devkitPro, Diet Melee, the UCF authors and Project Slippi, and the Mario 64 3DS ports used as references. Development used OpenAI Codex alongside repeated testing on a physical New 3DS.
 
-Bug reports and contributions are welcome through this repository's [Issues](https://github.com/2gifts/melee-3ds/issues) and pull requests. Include your console model, source commit, stage/fighters, display mode and steps to reproduce. See the [current port status](native-3ds/docs/PORT_STATUS.md) and [contribution notes](native-3ds/CONTRIBUTING.md) for more detail.
+The original decompilation source and history are preserved; the port lives in **`native-3ds/` on the `3ds` branch**. Community forks and contributions are welcome, although further development is not currently planned.
 
-## Credits
-
-This project builds on **doldecomp/melee and its contributors**, devkitPro's homebrew libraries and tools, Diet Melee, UCF and Project Slippi's offline/input work, and native Mario 64 3DS ports used as stereo references. It was developed iteratively with OpenAI Codex and physical testing on a New 3DS.
-
-The upstream decompilation source and history are preserved. Port code lives in `native-3ds/` and pins upstream commit `039c4bf4ca33338c35d21901ad19b7ede19d19ad`. This is an unofficial community project.
-
-[Original decompilation README](.github/UPSTREAM.md) ·
-[3DS contribution notes](native-3ds/CONTRIBUTING.md) ·
-[Credits and third-party notices](native-3ds/docs/THIRD_PARTY_NOTICES.md) ·
-[Source terms](native-3ds/LICENSE-SCOPE.md)
+[Upstream README](.github/UPSTREAM.md) · [Contributing](native-3ds/CONTRIBUTING.md) · [Credits and notices](native-3ds/docs/THIRD_PARTY_NOTICES.md) · [Source terms](native-3ds/LICENSE-SCOPE.md)

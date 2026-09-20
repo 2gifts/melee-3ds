@@ -362,7 +362,7 @@ unsigned mp_bottom_css(unsigned slot)
             changed=changed.replace(old,old+guard)
         out=ROOT/'build/overlays'/source.name;out.parent.mkdir(parents=True,exist_ok=True)
         out.write_text(changed,encoding='utf-8');return out
-    if source.name not in ('lbarq.c','camera.c','cobj.c','itcoin.c','mninfo.c','gmmain.c','devcom.c','lbmemory.c','lbfile.c','ftdata.c','gm_1A3F.c','lbcardnew.c','gmtitle.c','hsd_4D11.c','tydisplay.c','texp.c','psdisp.c','hsd_3915.c','gm_1832.c','synth.c','ftmaterial.c','grdisplay.c','gobjuserdata.c','eflib.c','shadow.c','lbrefract.c','itspawn.c','gm_1798.c','gm_1601.c','itfreeze.c','itlinkarrow.c','player.c','ftCo_Damage.c','particle.c','mnitemsw.c','mnname.c','mnnamenew.c','tobj.c','gm_1A45.c','lb_0192.c'):return source
+    if source.name not in ('lbaudio_ax.c','lbarq.c','camera.c','cobj.c','itcoin.c','mninfo.c','gmmain.c','devcom.c','lbmemory.c','lbfile.c','ftdata.c','gm_1A3F.c','lbcardnew.c','gmtitle.c','hsd_4D11.c','tydisplay.c','texp.c','psdisp.c','hsd_3915.c','gm_1832.c','synth.c','ftmaterial.c','grdisplay.c','gobjuserdata.c','eflib.c','shadow.c','lbrefract.c','itspawn.c','gm_1798.c','gm_1601.c','itfreeze.c','itlinkarrow.c','player.c','ftCo_Damage.c','particle.c','mnitemsw.c','mnname.c','mnnamenew.c','tobj.c','gm_1A45.c','lb_0192.c'):return source
     contents=source.read_text(encoding='utf-8')
     changed=contents.replace('void inline itCoin_ResetRotation','static inline void itCoin_ResetRotation').replace('inline void mnInfo_CreateEntries','static inline void mnInfo_CreateEntries')
     if source.name in ('gm_1A45.c','lb_0192.c'):
@@ -507,6 +507,20 @@ unsigned mp_bottom_css(unsigned slot)
         for offset,table in [('0x21','lbl_803B767C'),('0x42','lbl_803B7700'),('0x63','lbl_803B7784')]:
             changed=changed.replace('lbl_803B75F8[tmp_ckind + '+offset+']',table+'[tmp_ckind]')
     if source.name=='gm_1798.c':
+        # Only fn_80179990's two offscreen portrait-camera calls use arg0.
+        # All four visible results cameras use gobj and stay untouched.
+        old='Camera_800313E0(arg0, 0);'
+        assert changed.count(old)==2,'Results portrait camera sites changed'
+        changed=changed.replace(old,'mp_display_results_capture(arg0, 0);')
+        # shared_img is only allocated and written in this translation unit;
+        # unlike player_img1/player_img2, it is never bound or read. Retain
+        # GX's copy-clear side effect without transferring its unused pixels.
+        old='HSD_ImageDescCopyFromEFB(&lbl_8046E1B0.shared_img,'
+        assert changed.count(old)==2,'Results scratch-image copy sites changed'
+        changed=changed.replace(old,'mp_image_copy_clear(&lbl_8046E1B0.shared_img,')
+        marker='extern ResultsData lbl_8046DBE8;'
+        assert changed.count(marker)==1
+        changed=changed.replace(marker,marker+'\nextern void mp_image_copy_clear(HSD_ImageDesc*, u16, u16, GXBool, bool);\nextern void mp_display_results_capture(HSD_GObj*, int);')
         # ResultsDisplayLayout is an overlay across four separate GC globals.
         # Give every view one allocation; never rely on linker section order.
         start=changed.index('ResultsDisplayData lbl_8046E1B0;')
@@ -543,6 +557,12 @@ unsigned mp_bottom_css(unsigned slot)
         assert body.count('GXInvalidateTexAll();')==1,(source.name,body)
         body=body.replace('GXInvalidateTexAll();','/* Destination texture visibility is handled by the native copy. */')
         changed=changed[:start]+body+changed[end:]
+        if source.name=='tobj.c':
+            # Keep the original descriptor/copy state setup and clear masks.
+            # Only the explicitly audited unused destination uses this entry.
+            helper=body.replace('HSD_ImageDescCopyFromEFB(', 'mp_image_copy_clear(',1).replace('GXCopyTex(', 'mp_gx_copy_clear_only(')
+            assert helper.count('mp_gx_copy_clear_only(')==1
+            changed+='\nextern void mp_gx_copy_clear_only(void*, int);\n'+helper+'\n'
     if source.name=='shadow.c':
         old='void HSD_ShadowSetActive(HSD_Shadow* shadow, int active)\n{'
         assert changed.count(old)==1
@@ -630,6 +650,13 @@ unsigned mp_bottom_css(unsigned slot)
         for name,offset in [('hsd_804D1138',0),('hsd_804D1148',0x10),('hsd_804D2348',0x1210)]:
             storage+='__asm__(".global '+name+'\\n.set '+name+',mp_card_storage+'+str(offset)+'\\n");\n'
         changed=changed[:start]+storage+'\n'+changed[end:]
+    if source.name=='lbaudio_ax.c':
+        # The second setup block owns AXFX_DELAY, not AXFX_REVERBSTD. Passing
+        # type 2 reads a reverb preDelay beyond the delay object's stack storage.
+        # ThinLTO correctly exposes that undefined access as unreachable code.
+        old='HSD_AudioGetAuxHeapSize(2, &delay)'
+        assert changed.count(old)==1, 'Review the delay heap-size type fix'
+        changed=changed.replace(old,'HSD_AudioGetAuxHeapSize(AXDRIVER_AUX_DELAY, &delay)')
     if source.name=='gmmain.c':
         start=changed.index('int main(void)')
         prefix,body=changed[:start],changed[start:]

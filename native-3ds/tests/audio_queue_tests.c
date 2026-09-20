@@ -8,6 +8,8 @@
 static ndspWaveBuf *queued_wave[8];
 static s16 expected[8][384*2];
 static unsigned head,count,flushes,published,consumed,source_slice;
+static unsigned direct_calls,service_calls,last_flushed;
+static int fail_direct,fail_service;
 static int paused=1;
 Result ndspInit(void){return 0;}
 void ndspExit(void){}
@@ -20,9 +22,18 @@ void ndspChnSetInterp(int channel,int interp){assert(channel==0);(void)interp;}
 void ndspChnSetRate(int channel,float rate){assert(channel==0&&rate==32000.f);}
 void ndspChnSetFormat(int channel,int format){assert(channel==0);(void)format;}
 void ndspChnSetPaused(int channel,int value){assert(channel==0);paused=value;}
-void DSP_FlushDataCache(const void *p,size_t n){assert(p&&n==1536);++flushes;}
+Result DSP_FlushDataCache(const void *p,u32 n){
+    assert(p&&n==1536);++service_calls;if(fail_service)return -1;
+    last_flushed=(u32)(uintptr_t)p;++flushes;return 0;
+}
+Result svcFlushProcessDataCache(Handle process,u32 p,u32 n){
+    assert(process==CUR_PROCESS_HANDLE&&p&&n==1536);++direct_calls;
+    if(fail_direct)return -1;
+    last_flushed=p;++flushes;return 0;
+}
 void ndspChnWaveBufAdd(int channel,ndspWaveBuf *w){
     assert(channel==0&&count<8&&w->nsamples==384);
+    assert(flushes==published+1&&last_flushed==(u32)(uintptr_t)w->data_vaddr);
     assert(w->status==NDSP_WBUF_FREE||w->status==NDSP_WBUF_DONE);
     unsigned index=(head+count)%8;queued_wave[index]=w;
     memcpy(expected[index],w->data_vaddr,1536);w->status=NDSP_WBUF_QUEUED;
@@ -58,7 +69,19 @@ static void consume(void){
     assert(count);immutable();queued_wave[head]->status=NDSP_WBUF_DONE;
     head=(head+1)%8;--count;++consumed;
 }
-int main(void){
+int main(int argc,char**argv){
+    assert(argc==2);
+    fail_direct=strcmp(argv[1],"direct")!=0;
+    if(!strcmp(argv[1],"failure")){
+        for(unsigned i=0;i<3;++i)produce();
+        fail_service=1;u8 be[384]={0};mp_native_audio(be,96);++source_slice;
+        assert(!published&&!count&&!flushes&&audio_flush_failures==1);
+        assert(audio_dropped==4&&audio_queued==4&&partial==0&&next==0);
+        assert(direct_calls==1&&service_calls==1&&audio_direct_flush_unavailable);
+        fail_service=0;for(unsigned i=0;i<4;++i)produce();
+        assert(published==1&&count==1&&flushes==1&&direct_calls==1&&service_calls==2);
+        mp_native_audio_exit();puts("Native audio cache: failed flush withheld; service recovery passed");return 0;
+    }
     /* All four input slices retain their signed stereo samples, and the
      * first 48 ms are submitted before the channel starts playing. */
     for(unsigned i=0;i<15;++i){produce();assert(paused);}
@@ -78,6 +101,9 @@ int main(void){
     }
     while(count)consume();
     assert(consumed==published&&published==flushes);
+    assert(!audio_flush_failures);
+    if(fail_direct)assert(direct_calls==1&&service_calls==published);
+    else assert(direct_calls==published&&service_calls==0);
     mp_native_audio_exit();assert(ready==-1);
-    printf("Native audio queue: %u buffers, %u accepted AX slices, %u full-queue drops; PCM ordering/ownership and recovery passed\n",published,audio_queued,audio_dropped);
+    printf("Native audio queue (%s): %u buffers, %u accepted AX slices, %u full-queue drops; PCM ordering/ownership and recovery passed\n",argv[1],published,audio_queued,audio_dropped);
 }

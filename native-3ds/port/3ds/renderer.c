@@ -4,6 +4,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <malloc.h>
+#define MP_RENDER_WORKER_IMPLEMENTATION
+#include "render_worker.h"
 #include "alpha_test.h"
 #include "texture_storage.h"
 #include "texture_decode.h"
@@ -12,14 +14,20 @@
 #include "texture_visibility.h"
 #include "cache_lru.h"
 #include "efb_rgb565.h"
+#include "efb_rgb5a3.h"
 #include "scissor.h"
 #include "blend_state.h"
 #include "audio_trace.h"
 #include "log_progress.h"
 #include "citro3d_fix.h"
+#include "early_queue.h"
 #define C3D_TexBind mp_native_tex_bind
 #include "../engine/gpu_vertex.h"
 #include "../engine/layered_material.h"
+#include "../engine/draw_flags.h"
+#ifdef MP_SMOKE_TEST
+#include "stereo_bounds.h"
+#endif
 _Static_assert(GPU_L4==10&&GPU_L8==7&&GPU_LA4==9&&GPU_LA8==5&&GPU_RGB565==3&&GPU_RGBA8==0,"Native texture storage format IDs");
 _Static_assert(GPU_BLEND_REVERSE_SUBTRACT==2&&GPU_DST_COLOR==4&&GPU_SRC_ALPHA==6&&GPU_DST_ALPHA==8,"Native blend constants");
 _Static_assert(GPU_LOGICOP_SET==4&&GPU_LOGICOP_AND_INVERTED==13&&GPU_LOGICOP_OR_INVERTED==15,"Native logic constants");
@@ -28,6 +36,9 @@ typedef struct{float p[4],c[4],t[2],n[4];} Vertex;
 _Static_assert(sizeof(Vertex)==sizeof(MPGPUVertex),"GPU vertex wire layout");
 typedef struct{u32 image,w,h,format,palette,palfmt,palcount,depth,write,func,blend,src,dst,cull,alpha,color_mask,texture_rgb,texture_alpha,wrap_s,wrap_t,gpu,indices,index_count,geometry_id,scissor[4],points,point_size,point_offset,screen_width,layer;float convergence;} Draw;
 _Static_assert(sizeof(Draw)==34*4,"GX draw bridge layout");
+_Static_assert(__builtin_offsetof(Draw,gpu)==20*4 && __builtin_offsetof(Draw,indices)==21*4 &&
+    __builtin_offsetof(Draw,index_count)==22*4 && __builtin_offsetof(Draw,geometry_id)==23*4 &&
+    __builtin_offsetof(Draw,layer)==32*4,"Owned draw pointer offsets");
 typedef struct{u32 image,palette,format,palfmt,palcount;C3D_Tex tex;unsigned w,h,hash,generation,frame,source_bytes;int retired;} Texture;
 extern const unsigned char mp_shader[];extern const unsigned mp_shader_size;
 extern const unsigned char mp_dual_shader[];extern const unsigned mp_dual_shader_size;
@@ -41,21 +52,82 @@ static C3D_RenderTarget*stereo_target,*eye_output[2];
 static C3D_RenderTarget*mono_target;
 unsigned mp_native_stereo_depth;
 static unsigned stereo_active;
+#ifdef MP_SMOKE_TEST
+volatile unsigned results_capture_disable=1;
+#else
+#define results_capture_disable 0
+#endif
+unsigned results_capture_draws,results_capture_vertices;
 /* Game simulation may run while PICA finishes the previous frame. The
  * first GPU consumer waits before reusing commands, vertices or textures. */
 static unsigned frame_pending;
+static unsigned gpu_early_queue_sent;
+static unsigned gpu_stream_queue_offset,gpu_stream_queue_full;
+#ifndef MP_SMOKE_TEST
+#define gpu_early_queue_disable 0
+#define gpu_early_queue_bytes 16384
+#define gpu_stream_queue_disable 0
+#endif
 #ifdef MP_SMOKE_TEST
 volatile unsigned gpu_pipeline_disable,shader_shortcuts_disable,palette_upload_disable;
+volatile unsigned gpu_early_queue_disable=1,gpu_early_queue_bytes=16384;
+volatile unsigned gpu_stream_queue_disable=1;
+volatile unsigned lighting_uniform_disable;
+unsigned lighting_uniform_checks,lighting_uniform_draws[2];
+extern const unsigned char mp_light_reference_base[],mp_light_reference_dual[],mp_light_reference_stereo[],mp_light_reference_dual_stereo[];
+extern const unsigned mp_light_reference_base_size,mp_light_reference_dual_size,mp_light_reference_stereo_size,mp_light_reference_dual_stereo_size;
+static DVLB_s*light_reference_dvlb[4];
+static shaderProgram_s light_reference_program[6];
+static int light_reference_active=-1;
+extern const unsigned char mp_stereo_reuse_shader[];
+extern const unsigned mp_stereo_reuse_shader_size;
+static DVLB_s*stereo_reuse_dvlb;
+static shaderProgram_s stereo_reuse_program;
+static shaderProgram_s stereo_reuse_shared_program;
+static int stereo_reuse_shared_active=-1;
+volatile unsigned stereo_reuse_shared_disable;
+volatile unsigned stereo_reuse_disable=1;
+volatile unsigned stereo_reuse_parameters_reference;
+volatile unsigned stereo_reuse_bounds_reference;
+extern int mp_stereo_bounds_reference(const MPStereoBounds*,const float[30][4],const float[4][4],float,float,float);
+unsigned stereo_reuse_draws[2],stereo_reuse_vertices[2],stereo_reuse_bounds_bytes;
+unsigned stereo_reuse_check_ticks,stereo_reuse_checks;
 #endif
 static u64 gpu_wait_ticks;
+u64 mp_gpu_total_wait_ticks;
 static double gpu_draw_ms;
 static unsigned gpu_queue_samples,gpu_queue_pending;
+#ifdef MP_SMOKE_TEST
+static u64 render_bench_gpu_wait;
+static double render_bench_gpu_ms;
+static unsigned render_bench_gpu_queues;
+#endif
 static int stereo_failed;
 #define OUTPUT_FLAGS (GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGBA8)|GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGB8))
 static int point_program_active;
+static unsigned clamped_program_current;
+static int clamped_program_active=-1;
+static DVLB_s*clamped_dvlb[4];
+static shaderProgram_s clamped_program[6];
+extern const unsigned char mp_clamped_base[],mp_clamped_dual[],mp_clamped_stereo[],mp_clamped_dual_stereo[];
+extern const unsigned mp_clamped_base_size,mp_clamped_dual_size,mp_clamped_stereo_size,mp_clamped_dual_stereo_size;
+unsigned clamped_native_draws,clamped_native_vertices;
 static void bind_program(int points){
-    if(points!=point_program_active){if(point_program_active==2)C3D_TexBind(1,NULL);
-        C3D_BindProgram(stereo_active?(points==2?&stereo_dual_program:points==1?&stereo_point_program:&stereo_program):(points==2?&dual_program:points==1?&point_program:&program));point_program_active=points;}
+    int changed=points!=point_program_active||clamped_program_active!=(int)clamped_program_current;
+#ifdef MP_SMOKE_TEST
+    changed|=light_reference_active!=(int)!!lighting_uniform_disable;
+    changed|=stereo_reuse_shared_active!=(int)!!stereo_reuse_shared_disable;
+#endif
+    if(changed){if(point_program_active==2)C3D_TexBind(1,NULL);
+        shaderProgram_s*selected=stereo_active?(points==2?&stereo_dual_program:points==1?&stereo_point_program:&stereo_program):(points==2?&dual_program:points==1?&point_program:&program);
+#ifdef MP_SMOKE_TEST
+        if(lighting_uniform_disable&&points!=3)selected=&light_reference_program[(stereo_active?3:0)+points];
+        if(points==3)selected=stereo_reuse_shared_disable?&stereo_reuse_program:&stereo_reuse_shared_program;
+        light_reference_active=!!lighting_uniform_disable;
+        stereo_reuse_shared_active=!!stereo_reuse_shared_disable;
+#endif
+        if(clamped_program_current&&points<3)selected=&clamped_program[(stereo_active?3:0)+points];
+        C3D_BindProgram(selected);point_program_active=points;clamped_program_active=clamped_program_current;}
 }
 static int stereo_init(void){
     if(stereo_target)return 1;if(stereo_failed)return 0;
@@ -114,13 +186,36 @@ static unsigned command_usage(void){
 #ifdef MP_SMOKE_TEST
 static volatile unsigned gpu_full_heap_flush;
 static volatile unsigned gpu_vblank_wait;
-static void end_command_frame(u8 flags){command_usage();unsigned previous=mp_log_phase(MP_LOG_GPU_END);C3D_FrameEnd(gpu_full_heap_flush?flags:flags|GX_CMDLIST_FLUSH);mp_log_phase(previous);}
+#ifdef MP_ASYNC_PRESENTATION
+volatile unsigned gpu_async_present_disable=1;
+static void end_command_frame(u8 flags){
+    command_usage();unsigned previous=mp_log_phase(MP_LOG_GPU_END);
+    if(gpu_async_present_disable||gpu_full_heap_flush)mp_early_queue_finish();
+    else mp_early_queue_defer();
+    C3D_FrameEnd(gpu_full_heap_flush?flags:flags|GX_CMDLIST_FLUSH);
+    mp_log_phase(previous);
+}
 #else
-static void end_command_frame(u8 flags){command_usage();unsigned previous=mp_log_phase(MP_LOG_GPU_END);C3D_FrameEnd(flags|GX_CMDLIST_FLUSH);mp_log_phase(previous);}
+static void end_command_frame(u8 flags){command_usage();unsigned previous=mp_log_phase(MP_LOG_GPU_END);mp_early_queue_finish();C3D_FrameEnd(gpu_full_heap_flush?flags:flags|GX_CMDLIST_FLUSH);mp_log_phase(previous);}
+#endif
+#else
+#ifdef MP_ASYNC_PRESENTATION
+static void end_command_frame(u8 flags){command_usage();unsigned previous=mp_log_phase(MP_LOG_GPU_END);mp_early_queue_defer();C3D_FrameEnd(flags|GX_CMDLIST_FLUSH);mp_log_phase(previous);}
+#else
+static void end_command_frame(u8 flags){command_usage();unsigned previous=mp_log_phase(MP_LOG_GPU_END);mp_early_queue_finish();C3D_FrameEnd(flags|GX_CMDLIST_FLUSH);mp_log_phase(previous);}
+#endif
 #endif
 static bool begin_command_frame(u8 flags){
     unsigned previous=mp_log_phase(MP_LOG_GPU_BEGIN);u64 start=svcGetSystemTick();
-    bool result=C3D_FrameBegin(flags);gpu_wait_ticks+=svcGetSystemTick()-start;
+    bool result=C3D_FrameBegin(flags);u64 elapsed=svcGetSystemTick()-start;gpu_wait_ticks+=elapsed;mp_gpu_total_wait_ticks+=elapsed;
+#ifdef MP_ASYNC_PRESENTATION
+    if(result)mp_early_queue_retire();
+#endif
+    if(result){gpu_early_queue_sent=0;gpu_stream_queue_offset=0;gpu_stream_queue_full=0;}
+#ifdef MP_SMOKE_TEST
+    render_bench_gpu_wait+=elapsed;
+    if(result&&gpu_queue_pending){render_bench_gpu_ms+=C3D_GetDrawingTime();++render_bench_gpu_queues;}
+#endif
     if(result&&gpu_queue_pending){gpu_draw_ms+=C3D_GetDrawingTime();++gpu_queue_samples;gpu_queue_pending=0;}
     mp_log_phase(previous);return result;
 }
@@ -134,7 +229,11 @@ static void checked_draw_arrays(GPU_Primitive_t primitive,int first,int count){r
 #define C3D_DrawElements(primitive,count,type,data) checked_draw_elements(primitive,count,type,data)
 #define C3D_DrawArrays(primitive,first,count) checked_draw_arrays(primitive,first,count)
 static const u16*draw_indices;
-typedef struct{unsigned id,frame,bytes,count,index_count;float us,vs;int textured;Vertex*vertices;u16*indices;unsigned matrix_mask;} NativeGeometry;
+typedef struct{unsigned id,frame,bytes,count,index_count;float us,vs;int textured;Vertex*vertices;u16*indices;unsigned matrix_mask;
+#ifdef MP_SMOKE_TEST
+    MPStereoBounds*bounds;
+#endif
+} NativeGeometry;
 #define NATIVE_GEOMETRY_ENTRIES 2048
 #define NATIVE_GEOMETRY_BUDGET (4*1024*1024)
 static NativeGeometry native_geometry[NATIVE_GEOMETRY_ENTRIES];
@@ -158,6 +257,7 @@ static unsigned stereo_eye;
 #ifdef MP_SMOKE_TEST
 static volatile unsigned stereo_order_reference;
 unsigned stereo_eye_switches,stereo_pairs,stereo_attribute_writes;
+static unsigned stereo_reuse_viewport;
 #endif
 static float stereo_scale_cache,stereo_bias_cache;
 static unsigned stereo_shift_valid;
@@ -174,7 +274,11 @@ static void stereo_shift(float scale,float bias){
 #endif
     }
 }
-static void screen_viewport(unsigned width){render_width=width;stereo_eye=0;C3D_SetViewport(0,(stereo_active?400:0)+(400-width)/2,240,width);}
+static void screen_viewport(unsigned width){render_width=width;stereo_eye=0;
+#ifdef MP_SMOKE_TEST
+    stereo_reuse_viewport=0;
+#endif
+    C3D_SetViewport(0,(stereo_active?400:0)+(400-width)/2,240,width);}
 static Texture textures[MP_TEXTURE_SLOTS];static unsigned texture_count;
 static unsigned texture_uploads,texture_evictions;
 #ifdef MP_SMOKE_TEST
@@ -201,11 +305,19 @@ static unsigned texture_generation=1,frame_number;
 typedef struct {Texture texture;C3D_RenderTarget*target;unsigned copied_frame;} EfbTexture;
 static EfbTexture efb_textures[8];static C3D_Tex efb_capture;
 static unsigned efb_gpu_copies;
+unsigned efb_discarded_copies;
+unsigned efb_cpu_copies,efb_cpu_output_pixels;
+static u64 efb_readback_ticks,efb_conversion_ticks;
+extern unsigned mp_native_ticks(void);
 static volatile unsigned efb_gpu_disable;
 static int gpu_efb_copy(const u32*);
 #ifdef MP_SMOKE_TEST
 static volatile unsigned efb_verify;
 static volatile unsigned efb_rgb565_disable,efb_rgb565_validate;
+static volatile unsigned efb_rgb5a3_disable=1,efb_rgb5a3_validate;
+static volatile unsigned efb_discard_disable=1;
+unsigned efb_rgb5a3_checks,efb_rgb5a3_pixels,efb_rgb5a3_ticks[2];
+static unsigned discarded_image,discarded_image_bytes;
 static volatile unsigned framebuffer_range_disable,texture_content_validate;
 unsigned texture_content_checks,texture_hash_checks,texture_dirty_calls,texture_dirty_invalidated,framebuffer_cpu_calls;
 unsigned texture_upload_ticks,texture_upload_max_ticks;
@@ -218,8 +330,10 @@ static u32*efb_pixels;
 static u32 uniform_cache[MP_GPU_UNIFORMS][4];
 static u8 uniform_valid[MP_GPU_UNIFORMS];
 static u32 material0_cache[4];static int material0_valid;
-static unsigned shader_branch_mask=~0u;
 unsigned shader_shortcut_draws[3],shader_shortcut_vertices[3];
+#ifdef MP_SMOKE_TEST
+unsigned shader_boolean_checks,shader_boolean_routes[3];
+#endif
 /* Citro3D marks the complete effect block dirty on each setter, even if its
  * value is unchanged. Retain normal-draw state across adjacent batches.
  * Copies and frame-target changes invalidate it before the next draw. */
@@ -247,7 +361,6 @@ static void raster_alpha(unsigned func,unsigned ref){
 extern unsigned mp_gx_profile;
 unsigned mp_native_detail_ticks[4],mp_native_detail_count[4];
 static unsigned native_detail_sequence[4];
-extern unsigned mp_native_ticks(void);
 static unsigned native_detail_begin(unsigned phase){return mp_gx_profile&&!(native_detail_sequence[phase]++&15)?mp_native_ticks():0;}
 static void native_detail_end(unsigned phase,unsigned start){if(start){mp_native_detail_ticks[phase]+=mp_native_ticks()-start;++mp_native_detail_count[phase];}}
 #else
@@ -264,15 +377,28 @@ static volatile unsigned stream_vertex_budget=MAX_VERTICES;
 #define STREAM_VERTEX_BUDGET MAX_VERTICES
 #endif
 static void vertex_attributes(int dual){
-    if(layer_attributes==dual)return;layer_attributes=dual;
+    int key=dual|(clamped_program_current<<1);if(layer_attributes==key)return;layer_attributes=key;
     C3D_AttrInfo*a=C3D_GetAttrInfo();AttrInfo_Init(a);AttrInfo_AddLoader(a,0,GPU_FLOAT,4);AttrInfo_AddLoader(a,1,GPU_FLOAT,4);AttrInfo_AddLoader(a,2,GPU_FLOAT,2);AttrInfo_AddLoader(a,3,GPU_FLOAT,4);AttrInfo_AddFixed(a,4);
     if(dual)AttrInfo_AddLoader(a,5,GPU_FLOAT,2);
-    if(stereo_active){if(!dual)AttrInfo_AddFixed(a,5);AttrInfo_AddFixed(a,6);}
+    if(stereo_active||clamped_program_current){if(!dual)AttrInfo_AddFixed(a,5);AttrInfo_AddFixed(a,6);}
+    if(clamped_program_current){AttrInfo_AddFixed(a,7);AttrInfo_AddFixed(a,8);
+        /* This SDK shifts an int in AttrInfo_AddFixed. Attribute 8 requires
+         * a 64-bit shift; write the complete identity permutation explicitly
+         * so v8 cannot alias v0 and overwrite the vertex position. */
+        a->permutation=UINT64_C(0x876543210);}
+}
+static u32 read32(const void*p);
+static void clamped_attributes(const MPGPUUniforms*u){
+    /* Uniform input is an immutable BE8 snapshot owned by the render worker. */
+    const float*source[2]={u->post_scale,u->post_bias};
+    for(unsigned i=0;i<2;++i){union{u32 u[4];float f[4];}v;
+        for(unsigned j=0;j<4;++j)v.u[j]=read32((const u32*)source[i]+j);
+        C3D_FixedAttribSet(7+i,v.f[0],v.f[1],v.f[2],v.f[3]);}
 }
 static void vertex_pointer(const Vertex*first){vertex_attributes(0);C3D_BufInfo*b=C3D_GetBufInfo();BufInfo_Init(b);BufInfo_Add(b,first,sizeof(Vertex),4,0x3210);}
 static void layered_vertex_pointer(const Vertex*first,const float*uv){vertex_attributes(1);C3D_BufInfo*b=C3D_GetBufInfo();BufInfo_Init(b);BufInfo_Add(b,first,sizeof(Vertex),4,0x3210);BufInfo_Add(b,uv,8,1,5);}
 static void vertex_base(unsigned first){vertex_pointer(vertices+first);}
-static void indexed_draw(unsigned first,unsigned count){C3D_DrawElements(point_program_active==1?GPU_GEOMETRY_PRIM:GPU_TRIANGLES,count,C3D_UNSIGNED_SHORT,draw_indices+first);}
+static void indexed_draw(unsigned first,unsigned count){C3D_DrawElements((point_program_active==1||point_program_active==3)?GPU_GEOMETRY_PRIM:GPU_TRIANGLES,count,C3D_UNSIGNED_SHORT,draw_indices+first);}
 static int raster_cull(unsigned mode){
     /* Map the GX API modes to this renderer's native viewport convention.
      * Visible CSS/menu polygons arrive clockwise in native clip space.
@@ -327,6 +453,9 @@ static void convert_vertices(Vertex*dest,const Vertex*be,unsigned count,int text
     }
 }
 static void native_geometry_free(NativeGeometry*e){
+#ifdef MP_SMOKE_TEST
+    if(e->bounds){free(e->bounds);stereo_reuse_bounds_bytes-=sizeof(MPStereoBounds);}
+#endif
     if(e->id)mp_cache_lru_remove(&native_geometry_lru,(unsigned)(e-native_geometry)+1);
     if(e->vertices){linearFree(e->vertices);native_geometry_bytes-=e->bytes;}memset(e,0,sizeof(*e));
 }
@@ -387,6 +516,66 @@ static unsigned vertex_matrix_mask(const Vertex*v,unsigned count){
     return mask;
 }
 unsigned palette_rows_sent,palette_rows_skipped;
+#ifdef MP_AFFINE_IDENTITY_SHADER
+#ifndef MP_SMOKE_TEST
+#error Affine identity is a development-only candidate
+#endif
+#include "affine_identity.h"
+volatile unsigned affine_identity_disable;
+unsigned affine_identity_draws[2],affine_identity_vertices[2];
+static unsigned affine_identity_current;
+#endif
+#include "uniform_upload.h"
+#ifdef MP_UNLIT_AFFINE_SHADER
+#ifndef MP_SMOKE_TEST
+#error Unlit affine is an isolated development candidate
+#endif
+#include "affine_identity.h"
+volatile unsigned unlit_affine_disable=1;
+unsigned unlit_affine_draws[2],unlit_affine_vertices[2];
+#endif
+#include "lighting_uniforms.h"
+#ifdef MP_SMOKE_TEST
+#include "stereo_fixed.h"
+static int stereo_reuse_eligible(NativeGeometry*g,const Draw*d){
+    if(stereo_reuse_disable||lighting_uniform_disable||!stereo_active||!g||!d->gpu||d->points||d->layer||
+       d->scissor[0]||d->scissor[1]||d->scissor[2]!=640||d->scissor[3]!=480)return 0;
+    const MPGPUUniforms*u=(const void*)d->gpu;
+    if(read32(&u->post_transform)||read32(&u->constant_color)||(!read32(&u->value[91][0])&&!read32(&u->value[92][0])))return 0;
+    unsigned start=mp_native_ticks();
+    if(!g->bounds){
+        g->bounds=malloc(sizeof(*g->bounds));if(!g->bounds)return 0;
+        stereo_reuse_bounds_bytes+=sizeof(*g->bounds);
+        mp_stereo_bounds_build(g->bounds,(const MPGPUVertex*)g->vertices,g->count);
+    }
+    float matrix[30][4]={{0}},projection[4][4];
+    for(unsigned group=0;group<10;++group)if(g->bounds->used&(1u<<group)){
+        if(read32(&u->matrix_rows)<group*3+3)return 0;
+        for(unsigned k=0;k<12;++k){union{u32 u;float f;}v={read32(&u->value[group*3+k/4][k%4])};matrix[group*3+k/4][k%4]=v.f;}
+    }
+    for(unsigned k=0;k<16;++k){union{u32 u;float f;}v={read32(&u->value[60+k/4][k%4])};projection[k/4][k%4]=v.f;}
+    float scale=d->convergence>0?mp_native_stereo_depth*MP_STEREO_PIXELS_PER_SLIDER/render_width:0;
+    int inside=stereo_reuse_bounds_reference?
+        mp_stereo_bounds_reference(g->bounds,matrix,projection,scale,-scale*d->convergence,render_width==320?.75f:1.f):
+        mp_stereo_bounds_inside(g->bounds,matrix,projection,scale,-scale*d->convergence,render_width==320?.75f:1.f);
+    stereo_reuse_check_ticks+=mp_native_ticks()-start;++stereo_reuse_checks;return inside;
+}
+#endif
+static void submit_early_prefix(void){
+    if(gpu_early_queue_disable||gpu_stream_queue_full||(gpu_stream_queue_disable&&gpu_early_queue_sent))return;
+    unsigned limit=gpu_early_queue_bytes;
+    /* Very small thresholds are for GPU fixtures, not a release default. */
+    if(limit<256||limit>262144)return;
+    unsigned used=command_usage();
+    if(used-gpu_stream_queue_offset<limit)return;
+    /* Append-only streaming ranges and immutable cached geometry/textures
+     * stay pinned to frame_number until the existing frame/barrier fence.
+     * The command splitter advances its buffer, never overwriting a prefix. */
+    flush_dynamic();
+    if(gpu_stream_queue_disable?mp_early_queue_submit():mp_early_queue_append()){
+        gpu_early_queue_sent=1;gpu_stream_queue_offset=command_usage();
+    }else gpu_stream_queue_full=1;
+}
 static NativeGeometry*native_geometry_get(const Vertex*be,unsigned count,const Draw*d,int textured,float us,float vs){
     NATIVE_WORK(0,1);
     if(!d->geometry_id){NATIVE_WORK(1,count);return NULL;}
@@ -413,17 +602,25 @@ static NativeGeometry*native_geometry_get(const Vertex*be,unsigned count,const D
     convert_vertices(v,be,count,textured,us,vs);for(unsigned i=0;i<d->index_count;++i)ib[i]=__builtin_bswap16(src[i]);
     NATIVE_WORK(3,count);
     GSPGPU_FlushDataCache(v,bytes);
-    *slot=(NativeGeometry){d->geometry_id,frame_number,bytes,count,d->index_count,us,vs,textured,v,ib,vertex_matrix_mask(v,count)};native_geometry_bytes+=bytes;
+    *slot=(NativeGeometry){.id=d->geometry_id,.frame=frame_number,.bytes=bytes,.count=count,.index_count=d->index_count,
+        .us=us,.vs=vs,.textured=textured,.vertices=v,.indices=ib,.matrix_mask=vertex_matrix_mask(v,count)};native_geometry_bytes+=bytes;
     mp_cache_lru_touch(&native_geometry_lru,(unsigned)(slot-native_geometry)+1);return slot;
 }
 static u32 rgba(unsigned r,unsigned g,unsigned b,unsigned a){return(r<<24)|(g<<16)|(b<<8)|a;}
 static u32 rgb565(unsigned v){return mp_rgb565(v);}
 static u32 rgb5a3(unsigned v){return mp_rgb5a3(v);}
 static unsigned morton(unsigned x,unsigned y){return(x&1)|((y&1)<<1)|((x&2)<<1)|((y&2)<<2)|((x&4)<<2)|((y&4)<<3);}
-static u32 palette_color(const Draw*d,unsigned i){if(!d->palette||i>=d->palcount)return 0xffffffff;unsigned v=read16((void*)(d->palette+2*i));return d->palfmt==1?rgb565(v):d->palfmt==2?rgb5a3(v):rgba(v&255,v&255,v&255,v>>8);}
+static const void *texture_input(unsigned address,unsigned bytes){
+#ifdef MP_RENDER_WORKER
+    return mp_render_worker_texture_source(address,bytes);
+#else
+    (void)bytes;return (const void*)address;
+#endif
+}
+static u32 palette_color(const Draw*d,unsigned i){if(!d->palette||i>=d->palcount)return 0xffffffff;unsigned v=read16((const u8*)texture_input(d->palette,d->palcount*2)+2*i);return d->palfmt==1?rgb565(v):d->palfmt==2?rgb5a3(v):rgba(v&255,v&255,v&255,v>>8);}
 static u32 decode(const Draw*d,unsigned x,unsigned y)
 {
-    unsigned fmt=d->format;const u8*src=(void*)d->image;unsigned bw=4,bh=4,bytes=32;
+    unsigned fmt=d->format;const u8*src=texture_input(d->image,mp_texture_source_bytes(fmt,d->w,d->h));unsigned bw=4,bh=4,bytes=32;
     if(fmt==0||fmt==8){bw=bh=8;}else if(fmt==1||fmt==2||fmt==9){bw=8;bh=4;}else if(fmt==6){bytes=64;}else if(fmt==14){bw=bh=8;}
     unsigned pitch=(d->w+bw-1)/bw;const u8*p=src+((y/bh)*pitch+x/bw)*bytes;
     unsigned ix=x%bw,iy=y%bh,k=iy*bw+ix,v;
@@ -489,9 +686,9 @@ static u32 texture_hash(const Draw*d){
 #ifdef MP_SMOKE_TEST
     ++texture_hash_checks;texture_hash_bytes+=size+(d->palette?d->palcount*2:0);
 #endif
-    u32 hash=2166136261u;const u32*words=(void*)d->image;
+    u32 hash=2166136261u;const u32*words=texture_input(d->image,size);
     for(unsigned i=0;i<size/4;++i)hash=(hash^words[i])*16777619u;
-    if(d->palette){const u16*p=(void*)d->palette;for(unsigned i=0;i<d->palcount;++i)hash=(hash^p[i])*16777619u;}
+    if(d->palette){const u16*p=texture_input(d->palette,d->palcount*2);for(unsigned i=0;i<d->palcount;++i)hash=(hash^p[i])*16777619u;}
     return hash;
 }
 void mp_native_texture_dirty(unsigned changed,unsigned bytes,unsigned cpu_written){
@@ -513,6 +710,9 @@ void mp_native_texture_dirty(unsigned changed,unsigned bytes,unsigned cpu_writte
     if(cpu_written)for(unsigned i=0;i<8;++i){EfbTexture*e=&efb_textures[i];Texture*t=&e->texture;
         if(e->copied_frame&&mp_texture_source_overlap(t->image,t->source_bytes,0,0,changed,bytes))e->copied_frame=0;
     }
+#ifdef MP_SMOKE_TEST
+    if(cpu_written&&mp_texture_source_overlap(discarded_image,discarded_image_bytes,0,0,changed,bytes))discarded_image=discarded_image_bytes=0;
+#endif
 }
 static void framebuffer_texture_visibility(const u32*q){
 #ifdef MP_SMOKE_TEST
@@ -523,6 +723,10 @@ static void framebuffer_texture_visibility(const u32*q){
 static Texture*texture(const Draw*d)
 {
     if(!d->image||!d->w||!d->h)return NULL;
+#ifdef MP_SMOKE_TEST
+    if(discarded_image&&mp_texture_source_overlap(discarded_image,discarded_image_bytes,0,0,d->image,mp_texture_source_bytes(d->format,d->w,d->h)))
+        mp_native_panic("Results scratch copy unexpectedly sampled");
+#endif
     for(unsigned i=0;i<8;++i){EfbTexture*e=&efb_textures[i];Texture*t=&e->texture;
         if(e->copied_frame==frame_number&&t->image==d->image&&t->w==d->w&&t->h==d->h&&t->format==d->format){t->frame=frame_number;return t;}}
     Texture*cached=texture_lookup(d);if(cached&&cached->generation==texture_generation){
@@ -554,9 +758,9 @@ static Texture*texture(const Draw*d)
     ++texture_count;++texture_uploads;texture_bytes+=t->tex.size;memset(t->tex.data,0,t->tex.size);
     t->image=d->image;t->palette=d->palette;t->format=d->format;t->palfmt=d->palfmt;t->palcount=d->palcount;t->w=d->w;t->h=d->h;t->hash=hash;t->source_bytes=mp_texture_source_bytes(d->format,d->w,d->h);t->generation=texture_generation;t->frame=frame_number;t->retired=0;
     mp_texture_index_add(&texture_index,texture_bucket(t),texture_count-1);
-    if(d->format==14)mp_cmpr_to_native(t->tex.data,w,h,(const void*)d->image,d->w,d->h);
+    if(d->format==14)mp_cmpr_to_native(t->tex.data,w,h,texture_input(d->image,t->source_bytes),d->w,d->h);
     else {
-        MPTextureSource source={(const void*)d->image,(const void*)d->palette,d->w,d->h,d->format,d->palfmt,d->palcount};
+        MPTextureSource source={texture_input(d->image,t->source_bytes),d->palette?texture_input(d->palette,d->palcount*2):NULL,d->w,d->h,d->format,d->palfmt,d->palcount};
         int repacked=0;
 #ifdef MP_SMOKE_TEST
         unsigned repack_start=texture_repack_validate?mp_native_ticks():0;
@@ -600,10 +804,41 @@ int mp_renderer_init(void)
     shaderProgramInit(&dual_program);shaderProgramSetVsh(&dual_program,&dual_dvlb->DVLE[0]);
     stereo_dvlb=DVLB_ParseFile((u32*)mp_stereo_shader,mp_stereo_shader_size);
     stereo_dual_dvlb=DVLB_ParseFile((u32*)mp_dual_stereo_shader,mp_dual_stereo_shader_size);
+    DVLB_s*boolean_layouts[]={dvlb,dual_dvlb,stereo_dvlb,stereo_dual_dvlb};
+    for(unsigned i=0;i<4;++i){
+        if(!boolean_layouts[i])return 0;
+        for(unsigned b=0;b<16;++b)
+            if(DVLE_GetUniformRegister(&boolean_layouts[i]->DVLE[0],lighting_boolean_names[b])!=0x68+b)
+                mp_native_panic("Shader boolean uniform layout changed");
+    }
     if(!stereo_dvlb||!stereo_dual_dvlb)return 0;
     shaderProgramInit(&stereo_program);shaderProgramSetVsh(&stereo_program,&stereo_dvlb->DVLE[0]);
     shaderProgramInit(&stereo_point_program);shaderProgramSetVsh(&stereo_point_program,&stereo_dvlb->DVLE[0]);shaderProgramSetGsh(&stereo_point_program,&stereo_dvlb->DVLE[1],3);
     shaderProgramInit(&stereo_dual_program);shaderProgramSetVsh(&stereo_dual_program,&stereo_dual_dvlb->DVLE[0]);
+    const unsigned char*clamped_data[]={mp_clamped_base,mp_clamped_dual,mp_clamped_stereo,mp_clamped_dual_stereo};
+    const unsigned clamped_sizes[]={mp_clamped_base_size,mp_clamped_dual_size,mp_clamped_stereo_size,mp_clamped_dual_stereo_size};
+    for(unsigned i=0;i<4;++i){clamped_dvlb[i]=DVLB_ParseFile((u32*)clamped_data[i],clamped_sizes[i]);if(!clamped_dvlb[i])return 0;
+        for(unsigned b=0;b<16;++b)if(DVLE_GetUniformRegister(&clamped_dvlb[i]->DVLE[0],lighting_boolean_names[b])!=0x68+b)mp_native_panic("Clamped shader boolean layout changed");}
+    for(unsigned i=0;i<6;++i){unsigned j=(i>=3?2:0)+(i%3==2);
+        shaderProgramInit(&clamped_program[i]);shaderProgramSetVsh(&clamped_program[i],&clamped_dvlb[j]->DVLE[0]);
+        if(i%3==1)shaderProgramSetGsh(&clamped_program[i],&clamped_dvlb[j]->DVLE[1],3);}
+
+#ifdef MP_SMOKE_TEST
+    const unsigned char*ref_data[]={mp_light_reference_base,mp_light_reference_dual,mp_light_reference_stereo,mp_light_reference_dual_stereo};
+    const unsigned ref_size[]={mp_light_reference_base_size,mp_light_reference_dual_size,mp_light_reference_stereo_size,mp_light_reference_dual_stereo_size};
+    for(unsigned i=0;i<4;++i){light_reference_dvlb[i]=DVLB_ParseFile((u32*)ref_data[i],ref_size[i]);if(!light_reference_dvlb[i])return 0;}
+    for(unsigned i=0;i<6;++i){unsigned ref=(i>=3?2:0)+(i%3==2);
+        shaderProgramInit(&light_reference_program[i]);shaderProgramSetVsh(&light_reference_program[i],&light_reference_dvlb[ref]->DVLE[0]);
+        if(i%3==1)shaderProgramSetGsh(&light_reference_program[i],&light_reference_dvlb[ref]->DVLE[1],3);
+    }
+    stereo_reuse_dvlb=DVLB_ParseFile((u32*)mp_stereo_reuse_shader,mp_stereo_reuse_shader_size);if(!stereo_reuse_dvlb)return 0;
+    shaderProgramInit(&stereo_reuse_program);shaderProgramSetVsh(&stereo_reuse_program,&stereo_reuse_dvlb->DVLE[0]);
+    shaderProgramSetGsh(&stereo_reuse_program,&stereo_reuse_dvlb->DVLE[1],9);
+    if(stereo_dvlb->numDVLE!=3||stereo_dvlb->DVLP.codeSize>=512)mp_native_panic("Shared stereo shader layout changed");
+    shaderProgramInit(&stereo_reuse_shared_program);
+    shaderProgramSetVsh(&stereo_reuse_shared_program,&stereo_dvlb->DVLE[0]);
+    shaderProgramSetGsh(&stereo_reuse_shared_program,&stereo_dvlb->DVLE[2],9);
+#endif
     vertices=linearAlloc(MAX_VERTICES*sizeof(Vertex));indices=linearAlloc(MAX_INDICES*sizeof(u16));layer_uv=linearAlloc(MAX_VERTICES*8);return vertices!=NULL&&indices!=NULL&&layer_uv!=NULL;
 }
 static void renderer_begin(void)
@@ -640,7 +875,7 @@ static void renderer_begin(void)
     for(unsigned i=0;i<texture_count;){if(textures[i].retired)texture_remove(i);else ++i;}
     C3D_RenderTargetClear(target,C3D_CLEAR_ALL,0x000000ff,0);C3D_FrameDrawOn(target);screen_viewport(320);
     raster_state_invalidate();
-    point_program_active=-1;bind_program(0);layer_attributes=-1;vertex_attributes(0);
+    clamped_program_current=0;point_program_active=-1;bind_program(0);layer_attributes=-1;vertex_attributes(0);
     vertex_base(0);
     for(int i=0;i<6;++i)C3D_TexEnvInit(C3D_GetTexEnv(i));
     C3D_CullFace(GPU_CULL_NONE);vertex_count=index_count=draw_count=render_vertex_count=flushed_vertices=flushed_indices=0;
@@ -683,6 +918,10 @@ void mp_native_submit(const Vertex*be,unsigned count,const Draw*state)
 {
     renderer_begin();
     Draw d;for(unsigned i=0;i<sizeof(d)/4;++i)((u32*)&d)[i]=read32((const u32*)state+i);
+    clamped_program_current=d.gpu&&read32(&((const MPGPUUniforms*)d.gpu)->post_transform);
+    if(clamped_program_current){++clamped_native_draws;clamped_native_vertices+=count;}
+    unsigned left_only=(d.blend&MP_DRAW_LEFT_CAPTURE)&&!results_capture_disable;
+    d.blend&=~MP_DRAW_LEFT_CAPTURE;
 #ifdef MP_BANNER_CAPTURE
     banner_capture_draw(be,count,&d);
 #endif
@@ -690,6 +929,9 @@ void mp_native_submit(const Vertex*be,unsigned count,const Draw*state)
     if(d.cull==3)return;
     unsigned width=d.screen_width==320?320:400;
     if(render_width!=width)screen_viewport(width);
+    /* The zig-zag stereo order can leave the right eye active. An offscreen
+     * capture must always populate the left eye read by framebuffer copies. */
+    if(left_only&&stereo_active&&stereo_eye)screen_viewport(width);
     unsigned clip[4];if(!mp_scissor_rect_width(d.scissor[0],d.scissor[1],d.scissor[2],d.scissor[3],width,clip))return;
     /* PICA's viewport origin is at the bottom; the first VRAM tile rows
      * become the upper half of the 800-pixel framebuffer (left LCD view). */
@@ -709,7 +951,9 @@ void mp_native_submit(const Vertex*be,unsigned count,const Draw*state)
     Texture*t=texture(&d);
     if(two_uv){t1=texture(&second);texture_pin=NULL;texture_pin_bytes=0;if(!t)mp_native_panic("Layered material has no base texture");}
     native_detail_end(0,measured);
+#ifndef MP_SMOKE_TEST
     bind_program(two_uv?2:d.points!=0);
+#endif
     if(state_needed(STATE_SCISSOR,memcmp(clip,raster_state.clip,sizeof(clip))!=0))C3D_SetScissor(GPU_SCISSOR_NORMAL,clip[0],clip[1],clip[2],clip[3]);
     memcpy(raster_state.clip,clip,sizeof(clip));
     float us=t?(float)t->w/t->tex.width:1,vs=t?(float)t->h/t->tex.height:1;
@@ -734,6 +978,11 @@ void mp_native_submit(const Vertex*be,unsigned count,const Draw*state)
         vertex_count+=count;index_count+=d.index_count;
     }
     native_detail_end(2,measured);
+    int reuse=0;
+#ifdef MP_SMOKE_TEST
+    reuse=!left_only&&stereo_reuse_eligible(geometry,&d);
+    bind_program(reuse?3:two_uv?2:d.points!=0);
+#endif
     measured=native_detail_begin(1);
     unsigned branch=0;
     if(d.gpu){const MPGPUUniforms*u=(const void*)d.gpu;
@@ -742,31 +991,46 @@ void mp_native_submit(const Vertex*be,unsigned count,const Draw*state)
 #ifdef MP_SMOKE_TEST
     if(shader_shortcuts_disable)branch=2;
 #endif
-    if(branch!=shader_branch_mask){C3D_BoolUnifSet(GPU_VERTEX_SHADER,0,branch&1);C3D_BoolUnifSet(GPU_VERTEX_SHADER,1,!(branch&2));shader_branch_mask=branch;}
+    /* Citro3D accepts shader uniform locations, not bool register indices:
+     * b0/b1 are locations 0x68/0x69. Passing 0/1 makes its BIT(id-0x68)
+     * shift undefined and can leave both shortcuts permanently disabled. */
+    unsigned mask=(branch&1)|((!(branch&2))<<1);
+#if defined(MP_SMOKE_TEST) && !defined(MP_AFFINE_IDENTITY_SHADER)
+    if(!lighting_uniform_disable||clamped_program_current)
+#endif
+    if(d.gpu&&!(branch&1)&&(branch&2)){
+        mask|=lighting_uniform_mask((const void*)d.gpu);
+        unit_attenuation_vertices+=unit_attenuation_current*count;
+    }
+#ifdef MP_UNLIT_AFFINE_SHADER
+    if(d.gpu&&!branch){
+        unsigned identity=!lighting_uniform_disable&&!unlit_affine_disable&&mp_affine_identity((const void*)d.gpu);
+        mask|=identity<<2;++unlit_affine_draws[identity];unlit_affine_vertices[identity]+=count;
+    }
+#endif
+    unsigned changed=(C3D_BoolUnifs[GPU_VERTEX_SHADER]^mask)&0xffff;
+    while(changed){unsigned bit=__builtin_ctz(changed);changed&=changed-1;
+        C3D_BoolUnifSet(GPU_VERTEX_SHADER,0x68+bit,!!(mask&(1u<<bit)));}
     unsigned route=(branch&1)?0:(branch&2)?2:1;++shader_shortcut_draws[route];shader_shortcut_vertices[route]+=count;
+#ifdef MP_SMOKE_TEST
+    unsigned actual=C3D_BoolUnifs[GPU_VERTEX_SHADER]&3,expected=(branch&1)|((!(branch&2))<<1);
+    if(actual!=expected)mp_native_panic("Shader boolean uniform location mismatch");
+    ++shader_boolean_checks;++shader_boolean_routes[(actual&1)?0:(actual&2)?1:2];
+    if((C3D_BoolUnifs[GPU_VERTEX_SHADER]&0xffff)!=mask)mp_native_panic("Lighting boolean uniform mismatch");
+    ++lighting_uniform_checks;++lighting_uniform_draws[!!lighting_uniform_disable];
+#endif
+    if(d.gpu){
+#ifdef MP_AFFINE_IDENTITY_SHADER
+    affine_identity_current=!lighting_uniform_disable&&!affine_identity_disable&&!(branch&1)&&mp_affine_identity((const void*)d.gpu);
+    ++affine_identity_draws[affine_identity_current];affine_identity_vertices[affine_identity_current]+=count;
+#endif
     unsigned matrix_mask=geometry?geometry->matrix_mask:vertex_matrix_mask(submitted,count);
 #ifdef MP_SMOKE_TEST
     if(palette_upload_disable)matrix_mask=0x3fffffff;
 #endif
-    if(d.gpu){const u32(*u)[4]=(void*)d.gpu;
-        const u32*material=(const void*)((const MPGPUUniforms*)d.gpu)->material0;
-        if(!material0_valid||memcmp(material0_cache,material,16)){
-            union{u32 u[4];float f[4];}m;for(unsigned j=0;j<4;++j)m.u[j]=read32(material+j);
-            C3D_FixedAttribSet(4,m.f[0],m.f[1],m.f[2],m.f[3]);memcpy(material0_cache,material,16);material0_valid=1;
-        }
-        unsigned rows=read32(&((const MPGPUUniforms*)d.gpu)->matrix_rows);int lighting=u[MP_GPU_CONFIG][0]!=0||u[MP_GPU_CONFIG+1][0]!=0;
-        for(unsigned i=0;i<MP_GPU_UNIFORMS;++i){
-        if(i<30&&(i>=rows||!(matrix_mask&(1u<<i)))){++palette_rows_skipped;continue;}
-        if(i>=30&&i<60&&(!lighting||i-30>=rows||!(matrix_mask&(1u<<(i-30))))){++palette_rows_skipped;continue;}
-        if(i>=MP_GPU_LIGHT_POS&&i<MP_GPU_SHADE){
-            if(i<MP_GPU_LIGHT_COLOR||i>=MP_GPU_LIGHT_COLOR+4){if(!lighting||!u[MP_GPU_LIGHT_COLOR+(i-MP_GPU_LIGHT_POS)%4][3])continue;}
-        }
-        if(i>=MP_GPU_AMBIENT&&i<MP_GPU_AMBIENT+2&&!u[MP_GPU_CONFIG+i-MP_GPU_AMBIENT][0])continue;
-        if(!uniform_valid[i]||u[i][0]!=uniform_cache[i][0]||u[i][1]!=uniform_cache[i][1]||u[i][2]!=uniform_cache[i][2]||u[i][3]!=uniform_cache[i][3]){
-            union{u32 u[4];float f[4];}v;for(int j=0;j<4;++j)v.u[j]=read32(&u[i][j]);
-            if(i<60)++palette_rows_sent;
-            C3D_FVUnifSet(GPU_VERTEX_SHADER,i,v.f[0],v.f[1],v.f[2],v.f[3]);memcpy(uniform_cache[i],u[i],16);uniform_valid[i]=1;
-        }}}
+    upload_gpu_uniforms((const void*)d.gpu,matrix_mask,branch);
+    if(clamped_program_current)clamped_attributes((const void*)d.gpu);
+    }
     native_detail_end(1,measured);
     measured=native_detail_begin(3);
     if(two_uv)layered_vertex_pointer(submitted,submitted_uv);else vertex_pointer(submitted);
@@ -838,9 +1102,34 @@ void mp_native_submit(const Vertex*be,unsigned count,const Draw*state)
     trace_draw(frame_number,submitted,draw_indices,d.index_count,t?t->tex.data:NULL,t1?t1->tex.data:NULL,(d.points?1:0)|(d.layer?2:0)|(stereo_active?4:0));
     if(stereo_active){
         float scale=d.convergence>0?mp_native_stereo_depth*MP_STEREO_PIXELS_PER_SLIDER/width:0;
+#ifdef MP_SMOKE_TEST
+        ++stereo_reuse_draws[reuse];stereo_reuse_vertices[reuse]+=count;
+        if(reuse){
+            /* Reuse the fallback vertex program with no eye shift, then let
+             * GS apply both shifts. Share its DVLP so switching paths does
+             * not repeatedly upload the full vertex instruction stream. */
+            if(!stereo_reuse_shared_disable)stereo_shift(0,0);
+            if(!stereo_reuse_viewport)C3D_SetViewport(0,400-width,240,2*width);
+            stereo_reuse_viewport=1;
+            C3D_SetScissor(GPU_SCISSOR_NORMAL,0,400-width,240,400+width);
+            unsigned combined_clip[4]={0,400-width,240,400+width};memcpy(raster_state.clip,combined_clip,sizeof(combined_clip));
+            float bias=-scale*d.convergence,center=200.f/width;
+            if(!stereo_reuse_parameters_reference){scale=mp_stereo_fixed_float(scale);bias=mp_stereo_fixed_float(bias);center=mp_stereo_fixed_float(center);}
+            C3D_FVUnifSet(GPU_GEOMETRY_SHADER,0,scale,bias,.5f,center);
+            draw_count+=draw_with_alpha(&d,0,d.index_count);
+            render_vertex_count+=count;native_detail_end(3,measured);submit_early_prefix();return;
+        }
+        if(stereo_reuse_viewport){
+            C3D_SetViewport(0,(stereo_eye?0:400)+(400-width)/2,240,width);stereo_reuse_viewport=0;
+        }
+#endif
         if(stereo_eye)scale=-scale;
         stereo_shift(scale,-scale*d.convergence);
         draw_count+=draw_with_alpha(&d,0,d.index_count);
+        if(left_only){
+            ++results_capture_draws;results_capture_vertices+=count;
+            render_vertex_count+=count;native_detail_end(3,measured);submit_early_prefix();return;
+        }
         /* Preserve per-eye draw order, but start each material in the eye
          * where the previous one finished. Only one viewport/scissor switch
          * is needed for a pair. Frame setup, copies and clears reset the eye. */
@@ -862,16 +1151,28 @@ void mp_native_submit(const Vertex*be,unsigned count,const Draw*state)
         render_vertex_count+=count;
     }else draw_count+=draw_with_alpha(&d,0,d.index_count);
     render_vertex_count+=count;native_detail_end(3,measured);
+    submit_early_prefix();
 }
 #ifdef MP_SMOKE_TEST
 #include "point_verify.h"
 #include "cull_verify.h"
 #include "blend_verify.h"
 #include "raster_state_verify.h"
+#include "efb_discard_verify.h"
+#include "results_capture_verify.h"
 #include "layered_verify.h"
 #include "shield_verify.h"
 #include "stereo_verify.h"
 #include "shader_verify.h"
+#include "clamped_verify.h"
+#include "lighting_verify.h"
+#ifdef MP_UNLIT_AFFINE_SHADER
+#include "unlit_affine_verify.h"
+#endif
+#ifdef MP_AFFINE_IDENTITY_SHADER
+#include "affine_verify.h"
+#endif
+#include "render_benchmark.h"
 #endif
 void mp_renderer_end(void){if(frame_pending)renderer_begin();if(!frame_active)return;
 #ifdef MP_BANNER_CAPTURE
@@ -879,11 +1180,21 @@ void mp_renderer_end(void){if(frame_pending)renderer_begin();if(!frame_active)re
 #endif
 #ifdef MP_SMOKE_TEST
     if(shader_verify)verify_shader_paths();
+    if(clamped_verify)verify_clamped_paths();
+    if(lighting_verify)verify_lighting_paths();
+#ifdef MP_UNLIT_AFFINE_SHADER
+    if(unlit_affine_verify)verify_unlit_affine_paths();
+#endif
+#ifdef MP_AFFINE_IDENTITY_SHADER
+    if(affine_verify)verify_affine_paths();
+#endif
     if(stereo_verify)verify_stereo();
     if(native_geometry_lru_validate)native_geometry_check_lru();
     if(layered_verify)verify_layered_material();
     if(shield_verify)verify_shield_material();
     if(raster_state_verify)verify_raster_state();
+    if(efb_discard_verify)verify_efb_discard();
+    if(results_capture_verify)verify_results_capture();
     if(point_verify)verify_points();
     if(cull_verify)verify_culling();
     if(blend_verify)verify_blending();
@@ -897,11 +1208,26 @@ void mp_renderer_end(void){if(frame_pending)renderer_begin();if(!frame_active)re
 #endif
     if(stereo_active){eye_output[0]->used=true;eye_output[1]->used=true;}
     flush_dynamic();C3D_FrameEnd(0);gpu_queue_pending=1;frame_active=0;
-    if(frame_number%60==0){char text[160];snprintf(text,sizeof(text),"GPU/60 frames wait=%.2f ms; completed queue mean=%.2f ms (%u queues)\n",gpu_wait_ticks*1000.0/SYSCLOCK_ARM11/60,gpu_queue_samples?gpu_draw_ms/gpu_queue_samples:0,gpu_queue_samples);mp_native_log(text);gpu_wait_ticks=0;gpu_draw_ms=0;gpu_queue_samples=0;}
+    if(frame_number%60==0){char text[160];snprintf(text,sizeof(text),"GPU/60 frames wait=%.2f ms; completed tail mean=%.2f ms (%u queues)\n",gpu_wait_ticks*1000.0/SYSCLOCK_ARM11/60,gpu_queue_samples?gpu_draw_ms/gpu_queue_samples:0,gpu_queue_samples);mp_native_log(text);gpu_wait_ticks=0;gpu_draw_ms=0;gpu_queue_samples=0;}
+    if(frame_number%60==0){static unsigned starts;static u64 wait,span;char text[180];
+        snprintf(text,sizeof(text),"Early GPU/60 frames prefixes=%u wait=%.2f ms span=%.2f ms (span includes CPU overlap)\n",
+            mp_early_queue_starts-starts,(mp_early_queue_wait_ticks-wait)*1000.0/SYSCLOCK_ARM11/60,(mp_early_queue_span_ticks-span)*1000.0/SYSCLOCK_ARM11/60);
+        mp_native_log(text);starts=mp_early_queue_starts;wait=mp_early_queue_wait_ticks;span=mp_early_queue_span_ticks;}
+    if(frame_number%120==0){static unsigned runs,appends,capacity;char text[144];
+        snprintf(text,sizeof(text),"GPU batches/120 frames runs=%u appends=%u queue-capacity fallbacks=%u\n",
+            mp_early_queue_runs-runs,mp_early_queue_appends-appends,mp_early_queue_capacity-capacity);
+        mp_native_log(text);runs=mp_early_queue_runs;appends=mp_early_queue_appends;capacity=mp_early_queue_capacity;}
+    if(frame_number%120==0){char text[120];snprintf(text,sizeof(text),"Results captures: unused eye draws=%u vertices=%u omitted (cumulative)\n",results_capture_draws,results_capture_vertices);mp_native_log(text);}
+#ifdef MP_ASYNC_PRESENTATION
+    if(frame_number%120==0){char text[128];
+        snprintf(text,sizeof(text),"Deferred GPU presentations=%u retired=%u\n",mp_early_queue_deferrals,mp_early_queue_retirements);mp_native_log(text);}
+#endif
     if(frame_number%60==0){char text[150];snprintf(text,sizeof(text),"GPU geometry hits=%u bytes=%u dynamic vertices=%u EFB copies=%u\n",native_geometry_hits,native_geometry_bytes,vertex_count,efb_gpu_copies);mp_native_log(text);}
     if(frame_number%60==0){char text[140];snprintf(text,sizeof(text),"Textures=%u bytes=%u barriers=%u stream barriers=%u linear free=%u\n",texture_count,texture_bytes,texture_barriers,stream_barriers,(unsigned)linearSpaceFree());mp_native_log(text);}
     if(frame_number%300==0){char text[100];snprintf(text,sizeof(text),"Texture uploads=%u capacity evictions=%u\n",texture_uploads,texture_evictions);mp_native_log(text);}
+    if(frame_number%300==0){char text[196];snprintf(text,sizeof(text),"Framebuffer CPU copies=%u pixels=%u discarded=%u readback=%.2f ms conversion=%.2f ms\n",efb_cpu_copies,efb_cpu_output_pixels,efb_discarded_copies,efb_readback_ticks/40500.0,efb_conversion_ticks/40500.0);mp_native_log(text);}
     if(frame_number%300==0){char text[200];snprintf(text,sizeof(text),"Shader vertices constant=%u unlit=%u full=%u; palette rows sent=%u skipped=%u\n",shader_shortcut_vertices[0],shader_shortcut_vertices[1],shader_shortcut_vertices[2],palette_rows_sent,palette_rows_skipped);mp_native_log(text);}
+    if(frame_number%300==0){char text[128];snprintf(text,sizeof(text),"Unit attenuation lights=%u vertex evaluations skipped=%u\n",unit_attenuation_lights,unit_attenuation_vertices);mp_native_log(text);}
     if(frame_number%60==0){char text[100];snprintf(text,sizeof(text),"GPU command peak=%u bytes, capacity=%u, barriers=%u\n",command_peak_bytes,COMMAND_BUFFER_BYTES,command_barriers);mp_native_log(text);}
 }
 void mp_native_texture_invalidate(void){++texture_generation;}
@@ -1038,7 +1364,22 @@ void mp_native_efb_copy(const u32*request)
         case 0x22:case 0x23:case 0x27:case 0x28:case 0x29:case 0x2a:case 0x2b:case 0x2c:break;
         default:mp_native_panic("Unsupported GX framebuffer copy format");}
     for(unsigned i=0;i<8;++i)if(mp_texture_source_overlap(efb_textures[i].texture.image,efb_textures[i].texture.source_bytes,0,0,q[0],mp_texture_source_bytes(fmt,w,h)))efb_textures[i].copied_frame=0;
-    if(q[13]&&gpu_efb_copy(q)){framebuffer_texture_visibility(q);goto clear;}
+    if(q[13]==2&&q[8]
+#ifdef MP_SMOKE_TEST
+       &&!efb_discard_disable
+#endif
+    ){
+#ifdef MP_SMOKE_TEST
+        discarded_image=q[0];discarded_image_bytes=mp_texture_source_bytes(fmt,w,h);
+#endif
+        ++efb_discarded_copies;goto clear;
+    }
+#ifdef MP_SMOKE_TEST
+    if(mp_texture_source_overlap(discarded_image,discarded_image_bytes,0,0,q[0],mp_texture_source_bytes(fmt,w,h)))discarded_image=discarded_image_bytes=0;
+#endif
+    if(q[13]==1&&gpu_efb_copy(q)){framebuffer_texture_visibility(q);goto clear;}
+    ++efb_cpu_copies;efb_cpu_output_pixels+=w*h;
+    unsigned readback_start=mp_native_ticks();
 #ifdef MP_SMOKE_TEST
     ++framebuffer_cpu_calls;framebuffer_cpu_pixels+=(unsigned long long)w*h;
 #endif
@@ -1050,9 +1391,10 @@ void mp_native_efb_copy(const u32*request)
      * FrameBegin waits for both the draw and transfer before CPU conversion. */
     bool used=target->used;target->used=false;C3D_FrameEnd(0);MP_AUDIO_TRACE(2,C3D_FrameBegin(0));target->used=used;
     GSPGPU_InvalidateDataCache(efb_pixels,400*240*4);
+    unsigned conversion_start=mp_native_ticks();efb_readback_ticks+=(u32)(conversion_start-readback_start);
     unsigned converted=0;
 #ifdef MP_SMOKE_TEST
-    unsigned verify=efb_rgb565_validate&&fmt==4,start=verify?mp_native_ticks():0;
+    unsigned verify=(efb_rgb565_validate&&fmt==4)||(efb_rgb5a3_validate&&fmt==5),start=verify?mp_native_ticks():0;
 #endif
     if(fmt==4){
 #ifdef MP_SMOKE_TEST
@@ -1060,7 +1402,14 @@ void mp_native_efb_copy(const u32*request)
 #endif
         converted=mp_efb_rgb565((void*)q[0],efb_pixels,w,h,q[1],q[2],q[3],q[4],render_width);
     }
+    if(fmt==5){
+#ifdef MP_SMOKE_TEST
+        if(!efb_rgb5a3_disable)
+#endif
+        converted=mp_efb_rgb5a3((void*)q[0],efb_pixels,w,h,q[1],q[2],q[3],q[4],render_width);
+    }
     if(!converted)efb_copy_cpu_reference(q,efb_pixels,render_width);
+    efb_conversion_ticks+=(u32)(mp_native_ticks()-conversion_start);
 #ifdef MP_SMOKE_TEST
     if(verify){
         unsigned primary_ticks=mp_native_ticks()-start,size=((w+3)/4)*((h+3)/4)*32;
@@ -1068,11 +1417,14 @@ void mp_native_efb_copy(const u32*request)
         u32 otherq[14];memcpy(otherq,q,sizeof(otherq));otherq[0]=(u32)other;
         start=mp_native_ticks();
         if(converted)efb_copy_cpu_reference(otherq,efb_pixels,render_width);
-        else if(!mp_efb_rgb565(other,efb_pixels,w,h,q[1],q[2],q[3],q[4],render_width))mp_native_panic("Framebuffer comparison extent rejected");
+        else if(!(fmt==4?mp_efb_rgb565(other,efb_pixels,w,h,q[1],q[2],q[3],q[4],render_width):mp_efb_rgb5a3(other,efb_pixels,w,h,q[1],q[2],q[3],q[4],render_width)))mp_native_panic("Framebuffer comparison extent rejected");
         unsigned other_ticks=mp_native_ticks()-start;
-        if(memcmp((void*)q[0],other,size))mp_native_panic("RGB565 framebuffer copy differs from original conversion");
-        efb_rgb565_ticks[converted?0:1]+=primary_ticks;efb_rgb565_ticks[converted?1:0]+=other_ticks;
-        ++efb_rgb565_checks;efb_rgb565_pixels+=w*h;free(other);
+        if(memcmp((void*)q[0],other,size))mp_native_panic("16-bit framebuffer copy differs from original conversion");
+        unsigned*ticks=fmt==4?efb_rgb565_ticks:efb_rgb5a3_ticks;
+        ticks[converted?0:1]+=primary_ticks;ticks[converted?1:0]+=other_ticks;
+        if(fmt==4){++efb_rgb565_checks;efb_rgb565_pixels+=w*h;}
+        else{++efb_rgb5a3_checks;efb_rgb5a3_pixels+=w*h;}
+        free(other);
     }
 #endif
     framebuffer_texture_visibility(q);
@@ -1097,4 +1449,4 @@ clear:
     }
 }
 void mp_renderer_counts(unsigned*v,unsigned*d){*v=render_vertex_count;*d=draw_count;}
-void mp_renderer_exit(void){C3D_Fini();for(unsigned i=0;i<8;++i)if(efb_textures[i].texture.tex.data)C3D_TexDelete(&efb_textures[i].texture.tex);if(efb_capture.data)C3D_TexDelete(&efb_capture);for(unsigned i=0;i<NATIVE_GEOMETRY_ENTRIES;++i)native_geometry_free(&native_geometry[i]);for(unsigned i=0;i<texture_count;++i)C3D_TexDelete(&textures[i].tex);linearFree(efb_pixels);linearFree(indices);linearFree(vertices);linearFree(layer_uv);shaderProgramFree(&point_program);shaderProgramFree(&program);shaderProgramFree(&dual_program);shaderProgramFree(&stereo_program);shaderProgramFree(&stereo_point_program);shaderProgramFree(&stereo_dual_program);DVLB_Free(dvlb);DVLB_Free(dual_dvlb);DVLB_Free(stereo_dvlb);DVLB_Free(stereo_dual_dvlb);}
+void mp_renderer_exit(void){C3D_Fini();for(unsigned i=0;i<8;++i)if(efb_textures[i].texture.tex.data)C3D_TexDelete(&efb_textures[i].texture.tex);if(efb_capture.data)C3D_TexDelete(&efb_capture);for(unsigned i=0;i<NATIVE_GEOMETRY_ENTRIES;++i)native_geometry_free(&native_geometry[i]);for(unsigned i=0;i<texture_count;++i)C3D_TexDelete(&textures[i].tex);linearFree(efb_pixels);linearFree(indices);linearFree(vertices);linearFree(layer_uv);shaderProgramFree(&point_program);shaderProgramFree(&program);shaderProgramFree(&dual_program);shaderProgramFree(&stereo_program);shaderProgramFree(&stereo_point_program);shaderProgramFree(&stereo_dual_program);DVLB_Free(dvlb);DVLB_Free(dual_dvlb);DVLB_Free(stereo_dvlb);DVLB_Free(stereo_dual_dvlb);for(unsigned i=0;i<6;++i)shaderProgramFree(&clamped_program[i]);for(unsigned i=0;i<4;++i)DVLB_Free(clamped_dvlb[i]);}

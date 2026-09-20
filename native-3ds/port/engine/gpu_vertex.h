@@ -10,5 +10,9 @@ enum { MP_GPU_POS=0, MP_GPU_NORMAL=30, MP_GPU_PROJECTION=60,
        MP_GPU_CLAMP=94, MP_GPU_UNIFORMS=95 };
 /* A fixed vertex attribute carries the changing material without consuming
  * another of PICA's 96 float uniforms or rewriting cached vertex buffers. */
-typedef struct { float value[MP_GPU_UNIFORMS][4];unsigned matrix_rows;float material0[4];unsigned constant_color; } MPGPUUniforms;
+typedef struct { float value[MP_GPU_UNIFORMS][4];unsigned matrix_rows;float material0[4];unsigned constant_color;
+    /* Only the separate clamped program reads fixed attributes 7 and 8.
+     * Ordinary shaders keep their exact instruction stream and 95 uniforms. */
+    unsigned post_transform;float post_scale[4],post_bias[4];
+} MPGPUUniforms;
 #endif

@@ -1,5 +1,6 @@
 #include <sysdolphin/baselib/cobj.h>
 #include <sysdolphin/baselib/gobj.h>
+#include <melee/cm/camera.h>
 
 /* The original camera remains unchanged: zoom/tracking and game rules keep
  * their 4:3 behavior. Only the world projection and visibility frustum expand.
@@ -9,6 +10,14 @@
  * widescreen code (Dan Salvato, mirrorbender), using 5:3 instead of 16:9. */
 unsigned mp_display_expanded;
 unsigned mp_display_stereo;
+void mp_display_results_capture(HSD_GObj*gobj,int pass){
+    extern unsigned mp_gx_left_capture(unsigned);
+    /* These two original offscreen cameras are copied from the left EFB,
+     * then erased in BOTH eyes. Visible results cameras remain stereo. */
+    unsigned previous=mp_gx_left_capture(1);
+    Camera_800313E0(gobj,pass);
+    mp_gx_left_capture(previous);
+}
 static HSD_CObj* world_camera;
 void mp_display_set_world(HSD_CObj* cobj){
     if(!cobj){extern void mp_gx_invalidate_sources(void);mp_gx_invalidate_sources();}

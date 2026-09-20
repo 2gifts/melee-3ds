@@ -6,9 +6,14 @@ static void verify_shader_paths(void){
     C3D_RenderTarget*saved=target,*test=C3D_RenderTargetCreate(240,800,GPU_RB_RGBA8,(C3D_DEPTHTYPE){.__i=GPU_RB_DEPTH24_STENCIL8});
     u8*readback=linearAlloc(240*800*4),*copy=malloc(240*800*4);
     if(!test||!readback||!copy)mp_native_panic("Shader verification allocation failed");
-    unsigned shortcuts=shader_shortcuts_disable,palettes=palette_upload_disable;
+    unsigned shortcuts=shader_shortcuts_disable,palettes=palette_upload_disable,scope=uniform_scope_disable,lighting=lighting_uniform_disable;
     const u16 ix[6]={0,0x100,0x200,0,0x200,0x300};target=test;
+    unsigned routes[2][3]={{0}},uniform_checks[2],uniform_writes[2];
     for(unsigned mode=0;mode<2;++mode){
+        lighting_uniform_disable=mode==0;
+        unsigned before[3];memcpy(before,shader_boolean_routes,sizeof(before));
+        unsigned checks=uniform_scope_checks,writes=uniform_scope_writes;
+        uniform_scope_disable=mode==0||(shader_verify&8);
         shader_shortcuts_disable=mode==0||(shader_verify&4);palette_upload_disable=mode==0||(shader_verify&2);
         C3D_RenderTargetClear(test,C3D_CLEAR_ALL,0x000000ff,0);C3D_FrameDrawOn(test);screen_viewport(400);raster_state_invalidate();
         for(unsigned item=0;item<8;++item){
@@ -37,12 +42,19 @@ static void verify_shader_paths(void){
             for(unsigned k=0;k<sizeof(d)/4;++k)((u32*)&d)[k]=__builtin_bswap32(((u32*)&d)[k]);
             mp_native_submit(v,4,&d);
         }
+        for(unsigned i=0;i<3;++i)routes[mode][i]=shader_boolean_routes[i]-before[i];
+        uniform_checks[mode]=uniform_scope_checks-checks;uniform_writes[mode]=uniform_scope_writes-writes;
+        unsigned expected[3]={2,2,4};if(mode==0||(shader_verify&4)){expected[0]=expected[1]=0;expected[2]=8;}
+        if(memcmp(routes[mode],expected,sizeof(expected)))mp_native_panic("Shader fixture did not activate the requested programs");
         flush_dynamic();C3D_SyncDisplayTransfer(test->frameBuf.colorBuf,GX_BUFFER_DIM(240,800),(u32*)readback,GX_BUFFER_DIM(240,800),0);
         C3D_FrameEnd(0);C3D_FrameBegin(0);GSPGPU_InvalidateDataCache(readback,240*800*4);
         for(unsigned i=0;i<240*800*4;++i)copy[i]=((volatile u8*)readback)[i];
         char path[90];snprintf(path,sizeof(path),"sdmc:/3ds/melee/shader-fixture-%u.bin",mode);
         FILE*f=fopen(path,"wb");if(!f)mp_native_panic("Shader verification output failed");fwrite(copy,1,240*800*4,f);fclose(f);
     }
+    FILE*report=fopen("sdmc:/3ds/melee/shader-route-report.json","wb");
+    if(!report)mp_native_panic("Shader route report failed");
+    fprintf(report,"{\"reference\":[%u,%u,%u],\"candidate\":[%u,%u,%u],\"uniform_checks\":[%u,%u],\"uniform_writes\":[%u,%u]}\n",routes[0][0],routes[0][1],routes[0][2],routes[1][0],routes[1][1],routes[1][2],uniform_checks[0],uniform_checks[1],uniform_writes[0],uniform_writes[1]);fclose(report);
     C3D_FrameEnd(0);C3D_RenderTargetDelete(test);linearFree(readback);free(copy);C3D_FrameBegin(0);
-    shader_shortcuts_disable=shortcuts;palette_upload_disable=palettes;target=saved;C3D_FrameDrawOn(target);screen_viewport(320);raster_state_invalidate();shader_verify=0;
+    shader_shortcuts_disable=shortcuts;palette_upload_disable=palettes;uniform_scope_disable=scope;lighting_uniform_disable=lighting;target=saved;C3D_FrameDrawOn(target);screen_viewport(320);raster_state_invalidate();shader_verify=0;
 }

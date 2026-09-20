@@ -5,16 +5,18 @@ from gameplay_test import ROOT,symbols,packet,receive
 def observe(control=None):
     with socket.create_connection(('127.0.0.1',24689),3) as sock:
         sock.settimeout(5);packet(sock,'?');receive(sock)
-        # Snapshot aligned 512-byte blocks while paused. CSS's icons, doors
-        # and linked objects otherwise cause hundreds of tiny round trips.
+        # Snapshot complete mapped pages while paused. The pinned Azahar
+        # stub has a 10,000-byte reply buffer: 4 KiB plus hex encoding fits.
+        # Staying page-aligned avoids spanning an unmapped adjacent page.
+        # CSS's nearby linked objects otherwise cause many tiny round trips.
         blocks={}
         def read(a,n):
             result=b''
             while n:
-                base=a&~511;offset=a-base;size=min(n,512-offset)
+                base=a&~4095;offset=a-base;size=min(n,4096-offset)
                 if base not in blocks:
-                    packet(sock,f'm{base:x},200');blocks[base]=bytes.fromhex(receive(sock))
-                    if len(blocks[base])!=512:raise RuntimeError(f'Invalid menu block {base:x}')
+                    packet(sock,f'm{base:x},1000');blocks[base]=bytes.fromhex(receive(sock))
+                    if len(blocks[base])!=4096:raise RuntimeError(f'Invalid menu page {base:x}')
                 result+=blocks[base][offset:offset+size];a+=size;n-=size
             return result
         def word(a,endian='big'):return int.from_bytes(read(a,4),endian)

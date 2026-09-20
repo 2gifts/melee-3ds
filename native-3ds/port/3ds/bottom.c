@@ -1,6 +1,7 @@
 #include <3ds.h>
 #include <citro3d.h>
 #include <string.h>
+#include <stdio.h>
 #include "bottom.h"
 
 extern void mp_game_bottom_snapshot(MPBottomState*);
@@ -11,6 +12,7 @@ const uint16_t* mp_native_bottom_pixels=pixels;
 static MPBottomState previous,match;
 static unsigned last_vblank=~0u,last_fps=~0u,last_view=~0u,show_fps,guide,dirty=1,ready;
 unsigned mp_bottom_redraws,mp_bottom_draw_ticks;
+unsigned mp_native_context_serial;
 #ifdef MP_SMOKE_TEST
 volatile unsigned mp_test_bottom_touch; /* packed x | y<<16, consumed once */
 volatile unsigned mp_test_bottom_disabled;
@@ -47,6 +49,18 @@ void mp_native_bottom_frame(unsigned fps,unsigned expanded,unsigned touch,unsign
     MPBottomState state;mp_game_bottom_snapshot(&state);
     /* The bridge changes ARM endianness, not the bytes of pointed-to data. */
     unsigned* words=(unsigned*)&state;for(unsigned i=0;i<sizeof(state)/4;++i)words[i]=__builtin_bswap32(words[i]);
+    /* Reuse the HUD snapshot instead of traversing fighter objects again.
+     * Record scene/roster changes so automatic performance logs can identify
+     * the actual workload without asking the player to transcribe it. */
+    static unsigned context[12],context_ready;
+    unsigned current[12]={state.scene,state.mode,state.stage,state.items};
+    for(unsigned i=0;i<4;++i){current[4+i*2]=state.players[i].kind;current[5+i*2]=state.players[i].character;}
+    if(!context_ready||memcmp(context,current,sizeof(context))){
+        char text[224];
+        snprintf(text,sizeof(text),"Render context: scene=%u mode=%u stage=%u items=%u players=%u:%u,%u:%u,%u:%u,%u:%u\n",
+            current[0],current[1],current[2],current[3],current[4],current[5],current[6],current[7],current[8],current[9],current[10],current[11]);
+        mp_native_log(text);memcpy(context,current,sizeof(context));context_ready=1;++mp_native_context_serial;
+    }
     if(state.scene==2||state.scene==3||state.scene==4||state.scene==44)match=state;
     else if(state.scene==5){unsigned scene=state.scene;state=match;state.scene=scene;}
     /* Close the guide at scene changes so it never masks a new match. */

@@ -7,24 +7,36 @@
 volatile unsigned shade_legacy_clamp;
 #define MP_SHADE_DEFERRED_CLAMPS (!shade_legacy_clamp)
 #include "gx_shade.h"
+#if defined(MP_CLAMPED_SHADE_TEST) || defined(MP_CLAMPED_SHADE)
+#include "clamped_shade.h"
+#endif
 #include "gpu_vertex.h"
+extern int mp_be_memcmp_block(const void*,const void*,size_t);
+#define MP_BOUNDS_KEY_COMPARE mp_be_memcmp_block
 #include "geometry_bounds.h"
 #include "vertex_decode.h"
 #include "primitive_expand.h"
 #include "layered_material.h"
 #include "shield_material.h"
 #include "stereo_config.h"
+#include "draw_flags.h"
 /* Constant-size matrix/color copies can be inlined safely in BE8. Any
  * remaining library call is redirected by the object converter. */
 #undef memcpy
 #undef memset
 #define memcpy(d,s,n) __builtin_memcpy(d,s,n)
 #define memset(d,c,n) __builtin_memset(d,c,n)
+#ifdef MP_MATERIAL_PROGRAM_TEST
+#include "material_program.h"
+#endif
 
 typedef MPGPUVertex RenderVertex;
 typedef struct {u32 image,width,height,format,palette,palette_format,palette_count;
     u32 depth_test,depth_write,depth_func,blend,src,dst,cull,alpha_ref,color_mask,texture_rgb,texture_alpha,wrap_s,wrap_t,gpu,indices,index_count,geometry_id,scissor[4],points,point_size,point_offset,screen_width,layer;float convergence;} DrawState;
 _Static_assert(sizeof(DrawState)==34*4,"GX draw bridge layout");
+_Static_assert(__builtin_offsetof(DrawState,gpu)==20*4 && __builtin_offsetof(DrawState,indices)==21*4 &&
+    __builtin_offsetof(DrawState,index_count)==22*4 && __builtin_offsetof(DrawState,geometry_id)==23*4 &&
+    __builtin_offsetof(DrawState,layer)==32*4,"Owned draw pointer offsets");
 extern void mp_platform_submit(const RenderVertex*,unsigned,const DrawState*);
 typedef struct {GXCompCnt count;GXCompType type;u8 frac;} Format;
 static GXAttrType descriptors[26];
@@ -42,6 +54,7 @@ static GXTlutObj palettes[32];
 static GXLightObj lights[8];
 static DrawState draw={.depth_test=1,.depth_write=1,.depth_func=GX_LEQUAL,.alpha_ref=GX_ALWAYS|(GX_ALWAYS<<13),.scissor={0,0,640,480},.screen_width=320};
 static unsigned active_texture=0,active_coord,texgens,num_chans,num_stages;
+static unsigned left_capture;
 static u32 tev_configuration[16][30];
 static u32 texgen_configuration[8][5];
 static u32 channel_configuration[6][6],alpha_configuration[5];
@@ -66,8 +79,51 @@ static unsigned raster_channels;
 static int flat_shading;static float flat_color[4];
 static MPShadePlan shade_plan;
 typedef struct {u32 stages,flat;GXColor material[2],colors[4],konst[4];float alpha[2];} ShadeKey;
-typedef struct {u32 stamp,hash;ShadeKey key;u32 config[16][30];float flat_color[4];MPShadePlan plan;} ShadeCache;
+typedef struct {u32 stamp,hash;ShadeKey key;u32 config[16][30];float flat_color[4];MPShadePlan plan;
+#if defined(MP_CLAMPED_SHADE_TEST) || defined(MP_CLAMPED_SHADE)
+    MPClampedPlan clamped;
+#endif
+} ShadeCache;
 static ShadeCache shade_cache[256];
+#ifdef MP_MATERIAL_PROGRAM_TEST
+typedef struct {u32 program;ShadeKey key;} ShadeBindingKey;
+typedef struct {u32 stamp,hash;ShadeBindingKey key;float flat_color[4];MPShadePlan plan;MPClampedPlan clamped;} ShadeBinding;
+_Static_assert(sizeof(ShadeBindingKey)==60,"Packed material binding key");
+static MPMaterialPrograms material_programs;
+static ShadeBinding material_bindings[1024];
+static unsigned material_bindings_reset;
+volatile unsigned shade_program_disable=1;
+unsigned shade_program_hits,shade_program_misses,shade_binding_hits,shade_binding_misses,shade_program_checks;
+#endif
+#if defined(MP_CLAMPED_SHADE_TEST) || defined(MP_CLAMPED_SHADE)
+static MPClampedPlan clamped_plan;
+#ifdef MP_RENDER_REWORK_TEST
+static MPGeometryPlaneCache geometry_planes;
+volatile unsigned geometry_planes_disable,geometry_planes_validate;
+unsigned geometry_planes_checks;
+static int geometry_outside(const MPGeometryBounds*b,const MPGPUUniforms*u,float strength,float convergence){
+    if(geometry_planes_disable)return mp_bounds_outside_stereo(b,u,strength,convergence);
+    int result=mp_bounds_outside_cached(&geometry_planes,b,u,strength,convergence);
+#ifdef MP_RENDER_REWORK_TEST
+    if(geometry_planes_validate){++geometry_planes_checks;
+        if(result!=mp_bounds_outside_stereo(b,u,strength,convergence))HSD_Panic(__FILE__,__LINE__,"Cached clip planes disagree");}
+#endif
+    return result;
+}
+#else
+/* Exact-key clipping reuse lost to the ordinary calculation in ARM tests.
+ * Keep it available only for reproducing that development comparison. */
+#define geometry_outside mp_bounds_outside_stereo
+#endif
+
+#ifdef MP_CLAMPED_SHADE_TEST
+volatile unsigned shade_clamped_disable=1,shade_clamped_validate;
+unsigned shade_clamped_checks;
+#else
+#define shade_clamped_disable 0
+#endif
+unsigned shade_clamped_hits,shade_clamped_vertices;
+#endif
 static unsigned shade_clock,shade_hits,shade_misses,shade_checks;
 static volatile unsigned shade_validate;
 static unsigned primitive_vertices[8];
@@ -105,7 +161,7 @@ volatile unsigned mp_geometry_cull=1;
 unsigned mp_geometry_cull_checks,mp_geometry_cull_draws,mp_geometry_cull_vertices;
 typedef struct GeometrySource {struct GeometrySource*next;const u8*source;u8*copy;unsigned size,refs,epoch,changed;const void*base;} GeometrySource;
 typedef struct {
-    const void*list;unsigned bytes,stamp;GeometryKey key;
+    const void*list;unsigned bytes,stamp,early_hint;GeometryKey key;
     GeometrySource*source[VERTEX_FIELDS+1];GeometryChunk*first,*last;
 } GeometryCache;
 #define GEOMETRY_SETS 256
@@ -145,6 +201,11 @@ static void source_release(GeometrySource*s){
 volatile unsigned geometry_source_grow=1;
 unsigned geometry_source_growths;
 static unsigned geometry_next_id;
+/* Nonzero geometry IDs refer to immutable GeometryChunk payloads. Native
+ * readers may borrow them until the retirement barrier below. Keep this
+ * versioned contract so an old engine archive cannot enable zero-copy. */
+const unsigned mp_geometry_borrow_contract=1;
+extern void mp_platform_geometry_retire(void);
 static volatile unsigned geometry_validate;
 static unsigned geometry_checks;
 static GeometryChunk*geometry_check;
@@ -158,6 +219,7 @@ static volatile unsigned geometry_budget=6*1024*1024;
 void mp_gx_configure_cache(unsigned bytes){geometry_budget=bytes>=12*1024*1024?12*1024*1024:6*1024*1024;}
 static void geometry_clear(GeometryCache*e){
     for(unsigned i=0;i<VERTEX_FIELDS+1;++i)source_release(e->source[i]);
+    if(e->first)mp_platform_geometry_retire();
     GeometryChunk*p=e->first;while(p){GeometryChunk*next=p->next;geometry_bytes-=p->bytes;mp_platform_free(p);p=next;}
     memset(e,0,sizeof(*e));
 }
@@ -355,14 +417,24 @@ void GXSetDrawDone(void){
         OSReport("Geometry sources compares=%u reuses=%u bytes=%u shared ranges=%u\n",geometry_source_compares,geometry_source_reuses,geometry_source_bytes,geometry_range_shares);
         OSReport("Shared geometry snapshot growths=%u\n",geometry_source_growths);
         OSReport("Off-screen geometry checks=%u skipped draws=%u vertices=%u\n",mp_geometry_cull_checks,mp_geometry_cull_draws,mp_geometry_cull_vertices);
+        extern unsigned geometry_early_attempts,geometry_early_rejected,gpu_clamped_draws,gpu_clamped_vertices;
+        OSReport("Early visibility attempts=%u rejected=%u\n",geometry_early_attempts,geometry_early_rejected);
+#ifdef MP_RENDER_REWORK_TEST
+        OSReport("Development clip cache hits=%u misses=%u\n",geometry_planes.hits,geometry_planes.misses);
+#endif
+        OSReport("GPU clamped materials draws=%u decoded-vertices=%u\n",gpu_clamped_draws,gpu_clamped_vertices);
         OSReport("Profile/60 frames list=%u submit=%u copy=%u audio=%u ticks\n",profile_lists,profile_submit,profile_copy,mp_profile_audio);
         OSReport("Material cache hits=%u misses=%u checks=%u\n",shade_hits,shade_misses,shade_checks);
+#if defined(MP_CLAMPED_SHADE_TEST) || defined(MP_CLAMPED_SHADE)
+        OSReport("Compiled materials selections=%u vertices=%u\n",shade_clamped_hits,shade_clamped_vertices);
+#endif
         profile_lists=profile_submit=profile_copy=mp_profile_audio=0;
     }
     gpu_vertices=flat_vertices=affine_vertices=slow_vertices=0;if(done_callback)done_callback();mp_platform_frame();
 }
 void GXCopyTex(void*dest,GXBool clear){copy_texture(dest,clear,0);}
 void mp_gx_copy_texture_only(void*dest,int clear){copy_texture(dest,clear,1);}
+void mp_gx_copy_clear_only(void*dest,int clear){copy_texture(dest,clear,2);}
 void GXDrawDone(void){GXSetDrawDone();}
 static unsigned word_be(const u8*p){return(p[0]<<24)|(p[1]<<16)|(p[2]<<8)|p[3];}
 static unsigned component_size(GXCompType t){return(t==GX_U8||t==GX_S8)?1:(t==GX_U16||t==GX_S16)?2:4;}
@@ -382,12 +454,13 @@ static void submit_geometry(const RenderVertex*v,unsigned count,const u16*indice
     /* GX face culling applies to polygon primitives only. CPU-expanded
      * lines and geometry-shader points have no original front/back face. */
     unsigned cull=draw.cull,blend=draw.blend;if(points||batch_lines)draw.cull=GX_CULL_NONE;
-    draw.blend=blend|(pixel_format==GX_PF_RGBA6_Z24?0x10000:0);
+    draw.blend=blend|(pixel_format==GX_PF_RGBA6_Z24?MP_DRAW_RGBA6_Z24:0)|(left_capture?MP_DRAW_LEFT_CAPTURE:0);
     u32 start=mp_platform_ticks();mp_platform_submit(v,count,&draw);profile_submit+=mp_platform_ticks()-start;draw.cull=cull;draw.blend=blend;
 }
 static void flush(void){if(batch_index_count){geometry_capture(batch,batch_count,batch_indices,batch_index_count);submit_geometry(batch,batch_count,batch_indices,batch_index_count,0,batch_points);}batch_count=0;batch_index_count=0;}
 void mp_gx_display_width(unsigned width){flush();draw.screen_width=width;}
 void mp_gx_camera_convergence(float convergence){flush();draw.convergence=convergence;}
+unsigned mp_gx_left_capture(unsigned enabled){flush();unsigned old=left_capture;left_capture=!!enabled;return old;}
 static float konst(unsigned sel,unsigned component){if(sel<8)return(8-sel)/8.f;if(sel>=12&&sel<16)return((u8*)&konst_color[sel-12])[component]/255.f;if(sel>=16&&sel<32)return((u8*)&konst_color[sel&3])[(sel-16)/4]/255.f;return 0;}
 static void raster_color(float*,GXColor,const float*,const float*,unsigned);
 static void prepare_layered_material(void){
@@ -455,12 +528,99 @@ static void raster_color(float*out,GXColor vertex_color,const float*eye,const fl
         for(unsigned k=part?3:0;k<(part?4:3);++k){float light=illumination[k];if(light<0)light=0;if(light>1)light=1;out[k]=mat[k]/255.f*light;}
     }
 }
+#if defined(MP_CLAMPED_SHADE_TEST) || defined(MP_CLAMPED_SHADE)
+/* Keep only constants that the color evaluator can read before overwrite.
+ * This is conservative: even dead stage results retain their input keys.
+ * RGB/alpha outputs are committed together after both sets of inputs read. */
+static void shade_constant_mask(const u32 config[16][30],unsigned stages,u32*colors,u32*konst){
+    u32 written=0,read=0,kread=0;
+    for(unsigned i=0;i<stages&&i<16;++i){const u32*s=config[i];
+        for(unsigned j=3;j<11;++j){unsigned arg=s[j],mask=0,sel=0,kmask=j<7?7:8;
+            if(j<7){if(arg<8)mask=((arg&1)?8:7)<<((arg/2)*4);else if(arg==14)sel=s[23];}
+            else {if(arg<4)mask=8<<(arg*4);else if(arg==6)sel=s[24];}
+            read|=mask&~written;
+            if(sel>=12&&sel<16)kread|=kmask<<((sel-12)*4);
+            else if(sel>=16&&sel<32)kread|=1u<<((sel&3)*4+(sel-16)/4);
+        }
+        written|=(7u<<((s[15]&3)*4))|(8u<<((s[20]&3)*4));
+    }
+    if(stages)read|=15&~written; /* Final PREV may retain an initial component. */
+    *colors=read;*konst=kread;
+}
+static void canonical_shade_key(ShadeKey*key){
+    u32 colors,konst;shade_constant_mask(tev_configuration,key->stages,&colors,&konst);
+    for(unsigned i=0;i<16;++i){if(!(colors&(1u<<i)))((u8*)key->colors)[i]=0;if(!(konst&(1u<<i)))((u8*)key->konst)[i]=0;}
+    /* Non-flat compilation only consumes raster alpha from key.alpha; the
+     * material RGB stays in the live lighting/uniform state, outside this key. */
+    if(!flat_shading)memset(key->material,0,sizeof(key->material));
+}
+#endif
+/* The compact cache shares one structural program across animated bindings.
+ * Keep the legacy cache independently selectable in the development build. */
+#ifdef MP_MATERIAL_PROGRAM_TEST
+static void prepare_material_program(void){
+    clamped_plan.valid=0;
+    ShadeBindingKey binding={0};ShadeKey*key=&binding.key;
+    key->stages=num_stages<16?num_stages:16;
+    key->flat=flat_shading|(shade_legacy_clamp<<1)|((!shade_clamped_disable)<<2);
+    memcpy(key->material,material,sizeof(material));memcpy(key->colors,tev_color,sizeof(tev_color));memcpy(key->konst,konst_color,sizeof(konst_color));
+    float raw_alpha[2];
+    for(unsigned ch=0;ch<2;++ch){u32*a=channel_configuration[GX_ALPHA0+ch];
+        raw_alpha[ch]=key->alpha[ch]=!a[0]&&(a[2]==GX_SRC_REG||!descriptors[GX_VA_CLR0+ch])?material[ch].a/255.f:-1;}
+    const MPMaterialProgram*p=mp_material_program_get(&material_programs,tev_configuration,key->stages);
+    shade_program_hits=material_programs.hits;shade_program_misses=material_programs.misses;
+    if(material_bindings_reset!=material_programs.resets){memset(material_bindings,0,sizeof(material_bindings));material_bindings_reset=material_programs.resets;}
+    binding.program=p->serial;
+    mp_material_bind_constants(p,flat_shading,(u8*)key->material,(u8*)key->colors,(u8*)key->konst,key->alpha);
+    unsigned hash=2166136261u;
+    for(unsigned i=0;i<sizeof(binding)/4;++i)hash=(hash^((u32*)&binding)[i])*16777619u;
+    ShadeBinding*set=material_bindings+(hash&255)*4,*slot=set,*hit=NULL;
+    for(unsigned i=0;i<4;++i){ShadeBinding*e=set+i;
+        if(e->stamp&&e->hash==hash&&!geometry_table_compare(&binding,&e->key,sizeof(binding))){hit=e;break;}
+        if(e->stamp<slot->stamp)slot=e;
+    }
+    if(hit){++shade_hits;++shade_binding_hits;hit->stamp=material_programs.clock;
+        if(!shade_validate){if(flat_shading)memcpy(flat_color,hit->flat_color,16);else shade_plan=hit->plan;
+            if(hit->clamped.valid){clamped_plan=hit->clamped;++shade_clamped_hits;}
+            return;
+        }
+    }else{++shade_misses;++shade_binding_misses;}
+    /* Compile with the ORIGINAL values, not masked cache-key constants.
+     * Validation therefore detects an incorrectly declared dependency. */
+    if(flat_shading){float zero[3]={0},ras[2][4]={{0}};raster_color(ras[0],material[0],zero,zero,0);
+        if(raster_channels&2)raster_color(ras[1],material[1],zero,zero,1);shade(flat_color,ras);}
+    else{float colors[4][4],konst[4][4];
+        for(unsigned i=0;i<4;++i)for(unsigned j=0;j<4;++j){colors[i][j]=((u8*)&tev_color[i])[j]/255.f;konst[i][j]=((u8*)&konst_color[i])[j]/255.f;}
+        mp_shade_compile_channels(&shade_plan,tev_configuration,num_stages,colors,konst,raw_alpha);
+        if(!shade_plan.valid&&!shade_clamped_disable){mp_clamped_compile(&clamped_plan,tev_configuration,num_stages,colors,konst,raw_alpha);shade_clamped_hits+=clamped_plan.valid;}
+    }
+    if(hit){
+        if(flat_shading?memcmp(flat_color,hit->flat_color,16):memcmp(&shade_plan,&hit->plan,sizeof(shade_plan)))
+            HSD_Panic(__FILE__,__LINE__,"Shared material program differs from original TEV evaluation");
+        if(clamped_plan.valid!=hit->clamped.valid||(clamped_plan.valid&&memcmp(&clamped_plan,&hit->clamped,sizeof(clamped_plan))))
+            HSD_Panic(__FILE__,__LINE__,"Shared clamped material differs from original compilation");
+        ++shade_checks;++shade_program_checks;return;
+    }
+    slot->stamp=material_programs.clock;slot->hash=hash;slot->key=binding;
+    if(flat_shading)memcpy(slot->flat_color,flat_color,16);else slot->plan=shade_plan;
+    slot->clamped.valid=clamped_plan.valid;if(clamped_plan.valid)slot->clamped=clamped_plan;
+}
+#endif
 static void prepare_material(void)
 {
+#ifdef MP_MATERIAL_PROGRAM_TEST
+    if(!shade_program_disable){prepare_material_program();return;}
+#endif
     ShadeKey key;key.stages=num_stages<16?num_stages:16;key.flat=flat_shading|(shade_legacy_clamp<<1);
+#if defined(MP_CLAMPED_SHADE_TEST) || defined(MP_CLAMPED_SHADE)
+    clamped_plan.valid=0;key.flat|=(!shade_clamped_disable)<<2;
+#endif
     memcpy(key.material,material,sizeof(material));memcpy(key.colors,tev_color,sizeof(tev_color));memcpy(key.konst,konst_color,sizeof(konst_color));
     for(unsigned ch=0;ch<2;++ch){u32*a=channel_configuration[GX_ALPHA0+ch];
         key.alpha[ch]=!a[0]&&(a[2]==GX_SRC_REG||!descriptors[GX_VA_CLR0+ch])?material[ch].a/255.f:-1;}
+#if defined(MP_CLAMPED_SHADE_TEST) || defined(MP_CLAMPED_SHADE)
+    if(!shade_clamped_disable)canonical_shade_key(&key);
+#endif
     unsigned bytes=key.stages*sizeof(tev_configuration[0]),hash=2166136261u;
     for(unsigned i=0;i<sizeof(key)/4;++i)hash=(hash^((u32*)&key)[i])*16777619u;
     for(unsigned i=0;i<bytes/4;++i)hash=(hash^((u32*)tev_configuration)[i])*16777619u;
@@ -470,31 +630,61 @@ static void prepare_material(void)
         if(e->stamp<slot->stamp)slot=e;
     }
     if(hit){++shade_hits;hit->stamp=shade_clock;
-        if(!shade_validate){if(flat_shading)memcpy(flat_color,hit->flat_color,16);else shade_plan=hit->plan;return;}
+        if(!shade_validate){if(flat_shading)memcpy(flat_color,hit->flat_color,16);else shade_plan=hit->plan;
+#if defined(MP_CLAMPED_SHADE_TEST) || defined(MP_CLAMPED_SHADE)
+            if(hit->clamped.valid){clamped_plan=hit->clamped;++shade_clamped_hits;}
+#endif
+            return;}
     }else ++shade_misses;
     if(flat_shading){float zero[3]={0},ras[2][4]={{0}};raster_color(ras[0],material[0],zero,zero,0);
         if(raster_channels&2)raster_color(ras[1],material[1],zero,zero,1);shade(flat_color,ras);}
     else {float colors[4][4],konst[4][4];for(unsigned i=0;i<4;++i)for(unsigned j=0;j<4;++j){colors[i][j]=((u8*)&tev_color[i])[j]/255.f;konst[i][j]=((u8*)&konst_color[i])[j]/255.f;}
-        mp_shade_compile_channels(&shade_plan,tev_configuration,num_stages,colors,konst,key.alpha);}
+        mp_shade_compile_channels(&shade_plan,tev_configuration,num_stages,colors,konst,key.alpha);
+#if defined(MP_CLAMPED_SHADE_TEST) || defined(MP_CLAMPED_SHADE)
+        if(!shade_plan.valid&&!shade_clamped_disable){
+            mp_clamped_compile(&clamped_plan,tev_configuration,num_stages,colors,konst,key.alpha);
+            shade_clamped_hits+=clamped_plan.valid;
+        }
+#endif
+    }
     if(hit){
         if(flat_shading?memcmp(flat_color,hit->flat_color,16):memcmp(&shade_plan,&hit->plan,sizeof(shade_plan)))
             HSD_Panic(__FILE__,__LINE__,"Cached material differs from fresh TEV evaluation");
+#if defined(MP_CLAMPED_SHADE_TEST) || defined(MP_CLAMPED_SHADE)
+        if(clamped_plan.valid!=hit->clamped.valid||(clamped_plan.valid&&memcmp(&clamped_plan,&hit->clamped,sizeof(clamped_plan))))
+            HSD_Panic(__FILE__,__LINE__,"Cached clamped material differs from fresh compilation");
+#endif
         ++shade_checks;return;
     }
     slot->stamp=shade_clock;slot->hash=hash;slot->key=key;memcpy(slot->config,tev_configuration,bytes);
     if(flat_shading)memcpy(slot->flat_color,flat_color,16);else slot->plan=shade_plan;
+#if defined(MP_CLAMPED_SHADE_TEST) || defined(MP_CLAMPED_SHADE)
+    slot->clamped.valid=clamped_plan.valid;if(clamped_plan.valid)slot->clamped=clamped_plan;
+#endif
 }
+#ifdef MP_RENDER_REWORK_TEST
+volatile unsigned gpu_clamped_disable;
+#else
+#define gpu_clamped_disable 0
+#endif
+unsigned gpu_clamped_draws,gpu_clamped_vertices;
 static int prepare_gpu_shading(void)
 {
     gpu_reject_reason=1;
     if(gpu_disable)return 0;
     gpu_reject_reason=2;
-    if(!flat_shading&&!shade_plan.valid)return 0;
+    unsigned post=0,second=shade_plan.second;
+#if defined(MP_CLAMPED_SHADE_TEST) || defined(MP_CLAMPED_SHADE)
+    post=!gpu_clamped_disable&&!shade_clamped_disable&&!flat_shading&&!shade_plan.valid&&clamped_plan.valid;
+    if(post)second=clamped_plan.second;
+#endif
+    if(!flat_shading&&!shade_plan.valid&&!post)return 0;
+    gpu_uniforms.post_transform=post;
     gpu_reject_reason=3;
     float(*u)[4]=gpu_uniforms.value;
     memset(u+MP_GPU_LIGHT_COLOR,0,4*16);unsigned slot=0;
     for(unsigned ch=0;ch<2;++ch){u32*rgb=channel_configuration[GX_COLOR0+ch];
-        int needed=!flat_shading&&(!ch||shade_plan.second);
+        int needed=!flat_shading&&(!ch||second);
         if(needed&&(channel_configuration[GX_ALPHA0+ch][0]||(rgb[0]&&rgb[1]==GX_SRC_VTX)||
             (ch&&descriptors[GX_VA_CLR1]&&(rgb[2]==GX_SRC_VTX||channel_configuration[GX_ALPHA1][2]==GX_SRC_VTX))))return 0;
         u[MP_GPU_CONFIG+ch][0]=needed&&rgb[0];u[MP_GPU_CONFIG+ch][1]=rgb[4]==GX_DF_NONE;
@@ -540,8 +730,15 @@ static int prepare_gpu_shading(void)
         unsigned source=channel_configuration[j==3?GX_ALPHA0:GX_COLOR0][2];
         gpu_uniforms.material0[j]=source==GX_SRC_VTX&&descriptors[GX_VA_CLR0]?-1:((u8*)&material[0])[j]/255.f;
         u[MP_GPU_CLAMP][j]=flat_shading?0:shade_plan.clamp[j];
+#if defined(MP_CLAMPED_SHADE_TEST) || defined(MP_CLAMPED_SHADE)
+        if(post){
+            for(unsigned k=0;k<5;++k)u[MP_GPU_SHADE+k][j]=clamped_plan.coefficients[k][j];
+            u[MP_GPU_CLAMP][j]=clamped_plan.clamp[j];
+            gpu_uniforms.post_scale[j]=clamped_plan.scale[j];gpu_uniforms.post_bias[j]=clamped_plan.bias[j];
+        }
+#endif
     }
-    gpu_reject_reason=0;return 1;
+    gpu_reject_reason=0;gpu_clamped_draws+=post;return 1;
 }
 static void texture_coord(float out[2],const float uv[2],const float pos[3],const float normal[3],unsigned coord){
     u32*gen=texgen_configuration[coord&7];float tc[3]={uv[0],uv[1],1};
@@ -569,7 +766,7 @@ static void vertex(const u8*bytes)
     }
     RenderVertex v;
     if(!expanded&&gpu_shading&&(!descriptors[GX_VA_PNMTXIDX]||matrix<30)){
-        ++gpu_vertices;memcpy(v.pos,pos,12);v.pos[3]=1;memcpy(v.normal,normal,12);
+        ++gpu_vertices;gpu_clamped_vertices+=gpu_uniforms.post_transform;memcpy(v.pos,pos,12);v.pos[3]=1;memcpy(v.normal,normal,12);
         v.normal[3]=descriptors[GX_VA_PNMTXIDX]?(matrix/3)*3:0;
         for(unsigned j=0;j<4;++j)v.color[j]=descriptors[GX_VA_CLR0]?((u8*)&color[0])[j]/255.f:1;
     }else{
@@ -588,7 +785,19 @@ static void vertex(const u8*bytes)
         }
         float ras[2][4]={{0}};raster_color(ras[0],color[0],eye,eye_normal,0);
         if(raster_channels&2)raster_color(ras[1],color[1],eye,eye_normal,1);
-        if(shade_plan.valid){++affine_vertices;mp_shade_apply_channels(&shade_plan,v.color,ras);}else{++slow_vertices;shade(v.color,ras);}
+        if(shade_plan.valid){++affine_vertices;mp_shade_apply_channels(&shade_plan,v.color,ras);}
+#if defined(MP_CLAMPED_SHADE_TEST) || defined(MP_CLAMPED_SHADE)
+        else if(!shade_clamped_disable&&clamped_plan.valid){
+            ++shade_clamped_vertices;mp_clamped_apply(&clamped_plan,v.color,ras);
+#ifdef MP_CLAMPED_SHADE_TEST
+            if(shade_clamped_validate){float reference[4];shade(reference,ras);
+                for(unsigned j=0;j<4;++j)if(!(fabsf(v.color[j]-reference[j])<=.00002f+.000002f*fabsf(reference[j])))
+                    HSD_Panic(__FILE__,__LINE__,"Compiled clamped color differs from original TEV evaluation");
+                ++shade_clamped_checks;}
+#endif
+        }
+#endif
+        else{++slow_vertices;shade(v.color,ras);}
     }
     if(ztexture[0]==GX_ZT_REPLACE&&ztexture[1]==GX_TF_Z8)v.pos[2]=0;
     /* GX cameras can draw into a sub-rectangle of the EFB. PICA uses one
@@ -713,12 +922,72 @@ void mp_gx_write_u32(u32 x){write_byte(x>>24);write_byte(x>>16);write_byte(x>>8)
 void mp_gx_write_f32(float x){union{float f;u32 u;}v={x};mp_gx_write_u32(v.u);}
 void mp_gx_write_u64(u64 x){mp_gx_write_u32(x>>32);mp_gx_write_u32(x);}void mp_gx_write_s64(s64 x){mp_gx_write_u64(x);}
 void mp_gx_write_f64(double x){union{double f;u64 u;}v={x};mp_gx_write_u64(v.u);}
+#ifdef MP_RENDER_REWORK_TEST
+volatile unsigned geometry_early_disable,geometry_early_validate;
+unsigned geometry_early_checks;
+#else
+#define geometry_early_disable 0
+#endif
+unsigned geometry_early_attempts,geometry_early_rejected;
+/* Bounds need position/index layout only. Other attributes still determine
+ * byte offsets and stride; changes to either invalidate this fast rejection.
+ * This does not reuse colors, materials, textures, or render state. */
+static int geometry_position_layout(const GeometryCache*e,unsigned fmt){
+    unsigned offset=0,matched=0;
+    for(unsigned a=0;a<=GX_VA_TEX7;++a)if(descriptors[a]){
+        Format f=formats[fmt][a];unsigned n=descriptors[a]==GX_DIRECT?direct_size(a,f):descriptors[a]==GX_INDEX8?1:2;
+        if(a==GX_VA_NRM&&f.count==GX_NRM_NBT3&&descriptors[a]!=GX_DIRECT)n*=3;
+        if(a==GX_VA_POS||a==GX_VA_PNMTXIDX){
+            const VertexField*field=NULL;for(unsigned i=0;i<e->key.count;++i)if(e->key.fields[i].kind==a){field=&e->key.fields[i];break;}
+            if(!field||field->offset!=offset||field->mode!=descriptors[a]||field->type!=(unsigned)f.type||
+               field->count!=component_count(a,f)||field->stride!=strides[a]||field->array!=arrays[a]||
+               field->scale!=1.f/(float)(1u<<f.frac))return 0;
+            matched|=a==GX_VA_POS?1:2;
+        }
+        offset+=n;
+    }
+    if(!(matched&1)||offset!=e->key.stride)return 0;
+    for(unsigned i=0;i<e->key.count;++i)if(e->key.fields[i].kind==GX_VA_PNMTXIDX&&!(matched&2))return 0;
+    return 1;
+}
+static int geometry_early_outside(const void*list,unsigned bytes){
+    if(geometry_early_disable||!mp_geometry_cull||gpu_disable||geometry_validate||bytes<3)return 0;
+    const u8*p=list,*end=p+bytes;while(p<end&&!*p)++p;if(end-p<3||!(*p&0x80))return 0;
+    GeometryCache*set=geometry_set(list),*e=NULL;
+    for(unsigned i=0;i<GEOMETRY_WAYS;++i)if(set[i].list==list&&set[i].bytes==bytes){e=&set[i];break;}
+    if(!e||!e->first||!e->early_hint)return 0;
+    for(GeometryChunk*c=e->first;c;c=c->next)if(c->points||c->bounds.row<0)return 0;
+    ++geometry_early_attempts;
+    if(!geometry_position_layout(e,*p&7)||!source_valid(e->source[0]))return 0;
+    for(unsigned i=0;i<e->key.count;++i)if((e->key.fields[i].kind==GX_VA_POS||e->key.fields[i].kind==GX_VA_PNMTXIDX)&&!source_valid(e->source[i+1]))return 0;
+    /* Same arithmetic as prepare_gpu_shading, with only position/XYW rows.
+     * Normal, lighting and depth rows cannot affect this side-plane test. */
+    static MPGPUUniforms clip;float(*u)[4]=clip.value;
+    if(descriptors[GX_VA_PNMTXIDX])memcpy(u+MP_GPU_POS,position_mtx,30*16);
+    else memcpy(u+MP_GPU_POS,position_mtx[(current_mtx/3)&63],3*16);
+    float sx=1,sy=1,ox=0,oy=0;
+    if(viewport[2]>0&&viewport[3]>0){sx=viewport[2]/640.f;sy=viewport[3]/480.f;
+        ox=(2*viewport[0]+viewport[2]-640.f)/640.f;oy=(480.f-2*viewport[1]-viewport[3])/480.f;}
+    for(unsigned j=0;j<4;++j){u[MP_GPU_PROJECTION][j]=projection[1][j]*sy+projection[3][j]*oy;
+        u[MP_GPU_PROJECTION+1][j]=-projection[0][j]*sx-projection[3][j]*ox;u[MP_GPU_PROJECTION+3][j]=projection[3][j];}
+    extern unsigned mp_display_stereo;
+    float strength=draw.convergence>0?mp_display_stereo*MP_STEREO_PIXELS_PER_SLIDER/draw.screen_width:0;
+    for(GeometryChunk*c=e->first;c;c=c->next)if(!geometry_outside(&c->bounds,&clip,strength,draw.convergence))return 0;
+    return 1;
+}
 void GXCallDisplayList(void*list,u32 nbytes){
     u32 profile_start=mp_platform_ticks();const u8*p=list,*end=p+nbytes;reuse_list_state=0;unsigned initial_format=~0u;
     /* GX work used to defer cooperative sound/pad interrupts until most of
      * the frame had been decoded. Service them between lists, at most once
      * per millisecond, so audio is not starved by an expensive stage draw. */
     static u32 last_poll;if((u32)(profile_start-last_poll)>=40500){extern void mp_engine_poll(void);last_poll=profile_start;mp_engine_poll();}
+    unsigned early=geometry_early_outside(list,nbytes);
+#ifdef MP_RENDER_REWORK_TEST
+    if(early&&!geometry_early_validate)
+#else
+    if(early)
+#endif
+    {flush();remaining=0;++geometry_early_rejected;profile_lists+=mp_platform_ticks()-profile_start;return;}
     while(p<end){unsigned op=*p++;if(!op)continue;
         if((op&0x80)==0)HSD_Panic(__FILE__,__LINE__,"Unsupported GX display-list command");
         if(end-p<2)HSD_Panic(__FILE__,__LINE__,"Truncated GX primitive");unsigned n=short_be(p);p+=2;
@@ -727,14 +996,22 @@ void GXCallDisplayList(void*list,u32 nbytes){
         if(initial_format==~0u){initial_format=op&7;
             if(gpu_shading&&!layer_active){u32 measured=detail_begin(2);GeometryKey key;geometry_key(&key);GeometryCache*e=geometry_find(list,nbytes,&key);detail_end(2,measured);
                 if(e){
+#ifdef MP_RENDER_REWORK_TEST
+                    if(early&&geometry_early_validate){
+                        extern unsigned mp_display_stereo;float strength=draw.convergence>0?mp_display_stereo*MP_STEREO_PIXELS_PER_SLIDER/draw.screen_width:0;
+                        for(GeometryChunk*c=e->first;c;c=c->next)if(c->points||c->bounds.row<0||!mp_bounds_outside_stereo(&c->bounds,&gpu_uniforms,strength,draw.convergence))
+                            HSD_Panic(__FILE__,__LINE__,"Early visibility disagrees with prepared draw");
+                        ++geometry_early_checks;
+                    }
+#endif
                     if(geometry_validate){geometry_check=e->first;geometry_checking=1;}
-                    else {for(GeometryChunk*c=e->first;c;c=c->next){
+                    else {unsigned visible=0;for(GeometryChunk*c=e->first;c;c=c->next){
                             if(mp_geometry_cull&&!c->points&&c->bounds.row>=0){++mp_geometry_cull_checks;
                                 extern unsigned mp_display_stereo;
                                 float strength=draw.convergence>0?mp_display_stereo*MP_STEREO_PIXELS_PER_SLIDER/draw.screen_width:0;
-                                if(mp_bounds_outside_stereo(&c->bounds,&gpu_uniforms,strength,draw.convergence)){++mp_geometry_cull_draws;mp_geometry_cull_vertices+=c->count;continue;}}
-                            const RenderVertex*v=(const void*)(c+1);submit_geometry(v,c->count,(const void*)(v+c->count),c->indices,c->id,c->points);}
-                        remaining=0;reuse_list_state=0;profile_lists+=mp_platform_ticks()-profile_start;return;}
+                                if(geometry_outside(&c->bounds,&gpu_uniforms,strength,draw.convergence)){++mp_geometry_cull_draws;mp_geometry_cull_vertices+=c->count;continue;}}
+                            ++visible;const RenderVertex*v=(const void*)(c+1);submit_geometry(v,c->count,(const void*)(v+c->count),c->indices,c->id,c->points);}
+                        e->early_hint=!visible;remaining=0;reuse_list_state=0;profile_lists+=mp_platform_ticks()-profile_start;return;}
                 }else geometry_start(list,nbytes,&key);
             }
         }

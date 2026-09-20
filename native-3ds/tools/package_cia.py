@@ -32,7 +32,8 @@ def main():
     args = ap.parse_args()
     image = ElfImage(args.elf.read_bytes())
     if not args.development:
-        forbidden = {'mp_test_control', 'mp_test_capture', 'mp_banner_capture', 'mp_test_stereo_slider'}
+        forbidden = {'mp_test_control', 'mp_test_capture', 'mp_banner_capture', 'mp_test_stereo_slider',
+                     'mp_probe_request', 'mp_probe_rows'}
         assert not forbidden & image.symbols.keys(), 'Development ELF cannot be distributed as the console build'
     # Reject known unsafe profiles before writing any installable output.
     baseline_model = (args.cosmetic_baseline/'banner.cgfx').read_bytes() if args.cosmetic_baseline else None

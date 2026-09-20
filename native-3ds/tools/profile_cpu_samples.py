@@ -1,10 +1,10 @@
 """Statistical emulator CPU samples; these are not hardware timings."""
-import argparse,bisect,collections,json,random,socket,struct,subprocess,time
-from gameplay_test import ROOT,packet,receive
+import argparse,bisect,collections,hashlib,json,random,socket,struct,subprocess,time
+from gameplay_test import ROOT,TEST_ELF,packet,receive
 
 def main():
     ap=argparse.ArgumentParser();ap.add_argument('--samples',type=int,default=400);ap.add_argument('--label',default='cpu-samples');args=ap.parse_args()
-    nm=subprocess.check_output([str(ROOT/'.toolchain/llvm-mingw-20260908-ucrt-x86_64/bin/llvm-nm.exe'),'-n',str(ROOT/'build/game/melee.elf')],text=True)
+    nm=subprocess.check_output([str(ROOT/'.toolchain/llvm-mingw-20260908-ucrt-x86_64/bin/llvm-nm.exe'),'-n',str(TEST_ELF)],text=True)
     funcs=[]
     for line in nm.splitlines():
         p=line.split()
@@ -22,6 +22,8 @@ def main():
                 counts[label(r[15])]+=1;callers[(label(r[15]),label(r[14]))]+=1
             finally:packet(s,'c');packet(s,'D');receive(s)
         time.sleep(random.uniform(.005,.035))
-    result={'samples':args.samples,'pc':counts.most_common(35),'pc_lr':[(a,b,n) for (a,b),n in callers.most_common(35)]}
+    result={'samples':args.samples,'elf_sha256':hashlib.sha256(TEST_ELF.read_bytes()).hexdigest(),
+            'scope':'Debugger-interrupted emulator PC samples; hotspot evidence, not physical timing.',
+            'pc':counts.most_common(35),'pc_lr':[(a,b,n) for (a,b),n in callers.most_common(35)]}
     (ROOT/'build'/f'{args.label}.json').write_text(json.dumps(result,indent=2));print(json.dumps(result,indent=2))
 if __name__=='__main__':main()
