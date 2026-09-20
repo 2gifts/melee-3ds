@@ -4,7 +4,7 @@
   "runtime_baseline": 22,
   "reference_3dsx_sha256": "24d809691f66342fa02b39aeb8bf7b5eccd9d03fafbd90594dba0925fb582427",
   "files": {
-    ".gitattributes": "a79691a93b46e49ce460c26ef22afcc03d6eca1e63bf2edbc20e96159510f6c9",
+    ".gitattributes": "c1717f8c9072cfa82409684241f2bfab4d3a896a7a34c66e8b32f63e99ead7fe",
     ".gitignore": "f9ae2f4d13f682e20bebe89155676ad6ea81b99e12b360a4f73fc46b0bbf984f",
     "CONTRIBUTING.md": "b26afc6e4819f081ff073f0d8d96c60810bc53afd82a0a7ea9af2a91eaca3efb",
     "LICENSE": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
@@ -13,6 +13,9 @@
     "docs/HOME_MENU.md": "806bb1cd42015527e57801b618549933339eb7feb47bc1b7cd2a68ffb2726a41",
     "docs/PORT_STATUS.md": "4b70429400a9b9ff27652d28c2132ebea2460babe6cdcbe9d838ce321371863c",
     "docs/THIRD_PARTY_NOTICES.md": "87b5e675f2ca0093edd4d870b2e88850041b862208b1957deb621778835252c9",
+    "docs/media/gameplay-bottom.png": "59faefc9fff93f407568542dc77faaa56427096138012f121ae54f07c0adc082",
+    "docs/media/gameplay-stereo-still.png": "928815124a787e9a01841b97ebe44ab07629114b47976249130c4b4ea33a6ad8",
+    "docs/media/gameplay-stereo.gif": "0f53f896ef0fa683514a9773935fb9bf41b4b3723420d22d664dff7f26f881e9",
     "port/3ds/affine_identity.h": "53d4e8bda78577698b4c187d18462925a1cdb93afe2a1f16900d094576adf76c",
     "port/3ds/affine_verify.h": "01625ad6b814a514ac49e7c50048fd1361ea360c0f37ff0b358806f2f99871c0",
     "port/3ds/alpha_test.h": "ef18316bab581fd1b9cbbe14c577a36860f142462a21177808b603070d206b07",

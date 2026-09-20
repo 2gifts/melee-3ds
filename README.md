@@ -4,6 +4,23 @@ Super Smash Bros. Melee, running natively on a homebrewed **New Nintendo 3DS**. 
 
 Play Versus against CPUs, practice in Training, and explore Melee on a different kind of handheld. The port aims to preserve the original mechanics while adapting the presentation to the 3DS. **Development is complete for now at a playable community milestone. Performance varies, and this is not a locked-60-FPS or fully compatible replacement for the GameCube game.**
 
+<table>
+  <tr>
+    <th align="center">Your match at a glance</th>
+    <th align="center">Melee with depth</th>
+  </tr>
+  <tr>
+    <td align="center"><img src="native-3ds/docs/media/gameplay-bottom.png" width="320" height="240" alt="Melee's bottom-screen dashboard showing portraits, stock counts, and damage for four players"></td>
+    <td align="center"><a href="native-3ds/docs/media/gameplay-stereo-still.png"><img src="native-3ds/docs/media/gameplay-stereo.gif" width="400" height="240" alt="Stereo depth preview alternating between the top screen's left-eye and right-eye views of a gameplay frame"></a></td>
+  </tr>
+  <tr>
+    <td align="center">Portraits, stocks, damage, and touch controls.</td>
+    <td align="center">A left/right-eye wiggle preview. Click for a still.</td>
+  </tr>
+</table>
+
+<p align="center"><sub>Actual port captures from Azahar. The GIF alternates eye views of one frame to illustrate depth; its animation speed does not represent gameplay FPS.</sub></p>
+
 ## Features
 
 - Native stereoscopic **3D in gameplay and perspective menus**, adjusted with the system slider.
