@@ -12,7 +12,10 @@ PIN='db6571674f9e1679270630aef62a0640a59ff428a94c0a52b837f25811f9f3d1'
 
 def source():
     path=ROOT/'references/citro3d/source/renderqueue.c'
-    assert hashlib.sha256(path.read_bytes()).hexdigest()==PIN,'Pinned queue source changed'
+    if not path.exists():
+        raise SystemExit(f'{path} is missing; run python tools/bootstrap.py --portable-windows to fetch the pinned Citro3D source')
+    if hashlib.sha256(path.read_bytes()).hexdigest()!=PIN:
+        raise SystemExit(f'{path} is not the pinned Citro3D version; delete references/citro3d and run python tools/bootstrap.py --portable-windows')
     s=path.read_text()
     def replace(old,new,count=1):
         nonlocal s

@@ -23,9 +23,14 @@ def run(*args):
 
 def checkout(url, commit, path):
     if path.exists():
+        # A folder copied in by hand is not a checkout (and git would report
+        # this repository's revision for it).
+        if not (path/".git").exists():
+            raise RuntimeError(f"Existing {path} is not a git checkout; delete it and run bootstrap again")
         rev = subprocess.check_output(["git","-C",str(path),"rev-parse","HEAD"],text=True).strip()
         if rev != commit:
-            raise RuntimeError(f"Existing {path} has revision {rev}; preserving it")
+            raise RuntimeError(f"Existing {path} has revision {rev}, not the pinned {commit}; "
+                               "delete it and run bootstrap again (it was left unchanged)")
         return
     run("git","clone","--no-checkout","--filter=blob:none",url,path)
     run("git","-C",path,"checkout","--detach",commit)
@@ -54,6 +59,10 @@ def main():
     args = ap.parse_args()
     lock = json.loads((ROOT/"upstream.lock.json").read_text())
     checkout(lock["repository"],lock["commit"],ROOT/"upstream/melee")
+    # Release builds link an adapted copy of this exact Citro3D render queue
+    # (tools/async_renderqueue.py checks the source's hash).
+    tools = json.loads((ROOT/"toolchain.lock.json").read_text())
+    checkout(tools["citro3d_repository"],tools["citro3d_commit"],ROOT/"references/citro3d")
     if not args.portable_windows:
         print("Pinned Melee source ready. Use devkitPro 3ds-dev to build.")
         return

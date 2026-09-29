@@ -7,5 +7,7 @@
   "3dstools_repository": "https://github.com/devkitPro/3dstools.git",
   "3dstools_commit": "718d6f2330dbef9dd5726573392425dcbd451677",
   "picasso_repository": "https://github.com/devkitPro/picasso.git",
-  "picasso_commit": "d522455ea59cd5cb9219c699b93eb7750039233c"
+  "picasso_commit": "d522455ea59cd5cb9219c699b93eb7750039233c",
+  "citro3d_repository": "https://github.com/devkitPro/citro3d.git",
+  "citro3d_commit": "9f21cf7b380ce6f9e01a0420f19f0763e5443ca7"
 }
