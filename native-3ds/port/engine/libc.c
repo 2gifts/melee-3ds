@@ -94,6 +94,22 @@ char *mp_be_strcat(char*d,const char*s){mp_be_strcpy(d+mp_be_strlen(d),s);return
 char *mp_be_strchr(const char*s,int c){do{if(*s==(char)c)return(char*)s;}while(*s++);return NULL;}
 char *mp_be_strrchr(const char*s,int c){char*r=NULL;do{if(*s==(char)c)r=(char*)s;}while(*s++);return r;}
 char *mp_be_strstr(const char*a,const char*b){size_t n=mp_be_strlen(b);for(;*a;++a)if(!mp_be_strncmp(a,b,n))return(char*)a;return n?NULL:(char*)a;}
+/* Snapshot listing parses card file names with strtoul. newlib's reads its
+ * locale tables as native little-endian data, so the engine needs its own. */
+unsigned long mp_be_strtoul(const char*s,char**end,int base){
+    const char*p=s;unsigned long v=0;int any=0,neg=0;
+    while(*p==' '||(*p>=9&&*p<=13))++p;
+    if(*p=='+'||*p=='-')neg=*p++=='-';
+    if((base==0||base==16)&&p[0]=='0'&&(p[1]=='x'||p[1]=='X')){p+=2;base=16;}
+    else if(base==0)base=*p=='0'?8:10;
+    for(;;++p){
+        int d=*p>='0'&&*p<='9'?*p-'0':*p>='a'&&*p<='z'?*p-'a'+10:*p>='A'&&*p<='Z'?*p-'A'+10:99;
+        if(d>=base)break;
+        v=v*(unsigned)base+(unsigned)d;any=1;
+    }
+    if(end)*end=(char*)(any?p:s);
+    return neg?-v:v;
+}
 void *mp_be_malloc(size_t n){return mp_platform_alloc(n);}
 void mp_be_free(void*p){mp_platform_free(p);}
 void *mp_be_calloc(size_t n,size_t s){if(s&&n>UINT32_MAX/s)return NULL;void*p=mp_be_malloc(n*s);if(p)mp_be_memset(p,0,n*s);return p;}

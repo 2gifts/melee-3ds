@@ -1,44 +1,7 @@
-#include <dolphin/card.h>
+#include <dolphin/types.h>
 #include <dolphin/mcc.h>
-/* The 3DS has no GameCube memory card or development-host interface.
- * Return the SDK absence/failure result. No operation is accepted. */
-void CARDInit(void){}
-s32 CARDGetResultCode(s32 chan){return CARD_RESULT_NOCARD;}
-s32 CARDCheckAsync(s32 chan, CARDCallback callback){return CARD_RESULT_NOCARD;}
-s32 CARDFreeBlocks(s32 chan, s32* byteNotUsed, s32* filesNotUsed){return CARD_RESULT_NOCARD;}
-s32 CARDRenameAsync(s32 chan, const char* oldName, const char* newName,
-                    CARDCallback callback){return CARD_RESULT_NOCARD;}
-s32 CARDFormatAsync(s32 chan, CARDCallback callback){return CARD_RESULT_NOCARD;}
-long CARDGetEncoding(long chan, unsigned short * encode){return CARD_RESULT_NOCARD;}
-long CARDGetMemSize(long chan, unsigned short * size){return CARD_RESULT_NOCARD;}
-s32 CARDGetSectorSize(s32 chan, u32 *size){return CARD_RESULT_NOCARD;}
-long CARDCheck(long chan){return CARD_RESULT_NOCARD;}
-s32 CARDCreateAsync(s32 chan, const char* fileName, u32 size, CARDFileInfo* fileInfo, CARDCallback callback){return CARD_RESULT_NOCARD;}
-long CARDCreate(long chan, char * fileName, unsigned long size, struct CARDFileInfo * fileInfo){return CARD_RESULT_NOCARD;}
-s32 CARDFastDeleteAsync(s32 chan, s32 fileNo, CARDCallback callback){return CARD_RESULT_NOCARD;}
-long CARDFastDelete(long chan, long fileNo){return CARD_RESULT_NOCARD;}
-s32 CARDDeleteAsync(s32 chan, char *fileName, CARDCallback callback){return CARD_RESULT_NOCARD;}
-s32 CARDDelete(s32 chan, char *fileName){return CARD_RESULT_NOCARD;}
-long CARDFormat(long chan){return CARD_RESULT_NOCARD;}
-int CARDProbe(long chan){return 0;}
-s32 CARDProbeEx(s32 chan, s32* memSize, s32* sectorSize){return CARD_RESULT_NOCARD;}
-s32 CARDMountAsync(s32 chan, void* workArea, CARDCallback detachCallback,
-                   CARDCallback attachCallback){return CARD_RESULT_NOCARD;}
-s32 CARDMount(s32 chan, void* workArea, CARDCallback detachCallback){return CARD_RESULT_NOCARD;}
-s32 CARDUnmount(s32 chan){return CARD_RESULT_NOCARD;}
-s32 CARDFastOpen(s32 chan, s32 fileNo, CARDFileInfo *fileInfo){return CARD_RESULT_NOCARD;}
-s32 CARDOpen(s32 chan, char *fileName, CARDFileInfo *fileInfo){return CARD_RESULT_NOCARD;}
-s32 CARDClose(CARDFileInfo *fileInfo){return CARD_RESULT_NOCARD;}
-long CARDGetXferredBytes(long chan){return 0;}
-s32 CARDReadAsync(CARDFileInfo *fileInfo, void *buf, s32 length, s32 offset, CARDCallback callback){return CARD_RESULT_NOCARD;}
-long CARDRead(struct CARDFileInfo * fileInfo, void * buf, long length, long offset){return CARD_RESULT_NOCARD;}
-s32 CARDCancel(CARDFileInfo *fileInfo){return CARD_RESULT_NOCARD;}
-s32 CARDRename(s32 chan, char *oldName, char *newName){return CARD_RESULT_NOCARD;}
-s32 CARDGetStatus(s32 chan, s32 fileNo, CARDStat *stat){return CARD_RESULT_NOCARD;}
-s32 CARDSetStatusAsync(s32 chan, s32 fileNo, CARDStat *stat, CARDCallback callback){return CARD_RESULT_NOCARD;}
-long CARDSetStatus(long chan, long fileNo, struct CARDStat * stat){return CARD_RESULT_NOCARD;}
-long CARDWriteAsync(struct CARDFileInfo * fileInfo, void * buf, long length, long offset, void (* callback)(long, long)){return CARD_RESULT_NOCARD;}
-long CARDWrite(struct CARDFileInfo * fileInfo, void * buf, long length, long offset){return CARD_RESULT_NOCARD;}
+/* The 3DS has no development-host interface. Return the SDK
+ * absence/failure result. The memory card is card.c. */
 int FIOInit(enum MCC_EXI exiChannel, enum MCC_CHANNEL chID, u8 blockSize){return 0;}
 void FIOExit(void){}
 int FIOQuery(void){return 0;}

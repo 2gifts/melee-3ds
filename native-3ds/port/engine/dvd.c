@@ -14,7 +14,7 @@ BOOL DVDFastOpen(s32 id,DVDFileInfo*f){if(id<0)return 0;int slot=-1;for(int i=0;
 BOOL DVDOpen(char*name,DVDFileInfo*f){return DVDFastOpen(DVDConvertPathToEntrynum(name),f);}
 BOOL DVDClose(DVDFileInfo*f){for(int i=0;i<128;++i)if(handles[i].file==f){handles[i].file=NULL;return 1;}return 0;}
 static int file_id(DVDFileInfo*f){for(int i=0;i<128;++i)if(handles[i].file==f)return handles[i].id;return -1;}
-long DVDReadPrio(DVDFileInfo*f,void*dst,long n,long off,long priority){(void)priority;int id=file_id(f);if(id<0||off<0||n<0)return-1;int got=mp_platform_file_read(id,dst,n,off);f->cb.state=got<0?-1:0;f->cb.transferredSize=got<0?0:got;return got;}
+long DVDReadPrio(DVDFileInfo*f,void*dst,long n,long off,long priority){(void)priority;int id=file_id(f);if(id<0||off<0||n<0)return-1;int got=mp_platform_file_read(id,dst,n,off);if(got>0)mp_gx_cache_range(dst,got,1);f->cb.state=got<0?-1:0;f->cb.transferredSize=got<0?0:got;return got;}
 BOOL DVDReadAsyncPrio(DVDFileInfo*f,void*dst,s32 n,s32 off,DVDCallback cb,s32 priority){(void)priority;if(tail-head>=128)return 0;unsigned i=tail++&127;requests[i].f=f;requests[i].dst=dst;requests[i].length=n;requests[i].offset=off;requests[i].cb=cb;f->cb.state=1;return 1;}
 int mp_dvd_pending(void){return head!=tail;}
 void mp_dvd_pump(void){
@@ -22,6 +22,8 @@ void mp_dvd_pump(void){
     if(!asynchronous_read)asynchronous_read=mp_platform_file_read_async_begin(file_id(f),requests[i].dst,requests[i].length,requests[i].offset);
     int result=asynchronous_read?mp_platform_file_read_async_poll():DVDReadPrio(f,requests[i].dst,requests[i].length,requests[i].offset,2);
     if(result==MP_FILE_READ_BUSY)return;
+    /* Disc data replaces geometry sources and textures, in GX command order. */
+    if(asynchronous_read&&result>0)mp_gx_cache_range(requests[i].dst,result,1);
     DVDCallback cb=requests[i].cb;asynchronous_read=0;++head;
     f->cb.state=result<0?-1:0;f->cb.transferredSize=result<0?0:result;
     if(cb)cb(result,f);

@@ -9,7 +9,7 @@
  * async mode queues immutable draws, with a CPU-consumption fence at End.
  * Native linear buffers keep their independent existing GPU lifetime. */
 enum { JOB_BEGIN, JOB_END, JOB_DRAW, JOB_EFB, JOB_DIRTY, JOB_INVALIDATE,
-       JOB_VISIBILITY, JOB_COUNTS, JOB_BENCHMARK };
+       JOB_VISIBILITY, JOB_COUNTS, JOB_BENCHMARK, JOB_STEREO };
 #define JOB_CAPACITY 256
 #define ARENA_CAPACITY (4*1024*1024)
 #define SOURCE_CAPACITY (4*1024*1024)
@@ -39,6 +39,7 @@ volatile unsigned mp_render_worker_source_cache_disable;
 volatile unsigned mp_render_worker_source_cache_validate;
 volatile unsigned mp_render_worker_geometry_borrow;
 volatile unsigned mp_render_worker_test_failure;
+volatile unsigned mp_test_worker_core=~0u; /* Development override of the worker core. */
 #else
 #define mp_render_worker_disable 0
 #define mp_render_worker_async 1
@@ -108,6 +109,7 @@ static void execute(const RenderJob *q) {
     case JOB_INVALIDATE: mp_renderer_impl_texture_invalidate(); break;
     case JOB_VISIBILITY: mp_renderer_impl_frame_texture_visibility(); break;
     case JOB_COUNTS: mp_renderer_impl_counts(q->out_a, q->out_b); break;
+    case JOB_STEREO: { extern unsigned mp_native_stereo_depth; mp_native_stereo_depth=q->a; break; }
 #ifdef MP_SMOKE_TEST
     case JOB_BENCHMARK: mp_renderer_impl_benchmark_frame(q->a); break;
 #endif
@@ -129,14 +131,36 @@ void mp_render_worker_panic(const char *message) {
     threadExit(1);
 }
 
+/* Draws arrive in bursts. A one-shot LightEvent_Signal after the worker has
+ * consumed the previous one costs the producer a kernel arbitration call, and
+ * the worker a sleep/wake pair, for nearly every draw. The worker therefore
+ * spins briefly on its own core before sleeping, and the producer signals only
+ * when the worker has declared that it is going to sleep. Both sides publish
+ * then check with sequentially consistent operations, so a job published
+ * between the worker's declaration and its wait still wakes it. */
+#define WORKER_SPIN 16384u
+static unsigned worker_sleeping;
+unsigned mp_render_worker_sleeps,mp_render_worker_signals;
 static void render_thread(void *unused) {
     (void)unused;
     mp_render_worker_core=svcGetProcessorID();
+    /* Spin only on core 2 when it is ours alone. Core 1 time is a budgeted
+     * share of the system core, and an emulator may schedule the worker on
+     * the application core, where spinning would only delay the producer. */
+    unsigned spin_limit=mp_render_worker_core==2?WORKER_SPIN:0;
     for(;;) {
         if(__atomic_load_n(&stopping, __ATOMIC_ACQUIRE)) break;
         unsigned cursor=__atomic_load_n(&completed,__ATOMIC_RELAXED);
         if(cursor==__atomic_load_n(&published,__ATOMIC_ACQUIRE)) {
-            LightEvent_Wait(&wake); continue;
+            for(unsigned spin=0;spin<spin_limit&&cursor==__atomic_load_n(&published,__ATOMIC_ACQUIRE);++spin)
+                __asm__ volatile("":::"memory");
+            if(cursor!=__atomic_load_n(&published,__ATOMIC_ACQUIRE)) continue;
+            __atomic_store_n(&worker_sleeping,1,__ATOMIC_SEQ_CST);
+            if(cursor==__atomic_load_n(&published,__ATOMIC_SEQ_CST)&&!__atomic_load_n(&stopping,__ATOMIC_SEQ_CST)) {
+                ++mp_render_worker_sleeps; LightEvent_Wait(&wake);
+            }
+            __atomic_store_n(&worker_sleeping,0,__ATOMIC_SEQ_CST);
+            continue;
         }
 #ifdef MP_SMOKE_TEST
         if(mp_render_worker_test_failure) {
@@ -144,17 +168,34 @@ static void render_thread(void *unused) {
             mp_native_panic("Injected renderer worker failure");
         }
 #endif
-        u64 start=svcGetSystemTick();
-        execute(&jobs[cursor%JOB_CAPACITY]);
-        mp_render_worker_busy_ticks+=svcGetSystemTick()-start;
+        /* svcGetSystemTick is a kernel call: time one job in eight. */
+        if(cursor&7) execute(&jobs[cursor%JOB_CAPACITY]);
+        else {
+            u64 start=svcGetSystemTick();
+            execute(&jobs[cursor%JOB_CAPACITY]);
+            mp_render_worker_busy_ticks+=(svcGetSystemTick()-start)*8;
+        }
         ++mp_render_worker_jobs;
         __atomic_store_n(&completed, cursor+1, __ATOMIC_RELEASE);
         LightEvent_Signal(&done);
     }
 }
 
-void mp_render_worker_start(int is_new) {
+void mp_render_worker_start(int is_new, int system_core) {
     if(worker || !is_new) return;
+    /* When the GX translator owns core 2, it also renders: jobs execute
+     * inline on it, without packet copies, and the engine keeps core 0 to
+     * itself. Measured on hardware, the renderer ran about 7x slower on the
+     * system core (update 23, core 1 with an 80% time limit), and sharing
+     * core 0 left the engine and renderer 41-55 ms per Rainbow Cruise frame
+     * (update 24) while the translator used 12-15 ms of core 2. */
+#ifdef MP_SMOKE_TEST
+    if(mp_test_worker_core<=2) system_core=0;
+#endif
+    if(system_core) {
+        mp_native_log("Renderer runs inline on the GX translator thread (core 2)\n");
+        return;
+    }
     published=completed=failed=stopping=acknowledged=0; failure_message[0]=0;
     if(!arena.data) { arena.data=malloc(ARENA_CAPACITY); arena.capacity=arena.data?ARENA_CAPACITY:0; }
     if(!arena.data){mp_native_log("Renderer packet allocation unavailable; using original synchronous renderer\n");return;}
@@ -166,11 +207,17 @@ void mp_render_worker_start(int is_new) {
     s32 priority=0x30;
     svcGetThreadPriority(&priority, CUR_THREAD_HANDLE);
     /* Explicit core 2 uses the existing New3DS capability in the CIA and
-     * Luma homebrew exheaders. Failure retains the original renderer. */
-    worker=threadCreate(render_thread, NULL, 128*1024, priority, 2, false);
+     * Luma homebrew exheaders. */
+    int core=2;
+#ifdef MP_SMOKE_TEST
+    if(mp_test_worker_core<=2) core=mp_test_worker_core;
+#endif
+    worker=core<0?NULL:threadCreate(render_thread, NULL, 128*1024, priority, core, false);
     mp_render_worker_active=worker!=NULL;
-    mp_native_log(worker ? "Renderer CPU worker created with explicit core-2 affinity; immutable draw packets\n"
-                          : "Renderer core 2 unavailable; using original synchronous renderer\n");
+    char text[128];
+    if(worker)snprintf(text,sizeof(text),"Renderer CPU worker created with explicit core-%d affinity; immutable draw packets\n",core);
+    else snprintf(text,sizeof(text),"Renderer worker core unavailable; rendering on the %s thread\n",system_core?"GX translator":"engine");
+    mp_native_log(text);
 }
 
 void mp_render_worker_stop(void) {
@@ -232,8 +279,8 @@ static void dispatch(RenderJob q,int async) {
     }
     if(used+1>mp_render_worker_queue_peak) mp_render_worker_queue_peak=used+1;
     jobs[cursor%JOB_CAPACITY]=q;
-    __atomic_store_n(&published, cursor+1, __ATOMIC_RELEASE);
-    LightEvent_Signal(&wake);
+    __atomic_store_n(&published, cursor+1, __ATOMIC_SEQ_CST);
+    if(__atomic_load_n(&worker_sleeping,__ATOMIC_SEQ_CST)) { ++mp_render_worker_signals; LightEvent_Signal(&wake); }
     if(!async) wait_until(cursor+1);
 }
 
@@ -265,9 +312,11 @@ void mp_native_submit(const void *vertices, unsigned count, const void *draw) {
         arena.persistent=mp_render_worker_source_cache_disable?NULL:&source_cache;
         arena.borrow_geometry=mp_render_worker_geometry_borrow && mp_render_worker_geometry_contract;
         source_cache.validate=mp_render_worker_source_cache_validate;
-        u64 start=svcGetSystemTick();
+        /* Sampled like the consumer: one snapshot in eight is timed. */
+        static unsigned copy_sequence;unsigned timed=!(copy_sequence++&7);
+        u64 start=timed?svcGetSystemTick():0;
         MPDrawSnapshot *s=mp_snapshot_draw(&arena,vertices,count,draw,resolve_input,NULL);
-        mp_render_worker_copy_ticks+=svcGetSystemTick()-start;
+        if(timed) mp_render_worker_copy_ticks+=(svcGetSystemTick()-start)*8;
         if(!s) {
             mp_render_worker_barrier(); arena.used=arena.sources=0;
             mp_source_cache_release(&source_cache);
@@ -317,6 +366,12 @@ void mp_native_frame_texture_visibility(void) {
      * copies across it; dirty/invalidate events carry source changes. */
     arena.sources=0; dispatch((RenderJob){.kind=JOB_VISIBILITY},asynchronous());
 }
+/* Stereo depth takes effect in draw order, at the next frame's first draw. */
+void mp_native_render_stereo(unsigned depth) {
+    extern unsigned mp_native_stereo_depth;
+    if(!worker || mp_render_worker_disable) { mp_render_worker_barrier(); mp_native_stereo_depth=depth; return; }
+    dispatch((RenderJob){.kind=JOB_STEREO,.a=depth},1);
+}
 void mp_renderer_counts(unsigned *vertices, unsigned *draws) {
     dispatch((RenderJob){.kind=JOB_COUNTS,.out_a=vertices,.out_b=draws},0);
 }
@@ -328,10 +383,10 @@ void mp_render_worker_report(unsigned frame){
     /* Called on main after End has acknowledged every CPU job. Consumer
      * counters, including 64-bit values, are stable at this boundary. */
     mp_render_worker_barrier();
-    static unsigned jobs0,borrow0,retire0,busy0,fallback0;
+    static unsigned jobs0,borrow0,retire0,busy0,fallback0,sleeps0,signals0;
     static u64 copy0,consume0,wait0,source0,hit0,geometry0;
     char text[480];
-    snprintf(text,sizeof(text),"Renderer CPU/120 frames active=%u core=%u queued=%u borrowed=%u copy=%.2f ms consume=%.2f ms wait=%.2f ms source-copy=%llu source-reuse=%llu geometry-reuse=%llu retires=%u busy-retires=%u fallbacks=%u\n",
+    snprintf(text,sizeof(text),"Renderer CPU/120 frames active=%u core=%u queued=%u borrowed=%u copy=%.2f ms consume=%.2f ms wait=%.2f ms source-copy=%llu source-reuse=%llu geometry-reuse=%llu retires=%u busy-retires=%u fallbacks=%u sleeps=%u signals=%u\n",
         mp_render_worker_active,mp_render_worker_core,mp_render_worker_jobs-jobs0,mp_render_worker_borrowed_draws-borrow0,
         (mp_render_worker_copy_ticks-copy0)*1000.0/SYSCLOCK_ARM11/120,
         (mp_render_worker_busy_ticks-consume0)*1000.0/SYSCLOCK_ARM11/120,
@@ -340,10 +395,10 @@ void mp_render_worker_report(unsigned frame){
         (unsigned long long)(mp_render_worker_source_hit_bytes-hit0),
         (unsigned long long)(mp_render_worker_borrowed_bytes-geometry0),
         mp_render_worker_geometry_retirements-retire0,mp_render_worker_geometry_busy_retirements-busy0,
-        mp_render_worker_snapshot_fallbacks-fallback0);
+        mp_render_worker_snapshot_fallbacks-fallback0,mp_render_worker_sleeps-sleeps0,mp_render_worker_signals-signals0);
     jobs0=mp_render_worker_jobs;borrow0=mp_render_worker_borrowed_draws;
     retire0=mp_render_worker_geometry_retirements;busy0=mp_render_worker_geometry_busy_retirements;
-    fallback0=mp_render_worker_snapshot_fallbacks;
+    fallback0=mp_render_worker_snapshot_fallbacks;sleeps0=mp_render_worker_sleeps;signals0=mp_render_worker_signals;
     copy0=mp_render_worker_copy_ticks;consume0=mp_render_worker_busy_ticks;wait0=mp_render_worker_wait_ticks;
     source0=mp_render_worker_source_copied_bytes;hit0=mp_render_worker_source_hit_bytes;geometry0=mp_render_worker_borrowed_bytes;
     mp_native_log(text);

@@ -5,7 +5,7 @@
 #include <string.h>
 static struct { unsigned before[8];uint16_t pixels[320*240];unsigned after[8]; } image;
 static void save(const char* name,const MPBottomState* state,int fps,int guide){
-    mp_bottom_draw(image.pixels,state,60,fps,0,guide);
+    mp_bottom_draw(image.pixels,state,60,fps,0,0,guide);
     for(int i=0;i<8;++i)assert(image.before[i]==0xdeadbeef&&image.after[i]==0xdeadbeef);
     char path[200];snprintf(path,sizeof(path),"build/bottom-host-%s.rgb565",name);
     FILE* f=fopen(path,"wb");assert(f);assert(fwrite(image.pixels,1,sizeof(image.pixels),f)==sizeof(image.pixels));fclose(f);
@@ -15,8 +15,9 @@ int main(void){
     assert(mp_bottom_art_init(font,"assets/GALE01/files/MnSlChr.usd","assets/GALE01/files/IfAll.usd"));
     for(int i=0;i<8;++i)image.before[i]=image.after[i]=0xdeadbeef;
     assert(mp_bottom_hit(0,214)==0&&mp_bottom_hit(0,215)==MP_BOTTOM_FPS);
-    assert(mp_bottom_hit(103,239)==MP_BOTTOM_FPS&&mp_bottom_hit(104,215)==MP_BOTTOM_VIEW);
-    assert(mp_bottom_hit(214,239)==MP_BOTTOM_VIEW&&mp_bottom_hit(215,215)==MP_BOTTOM_GUIDE);
+    assert(mp_bottom_hit(79,239)==MP_BOTTOM_FPS&&mp_bottom_hit(80,215)==MP_BOTTOM_RATE);
+    assert(mp_bottom_hit(159,239)==MP_BOTTOM_RATE&&mp_bottom_hit(160,215)==MP_BOTTOM_VIEW);
+    assert(mp_bottom_hit(239,239)==MP_BOTTOM_VIEW&&mp_bottom_hit(240,215)==MP_BOTTOM_GUIDE);
     assert(mp_bottom_hit(320,215)==0&&mp_bottom_hit(0,240)==0);
     MPBottomState s={0};s.stock_mode=1;s.rule_stocks=4;s.rule_minutes=8;s.timer=1;s.seconds=423;
     for(unsigned i=0;i<4;++i){s.players[i]=(MPBottomPlayer){i?1:0,i*7,0,i,4,17+i*52};}

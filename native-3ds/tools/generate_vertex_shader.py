@@ -251,18 +251,21 @@ if args.unlit_affine:
     path=path.replace('    end\n.end', '    end\nunlit_primary_color:\n'
         '        max r8, zeros, r7\n        min outcolor, ones, r8\n'+tex+'    end\n.end')
     shader='; MP_UNLIT_AFFINE_SHADER\n'+shader[:begin]+path
-(args.output/'vertex.v.pica').write_text(shader)
+(args.output/'vertex.v.pica').write_text(shader,newline='\n')
 # A separate program leaves the common single-texture vertex shader unchanged.
 dual=shader.replace('.out outtex texcoord0','.out outtex texcoord0\n.out outtex1 texcoord1')
 dual=dual.replace('    end\n','    mov outtex1.xy, v5\n    mov outtex1.z, zeros\n    mov outtex1.w, ones\n    end\n')
-(args.output/'vertex-dual.v.pica').write_text(dual)
+(args.output/'vertex-dual.v.pica').write_text(dual,newline='\n')
 # Stereo adjusts the rotated horizontal clip coordinate on every exit;
-# fixed attribute 6 holds (scale,bias). All routes share identical uniforms.
+# fixed attribute 6 holds (scale, -convergence, -popout, 0). The eye shift is
+# scale*max(w-convergence, -popout*w): content nearer than the convergence
+# plane comes out of the screen by at most popout times the far-field depth,
+# so HUD models placed close to a camera stay fusible. r12 is dead at exits.
 for name,source in [('vertex-stereo',shader),('vertex-dual-stereo',dual)]:
     assert 'r11' not in source
     stereo=source.replace('outpos', 'r11').replace('.out r11 position','.out outpos position')
-    stereo=stereo.replace('    end\n','    mad r11.y, v6.x, r11.w, r11.y\n    add r11.y, r11.y, v6.y\n    mov outpos, r11\n    end\n')
-    (args.output/f'{name}.v.pica').write_text(stereo)
+    stereo=stereo.replace('    end\n','    add r12.x, r11.w, v6.y\n    mul r12.y, r11.w, v6.z\n    max r12.x, r12.x, r12.y\n    mad r11.y, v6.x, r12.x, r11.y\n    mov outpos, r11\n    end\n')
+    (args.output/f'{name}.v.pica').write_text(stereo,newline='\n')
 # The expensive CPU fallback is affine -> clamp -> affine. Separate programs
 # add only its final multiply/add, using fixed attributes rather than exceeding
 # the PICA uniform bank. Keep all normal shader binaries unchanged.
@@ -272,4 +275,4 @@ if not (args.reference or args.identity_affine or args.unlit_affine):
         old='        mad outcolor, r10, r9, r8\n'
         assert source.count(old)==2
         source=source.replace(old,'        mad r8, r10, r9, r8\n        mul r8, v7, r8\n        add outcolor, r8, v8\n')
-        (args.output/f'{stem}-clamped.v.pica').write_text('; Clamped material program: fixed v7 scale and v8 bias.\n'+source)
+        (args.output/f'{stem}-clamped.v.pica').write_text('; Clamped material program: fixed v7 scale and v8 bias.\n'+source,newline='\n')

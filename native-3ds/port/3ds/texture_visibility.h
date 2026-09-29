@@ -3,9 +3,9 @@
 #include <stdint.h>
 static inline unsigned mp_texture_source_bytes(unsigned format,unsigned width,unsigned height){
     unsigned bw=4,bh=4,bytes=32;
-    if(format==0||format==8||format==14||format==0x20)bw=bh=8;
-    else if(format==1||format==2||format==9||format==0x22||(format>=0x27&&format<=0x2a))bw=8;
-    else if(format==6)bytes=64;
+    if(format==0||format==8||format==14||format==0x20||format==0x30)bw=bh=8;
+    else if(format==1||format==2||format==9||format==0x11||format==0x22||(format>=0x27&&format<=0x2a)||format==0x39||format==0x3a)bw=8;
+    else if(format==6||format==0x16)bytes=64;
     return ((width+bw-1)/bw)*((height+bh-1)/bh)*bytes;
 }
 static inline int mp_texture_range_overlap(uint32_t first,uint32_t first_size,uint32_t second,uint32_t second_size){

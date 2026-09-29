@@ -77,6 +77,39 @@ static inline int mp_snapshot_image(MPSnapshotArena *a,MPDrawSnapshot *draw,
     return mp_snapshot_texture(a,draw,image,mp_texture_source_bytes(fmt,w,h),resolve,ctx) &&
            mp_snapshot_texture(a,draw,palette,entries*2,resolve,ctx);
 }
+/* Copy only the uniform rows the native renderer can read for this draw: the
+ * position rows below matrix_rows, the normal and light rows only when a
+ * lighting channel is enabled, and projection/shade/material rows. Unskinned
+ * draws then copy a fraction of the 1.5 KiB block. Unread rows of the arena
+ * copy stay unwritten; the renderer uploads by row index from the same mask
+ * (upload_gpu_uniforms, lighting_uniform_mask, unit attenuation). */
+#ifdef MP_SMOKE_TEST
+volatile unsigned mp_snapshot_uniform_full;
+#else
+#define mp_snapshot_uniform_full 0
+#endif
+static inline const void *mp_snapshot_uniforms(MPSnapshotArena *a,const MPGPUUniforms *u) {
+    if(!u) return NULL;
+    if(mp_snapshot_uniform_full) return mp_snapshot_copy(a,u,sizeof(*u));
+    MPGPUUniforms *copy=mp_snapshot_allocate(a,sizeof(*copy));
+    if(!copy) return NULL;
+    unsigned rows=mp_snapshot_word(&u->matrix_rows); if(rows>30) rows=30;
+    int lit=mp_snapshot_word(&u->value[MP_GPU_CONFIG][0])||mp_snapshot_word(&u->value[MP_GPU_CONFIG+1][0]);
+    size_t tail=sizeof(*u)-offsetof(MPGPUUniforms,matrix_rows),bytes=rows*16+tail;
+    memcpy(copy->value[MP_GPU_POS],u->value[MP_GPU_POS],rows*16);
+    if(lit) {
+        memcpy(copy->value[MP_GPU_NORMAL],u->value[MP_GPU_NORMAL],rows*16);
+        memcpy(copy->value[MP_GPU_PROJECTION],u->value[MP_GPU_PROJECTION],(MP_GPU_UNIFORMS-MP_GPU_PROJECTION)*16);
+        bytes+=rows*16+(MP_GPU_UNIFORMS-MP_GPU_PROJECTION)*16;
+    } else {
+        memcpy(copy->value[MP_GPU_PROJECTION],u->value[MP_GPU_PROJECTION],(MP_GPU_LIGHT_POS-MP_GPU_PROJECTION)*16);
+        memcpy(copy->value[MP_GPU_SHADE],u->value[MP_GPU_SHADE],(MP_GPU_UNIFORMS-MP_GPU_SHADE)*16);
+        bytes+=(MP_GPU_LIGHT_POS-MP_GPU_PROJECTION+MP_GPU_UNIFORMS-MP_GPU_SHADE)*16;
+    }
+    memcpy(&copy->matrix_rows,&u->matrix_rows,tail);
+    a->copied_bytes+=bytes;
+    return copy;
+}
 /* All inputs are copied before publication. Texture identity remains the
  * original address, while decode bytes are resolved separately by the worker.
  * Cache entries are reusable only within the current source generation. */
@@ -100,7 +133,7 @@ static inline MPDrawSnapshot *mp_snapshot_draw(MPSnapshotArena *a,const void *ve
     }
     address=mp_snapshot_word(s->draw+MP_DRAW_GPU);
     if(address) {
-        s->uniforms=mp_snapshot_copy(a,resolve(address,sizeof(MPGPUUniforms),ctx),sizeof(MPGPUUniforms));
+        s->uniforms=mp_snapshot_uniforms(a,resolve(address,sizeof(MPGPUUniforms),ctx));
         if(!s->uniforms) goto fail;
     }
     if(!mp_snapshot_image(a,s,s->draw,resolve,ctx)) goto fail;

@@ -15,13 +15,15 @@ def adapt(source):
         replace('        if (temp_r29 == 0 || temp_r29 == 2) {',
                 '        if (temp_r29 == 13 || temp_r29 == 15) {\n            gm_80480DA8.unk8.unk0 = 0;\n            gm_80480DA8.unk14 = 0x14;\n            lb_8001CBAC(4); /* Slippi: continue with no card, saving disabled. */\n        } else if (temp_r29 == 0 || temp_r29 == 2) {')
     elif name=='gmmain_lib.c':
-        for function in ('gmMainLib_8015FA34','gmMainLib_8015FBA4'):
+        # 8015FBA4 initializes every section (boot, Erase Data); 8015FA34
+        # follows a card load, where results 0 and 2 mean a save was read.
+        for function,new_save in (('gmMainLib_8015FA34','arg0 != 0 && arg0 != 2'),('gmMainLib_8015FBA4','1')):
             begin=text.index('void '+function+'(');end=text.index('\n}',begin)
             part=text[begin:end]
             assert part.count('    lbAudioAx_80028690();')==1
-            part=part.replace('    lbAudioAx_80028690();','    mp_offline_defaults();\n    lbAudioAx_80028690();')
+            part=part.replace('    lbAudioAx_80028690();','    mp_offline_defaults('+new_save+');\n    lbAudioAx_80028690();')
             text=text[:begin]+part+text[end:]
-        text='extern void mp_offline_defaults(void);\n'+text
+        text='extern void mp_offline_defaults(int new_save);\n'+text
     else:
         text='#include "ucf.h"\n'+text
         if name=='fighter.c':

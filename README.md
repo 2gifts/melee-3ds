@@ -25,22 +25,23 @@ Play Versus against CPUs, practice in Training, and explore Melee on a different
 
 - Native stereoscopic **3D in gameplay and perspective menus**, adjusted with the system slider.
 - **4:3 by default**, with an optional expanded view that reveals more of the scene without stretching it.
-- A **touch-screen dashboard** with portraits, stocks, and damage for up to four fighters, plus menu guidance and an optional FPS display.
-- Original music and sound effects, all characters and stages unlocked, **UCF 0.84 input fixes**, and editable tournament-friendly defaults.
+- A **touch-screen dashboard** with portraits, stocks, and damage for up to four fighters, plus menu guidance, an optional FPS display, a frame-rate mode switch, and a tap-jump option.
+- Original music and sound effects, **UCF 0.84 input fixes**, and **C-stick attacks in single-player modes**.
+- **Two builds, installable side by side:** everything unlocked with editable tournament-friendly defaults, or a **fresh save** with vanilla options that you unlock by playing. Progress saves to the SD card as Dolphin-compatible memory-card files.
 - **HOME Menu launch through an installable CIA**, with a disc icon and a Final Destination/Fox diorama. Homebrew Launcher is also supported.
 - Optional **Diet Melee scenery** for five stages, simplifying visuals while retaining the original stage gameplay and collision.
 
 ## Performance to expect
 
-These are approximate observations on a physical New 3DS, not guarantees or emulator benchmarks:
+These are approximate observations on a physical New 3DS with 3D on, not guarantees or emulator benchmarks:
 
 | Scenario | Typical experience |
 |---|---|
-| Lighter 1v1 matches on Diet stages, 2D | Roughly **55–60 FPS** |
-| Lighter 1v1 matches on Diet stages, 3D | Often **around 50–55 FPS**, with heavier matchups/effects dipping into the 40s |
-| Large casual stages with four fighters, 3D | Can fall into the **teens or low 20s** |
+| 1v1 matches | **60 FPS** on most stages |
+| Casual matches with four fighters on large stages | A steady **30 FPS** |
+| A few single-player stages (for example Adventure's Underground Maze and Kirby team, or a Classic team battle) | Can still drop into the **teens or 20s** |
 
-Stages, fighters, items, and effects all matter. For the smoothest experience, use 1v1 matches, prepared Diet scenery, and 2D. **Neither stable 60 FPS in 3D nor a 30 FPS minimum in crowded matches is achieved.** The optional display distinguishes rendered FPS from game updates; a 60 Hz update reading does not mean 60 rendered frames.
+The game logic runs at full speed (60 updates per second) almost everywhere; in heavy scenes only the number of drawn frames drops. The bottom screen's rate button chooses **AUTO** (60 FPS, switching to an even 30 when a scene can't hold 60), **30**, or **60**. Stages, fighters, items, and effects all matter; prepared Diet scenery helps on its five stages.
 
 ## What you need
 
@@ -55,10 +56,10 @@ Stages, fighters, items, and effects all matter. For the smoothest experience, u
 Once you have your locally built `melee-3ds.cia` and extracted SD package:
 
 1. Power off the console and put its SD card in your computer.
-2. Copy the generated **`3ds` folder from `native-3ds/dist/native-alpha/`** to the SD root, merging folders. The game files must end up in **`SD:/3ds/melee/files/`**.
-3. Copy **`melee-3ds.cia`** to **`SD:/cias/`**; create that folder if needed.
+2. Copy the generated **`3ds` folder from `native-3ds/dist/native-alpha/`** to the SD root, merging folders. The game files must end up in **`SD:/3ds/melee/files/`**, grouped into small folders such as `files/_Ty01/` (the console opens files slowly in one large folder).
+3. Copy **`melee-3ds.cia`** (and **`melee-3ds-fresh.cia`**, if you built the fresh-save version) to **`SD:/cias/`**; create that folder if needed.
 4. Safely eject the card, return it to the console, and power on.
-5. Open **FBI → SD → cias → melee-3ds.cia → Install CIA**, and confirm.
+5. Open **FBI → SD → cias → melee-3ds.cia → Install CIA**, and confirm. Install `melee-3ds-fresh.cia` the same way.
 6. Return to the HOME Menu, unwrap the Melee icon if prompted, and launch it.
 
 **The CIA does not contain the game assets.** Keep `SD:/3ds/melee/files/` on the card after installation. Optional prepared scenery goes in `SD:/3ds/melee/visuals/`. [Installation, updating, and troubleshooting](native-3ds/docs/HOME_MENU.md).
@@ -69,7 +70,7 @@ For Homebrew Launcher, select **melee** after copying the same SD package. Updat
 
 Choose **VS Mode → Melee**, select your fighter and CPU opponents, press START, and pick a stage. Training is under **1-P Mode → Training**. Only **one human player** is supported; the other fighters are CPUs.
 
-Versus starts with **4 stocks, 8 minutes, items off, team attack on, and pause enabled**. Change the rules in the usual menus for casual play. Settings reset when the application restarts.
+In the everything-unlocked build, Versus starts with **4 stocks, 8 minutes, items off, team attack on, and pause enabled**; the fresh-save build uses Melee's original defaults. Change the rules in the usual menus for casual play. Rule changes are saved with your progress.
 
 | Input | Action |
 |---|---|
@@ -81,7 +82,8 @@ Versus starts with **4 stocks, 8 minutes, items off, team attack on, and pause e
 | C-stick | Directional attack |
 | START | Confirm / pause / Training menu |
 | 3D slider | Adjust depth; fully down selects 2D |
-| Touch FPS / VIEW / CONTROLS | Toggle FPS, change the view, or show controls |
+| Touch the bottom-screen buttons | Toggle the FPS display, choose the frame-rate mode (AUTO / 30 / 60), change the view, or show controls |
+| Touch TAP JUMP (on the CONTROLS page) | Turn jumping with up on the Circle Pad on or off; saved on the SD card |
 | Hold ZL + ZR, then press SELECT | Toggle 4:3 / expanded view |
 | SELECT | Exit to HOME or Homebrew Launcher |
 
@@ -89,7 +91,7 @@ The touch-screen controls guide does not pause a match.
 
 ## Scope and credits
 
-This is an unofficial homebrew port. There is **no multiplayer connection, Slippi rollback, replay recording, or persistent memory-card saving**. Optional movies are skipped, some graphics are simplified or approximate, and single-player modes have less coverage than Versus and Training. Bugs may remain. See [project status](native-3ds/docs/PORT_STATUS.md).
+This is an unofficial homebrew port. There is **no multiplayer connection, Slippi rollback, or replay recording**. Optional movies are skipped, some graphics are simplified or approximate, and single-player modes have less coverage than Versus and Training. Bugs may remain. See [project status](native-3ds/docs/PORT_STATUS.md).
 
 Thanks to **doldecomp/melee and its contributors**, devkitPro, Diet Melee, the UCF authors and Project Slippi, and the Mario 64 3DS ports used as references. Development used OpenAI Codex alongside repeated testing on a physical New 3DS.
 

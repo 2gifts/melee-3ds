@@ -183,14 +183,19 @@ static void header(const char* title,const char* side){
     rect(0,0,320,29,RGB(10,16,25));slash(0,0,4,29,gold);
     fit(14,3,title,22,215,ink);right(309,10,side,12,gold);rect(0,29,320,2,gold);
 }
-static void footer(unsigned fps,unsigned show_fps,unsigned expanded,unsigned guide){
+/* Four 80-pixel buttons: FPS counter, frame-rate mode, view, controls. */
+static void footer(unsigned fps,unsigned show_fps,unsigned expanded,unsigned rate,unsigned guide){
+    static const char*const rates[]={"AUTO 60","AUTO 30","30 LOCK","30 LOCK","60 MAX","60 MAX"};
     rect(0,214,320,26,RGB(9,15,25));rect(0,214,320,1,RGB(80,98,111));
     char b[32];snprintf(b,sizeof(b),show_fps?"%u FPS":"FPS OFF",fps);
-    center(51,220,b,14,show_fps?gold:muted);rect(103,219,1,15,RGB(56,70,88));
-    center(160,220,expanded?"VIEW: WIDE":"VIEW: 4:3",13,ink);rect(214,219,1,15,RGB(56,70,88));
-    center(269,220,guide?"CLOSE GUIDE":"CONTROLS",13,guide?gold:ink);
+    center(40,220,b,13,show_fps?gold:muted);rect(79,219,1,15,RGB(56,70,88));
+    center(120,220,rates[rate<6?rate:0],13,ink);rect(159,219,1,15,RGB(56,70,88));
+    center(200,220,expanded?"WIDE":"4:3",13,ink);rect(239,219,1,15,RGB(56,70,88));
+    extern volatile unsigned mp_native_camera_mode,mp_native_camera_control;
+    if(mp_native_camera_mode)center(280,220,mp_native_camera_control?"CAMERA ON":"CAMERA",13,mp_native_camera_control?gold:ink);
+    else center(280,220,guide?"CLOSE":"CONTROLS",13,guide?gold:ink);
 }
-unsigned mp_bottom_hit(unsigned x,unsigned y){if(x>=320||y<215||y>=240)return 0;return x<104?MP_BOTTOM_FPS:x<215?MP_BOTTOM_VIEW:MP_BOTTOM_GUIDE;}
+unsigned mp_bottom_hit(unsigned x,unsigned y){if(x>=320||y<215||y>=240)return 0;return x<80?MP_BOTTOM_FPS:x<160?MP_BOTTOM_RATE:x<240?MP_BOTTOM_VIEW:MP_BOTTOM_GUIDE;}
 static void card(int x,int y,int w,int h,const MPBottomPlayer* p,unsigned slot,int battle,int stock,int stamina){
     uint16_t color=colors[p->color%4];int out=battle&&stock&&!p->stocks;
     rect(x,y,w,h,RGB(25,36,51));rect(x,y,3,h,p->kind==3?RGB(66,78,90):color);
@@ -227,7 +232,7 @@ static const MenuHelp menu_help[34]={
     [1]={"1-P MODE","PLAY AT YOUR OWN PACE","REGULAR MATCH: SOLO ADVENTURES","TRAINING: PRACTICE YOUR MOVES","A: OPEN   B: MAIN MENU",0},
     [2]={"VS MODE","YOUR MELEE RULES","MELEE: FIGHT CPU OPPONENTS","RULES: STOCKS, TIME AND ITEMS","A: OPEN   B: MAIN MENU",1},
     [3]={"TROPHIES","THE MELEE COLLECTION","GALLERY: TAKE A CLOSER LOOK","COLLECTION: VIEW YOUR TROPHIES","A: OPEN   B: MAIN MENU",0},
-    [4]={"OPTIONS","MAKE YOURSELF AT HOME","ADJUST SOUND AND GAME SETTINGS","USE VIEW BELOW FOR 4:3 OR WIDE","A: OPEN   B: MAIN MENU",0},
+    [4]={"OPTIONS","MAKE YOURSELF AT HOME","ADJUST SOUND AND GAME SETTINGS","TAP 4:3/WIDE BELOW FOR SCREEN WIDTH","A: OPEN   B: MAIN MENU",0},
     [5]={"DATA","EXPLORE MELEE","STATS AND CHARACTER ARCHIVES","SOUND TEST: PLAY THE SOUNDTRACK","A: OPEN   B: MAIN MENU",0},
     [6]={"REGULAR MATCH","TAKE ON A SOLO RUN","CLASSIC: A SERIES OF BATTLES","ADVENTURE: EXPLORE THE WORLDS","A: CHOOSE MODE   B: 1-P MODE",0},
     [7]={"EVENT MATCH","A CHALLENGE WITH A TWIST","EACH EVENT HAS ITS OWN OBJECTIVE","READ THE OBJECTIVE ON THE TOP SCREEN","A: CHOOSE EVENT   B: BACK",0},
@@ -240,7 +245,7 @@ static const MenuHelp menu_help[34]={
     [18]={"NAME ENTRY","MAKE YOUR MARK","CREATE OR MANAGE YOUR PLAYER TAGS","NAMES LAST UNTIL YOU CLOSE THE APP","FOLLOW THE TOP-SCREEN PROMPTS",0},
     [19]={"RUMBLE","CONTROLLER FEEDBACK","THE NEW 3DS HAS NO RUMBLE MOTOR","THIS OPTION DOES NOT ADD VIBRATION","B: OPTIONS",0},
     [20]={"SOUND","TUNE YOUR AUDIO","ADJUST MUSIC AND SOUND EFFECTS","USE THE CONSOLE VOLUME FOR OVERALL LEVEL","FOLLOW THE TOP-SCREEN PROMPTS",0},
-    [21]={"DISPLAY","PICTURE SETTINGS","MELEE USES THE NATIVE LCD RESOLUTION","TAP VIEW BELOW TO CHANGE SCREEN WIDTH","B: OPTIONS",0},
+    [21]={"DISPLAY","PICTURE SETTINGS","MELEE USES THE NATIVE LCD RESOLUTION","TAP 4:3/WIDE BELOW TO CHANGE WIDTH","B: OPTIONS",0},
     [23]={"LANGUAGE","CHOOSE A LANGUAGE","CHANGES THE ORIGINAL GAME'S LANGUAGE","BOTTOM-SCREEN GUIDANCE STAYS IN ENGLISH","FOLLOW THE TOP-SCREEN PROMPTS",0},
     [24]={"ERASE DATA","MANAGE GAME DATA","THIS BUILD HAS NO MEMORY-CARD SAVING","CLOSING THE APP RESETS SESSION SETTINGS","FOLLOW THE TOP-SCREEN PROMPTS",0},
     [25]={"SNAPSHOTS","MELEE MOMENTS","THIS MODE USES GAMECUBE MEMORY CARDS","MEMORY-CARD SAVING IS NOT AVAILABLE","FOLLOW THE TOP-SCREEN PROMPTS",0},
@@ -258,28 +263,64 @@ static const char* mode_title(unsigned mode){
     case 43:return "EVENT";default:return "MELEE";}
 }
 static void menu_page(const MPBottomState* s){
-    static const MenuHelp fallback={"MELEE","READY WHEN YOU ARE","FOLLOW THE PROMPTS ON THE TOP SCREEN","TOUCH CONTROLS ARE AVAILABLE BELOW","VIEW: SCREEN WIDTH   CONTROLS: BUTTON GUIDE",0};
+    static const MenuHelp fallback={"MELEE","READY WHEN YOU ARE","FOLLOW THE PROMPTS ON THE TOP SCREEN","TOUCH CONTROLS ARE AVAILABLE BELOW","AUTO/30/60: FRAME RATE   CONTROLS: GUIDE",0};
     const MenuHelp* m=s->scene==1&&s->menu<34&&menu_help[s->menu].title?&menu_help[s->menu]:&fallback;
-    header(m->title,"3DS");fit(17,44,m->lead,22,286,gold);
+    header(m->title,s->profile?"FRESH SAVE":"3DS");fit(17,44,m->lead,22,286,gold);
     if(m->rules)rules(s,76);
+    else if(s->scene==1&&s->fighters){
+        /* Save progress: what this save has unlocked so far. */
+        char b[48];rect(17,78,38,2,gold);
+        snprintf(b,sizeof(b),"FIGHTERS %u/25",s->fighters);text(17,87,b,12,s->fighters==25?gold:ink);
+        snprintf(b,sizeof(b),"STAGES %u/29",s->stages);text(165,87,b,12,s->stages==29?gold:ink);
+        snprintf(b,sizeof(b),"TROPHIES %u/293",s->trophies);text(17,104,b,12,s->trophies==293?gold:ink);
+        snprintf(b,sizeof(b),"EVENTS %u/51",s->events);text(165,104,b,12,s->events==51?gold:ink);
+    }
     else{rect(17,82,38,2,gold);text(17,97,"SUPER SMASH BROS. MELEE",12,muted);}
     rect(17,122,286,1,RGB(74,88,102));
     fit(17,138,m->line1,15,286,ink);fit(17,163,m->line2,14,286,muted);
-    fit(17,195,m->hint,12,286,gold);
+    /* Fresh save: how to unlock the next fighter (vanilla US conditions),
+     * in place of the main menu's button hint. */
+    static const char*const unlock_hints[11]={
+        "NEXT: JIGGLYPUFF - CLEAR CLASSIC WITH ANY FIGHTER",
+        "NEXT: DR. MARIO - CLEAR CLASSIC AS MARIO",
+        "NEXT: FALCO - CLEAR 100-MAN MELEE",
+        "NEXT: YOUNG LINK - CLEAR CLASSIC WITH 10 FIGHTERS",
+        "NEXT: PICHU - CLEAR EVENT 37",
+        "NEXT: GANONDORF - CLEAR EVENT 29",
+        "NEXT: LUIGI - FINISH ADVENTURE 1-1 AT :X2 ON THE TIMER",
+        "NEXT: MARTH - CLEAR CLASSIC OR ADVENTURE WITH ALL 14 STARTERS",
+        "NEXT: ROY - CLEAR CLASSIC AS MARTH",
+        "NEXT: MEWTWO - 20 HOURS OF VS PLAY OR 700 VS MATCHES",
+        "NEXT: MR. GAME & WATCH - CLEAR CLASSIC WITH EVERY FIGHTER"};
+    if(s->profile&&s->scene==1&&s->menu==0&&s->locked){
+        unsigned i=0;while(!(s->locked&(1u<<i)))++i;
+        fit(17,195,unlock_hints[i],12,286,gold);
+    }else fit(17,195,m->hint,12,286,gold);
 }
+/* The TAP JUMP row: the whole row is the touch target (mp_bottom_guide_hit). */
+enum{TAP_JUMP_Y=182,TAP_JUMP_H=27};
 static void guide_page(void){
+    extern unsigned mp_native_tap_jump(void);
     header("CONTROLS","NEW 3DS");
     static const char* labels[]={"CIRCLE PAD","A / B","X / Y","L / R","ZL / ZR","C STICK","START","SELECT"};
     static const char* actions[]={"MOVE","ATTACK / SPECIAL","JUMP","SHIELD","GRAB","DIRECTIONAL ATTACK","CONFIRM / PAUSE","EXIT GAME"};
-    for(int i=0;i<8;++i){int y=39+i*19;text(15,y,labels[i],13,gold);fit(122,y,actions[i],13,187,ink);}
-    text(15,195,"THE CONTROLS GUIDE DOES NOT PAUSE PLAY",11,muted);
+    for(int i=0;i<8;++i){int y=37+i*18;text(15,y,labels[i],13,gold);fit(122,y,actions[i],13,187,ink);}
+    unsigned on=mp_native_tap_jump();
+    rect(8,TAP_JUMP_Y,304,TAP_JUMP_H,RGB(25,36,51));rect(8,TAP_JUMP_Y,3,TAP_JUMP_H,gold);
+    text(18,TAP_JUMP_Y+7,"TAP JUMP",13,gold);
+    fit(104,TAP_JUMP_Y+8,on?"UP ON THE CIRCLE PAD JUMPS":"JUMP WITH X / Y ONLY",11,150,muted);
+    rect(262,TAP_JUMP_Y+4,44,TAP_JUMP_H-8,on?gold:RGB(56,70,88));
+    center(284,TAP_JUMP_Y+7,on?"ON":"OFF",13,on?RGB(10,16,25):ink);
+}
+unsigned mp_bottom_guide_hit(unsigned x,unsigned y){
+    return x>=8&&x<312&&y>=TAP_JUMP_Y&&y<TAP_JUMP_Y+TAP_JUMP_H?MP_BOTTOM_TAP_JUMP:0;
 }
 void mp_bottom_loading(uint16_t* pixels,const char* message){
     canvas=pixels;background();header("SUPER SMASH BROS.","3DS");
     center(160,70,"MELEE",63,ink);rect(60,134,200,2,gold);center(160,152,message,15,gold);
     center(160,207,"NATIVE NINTENDO 3DS PORT",11,muted);
 }
-void mp_bottom_draw(uint16_t* pixels,const MPBottomState* s,unsigned fps,unsigned show_fps,unsigned expanded,unsigned guide){
+void mp_bottom_draw(uint16_t* pixels,const MPBottomState* s,unsigned fps,unsigned show_fps,unsigned expanded,unsigned rate,unsigned guide){
     canvas=pixels;background();
     int battle=s->scene==2||s->scene==3||s->scene==4||s->scene==44;
     if(guide)guide_page();
@@ -310,5 +351,5 @@ void mp_bottom_draw(uint16_t* pixels,const MPBottomState* s,unsigned fps,unsigne
         text(19,139,"ALL FIGHTERS ARE ALREADY UNLOCKED",12,ink);
         text(19,161,"SETTINGS LAST UNTIL YOU CLOSE THE APP",11,muted);
     }else menu_page(s);
-    footer(fps,show_fps,expanded,guide);
+    footer(fps,show_fps,expanded,rate,guide);
 }

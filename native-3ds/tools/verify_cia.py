@@ -153,7 +153,8 @@ def verify_launch_logo(data):
                 both_screens=True,sha256=hashlib.sha256(data).hexdigest())
 
 
-def verify(path, elf_path, art, *, cosmetic_baseline=None):
+def verify(path, elf_path, art, *, cosmetic_baseline=None, title_id=TITLE_ID):
+    TITLE_ID = title_id
     raw = path.read_bytes()
     hdr, _, _, cert, ticket_size, tmd_size, meta_size, size = struct.unpack_from('<IHHIIIIQ', raw)
     assert hdr == 0x2020 and raw[0x20] == 0x80

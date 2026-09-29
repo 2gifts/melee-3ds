@@ -98,11 +98,8 @@ static void audio_test_snapshot(void*unused){
 #endif
 void mp_native_audio(const u8*be,unsigned samples){
     if(!ready){ready=-1;
-#ifdef MP_RENDER_WORKER
-        /* libctru's linear allocator is not synchronized. Audio allocates
-         * once; wait for renderer allocation work before its initialization. */
-        extern void mp_render_worker_barrier(void);mp_render_worker_barrier();
-#endif
+        /* libctru's linear allocator is serialized by linear_lock.c; the
+         * renderer threads allocate concurrently with this initialization. */
 #ifdef MP_AUDIO_HLE_TEST
         ndspUseComponent(hle_component,sizeof(hle_component),0xff,0xff);mp_native_log("Azahar HLE audio fixture enabled; no physical DSP program\n");
 #endif

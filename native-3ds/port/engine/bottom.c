@@ -20,6 +20,29 @@ void mp_bottom_scene_begin(unsigned scene)
 const void* mp_bottom_font(void) { return HSD_SisLib_FontAtlas; }
 extern unsigned mp_bottom_css(unsigned);
 
+/* Unlock progress from the save: 14 starting fighters and 18 stages plus
+ * the 11-bit unlock masks; trophies with a nonzero count; cleared events. */
+static void progress(MPBottomState* s)
+{
+    extern unsigned mp_platform_profile(void);
+    const u16* trophies = gmMainLib_GetTrophyFlags();
+    u64 events = gmMainLib_804D3EE0->thing.x1A68 & ((1ULL << 51) - 1);
+    unsigned i, count = 0;
+    s->fighters = 14 + __builtin_popcount(*gmMainLib_GetUnlockedCharactersBitmaskPtr() & 0x7FF);
+    s->stages = 18 + __builtin_popcount(*gmMainLib_8015EDA4() & 0x7FF);
+    for (i = 0; i < 293; ++i) count += (trophies[i] & 0xFF) != 0;
+    s->trophies = count;
+    s->events = __builtin_popcountll(events);
+    s->profile = mp_platform_profile();
+    /* Easiest unlocks first; the bottom screen hints at the first locked. */
+    {
+        static const u8 order[11] = {15, 22, 20, 21, 24, 25, 7, 9, 23, 10, 3};
+        extern bool gm_IsCKindUnlocked(u8);
+        for (i = 0; i < 11; ++i)
+            if (!gm_IsCKindUnlocked(order[i])) s->locked |= 1u << i;
+    }
+}
+
 void mp_bottom_snapshot(MPBottomState* s)
 {
     unsigned i;
@@ -32,6 +55,7 @@ void mp_bottom_snapshot(MPBottomState* s)
     {
         struct GameRules* rules = gmMainLib_GetGameRules();
         s->rule_stocks = rules->stock_count;
+        if (s->scene == 1) progress(s);
         s->stock_mode = rules->mode == 1;
         s->rule_minutes = s->stock_mode ? rules->stock_time_limit : rules->time_limit;
         s->items = gmMainLib_GetGamePrefs()->item_freq;

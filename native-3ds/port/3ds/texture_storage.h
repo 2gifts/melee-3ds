@@ -13,7 +13,7 @@ static unsigned mp_texture_format(unsigned gx,unsigned palette){
     return 0;
 }
 static unsigned mp_texture_bits(unsigned format){
-    return format==10?4:format==7||format==9?8:format==3||format==5?16:32;
+    return format==10?4:format==7||format==9?8:format==2||format==3||format==4||format==5?16:32;
 }
 static void mp_texture_store(void*buffer,unsigned index,unsigned format,uint32_t rgba){
     uint8_t*bytes=buffer;unsigned r=rgba>>24,g=(rgba>>16)&255,b=(rgba>>8)&255,a=rgba&255;

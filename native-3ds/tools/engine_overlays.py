@@ -2,6 +2,20 @@
 import re
 from build import ROOT
 def adapt(source):
+    # Per-file overlays below, then layout fixes (layout_fixes/), then the
+    # gameplay mods both builds ship (gameplay_mods.py), then 3DS
+    # presentation edits (presentation_mods.py).
+    result=_adapt(source)
+    import layout_fixes,gameplay_mods,presentation_mods
+    edits=layout_fixes.edits_for(source)+gameplay_mods.edits_for(source)+presentation_mods.edits_for(source)
+    if not edits:return result
+    text=result.read_text(encoding='utf-8')
+    for old,new,count in edits:
+        assert text.count(old)==count,(source.name,old[:80],text.count(old),count)
+        text=text.replace(old,new)
+    out=ROOT/'build/overlays'/source.name;out.parent.mkdir(parents=True,exist_ok=True)
+    out.write_text(text,encoding='utf-8');return out
+def _adapt(source):
     if source.name=='ftkirby.c':
         changed=source.read_text(encoding='utf-8')
         marker='void ftKb_SpecialN_800F14B4(Fighter_GObj* gobj)'
@@ -138,6 +152,104 @@ extern ToyAnimState Toy_804A2AA8;
            for name,offset in [('_Toy_804A26B8',0),('_Toy_devtext_buf_804A26C4',0xC),
                                ('_Toy_devtext_buf_804A2750',0x98),('Toy_804A284C',0x194),
                                ('Toy_804A2AA8',0x3F0)])+changed[end:]
+        # Several functions treat "TyLight.dat" (803FDD18) as the base of
+        # the whole GameCube .data block and index the light, panel and
+        # backdrop tables at their PPC offsets (+CC, +FC, +188, +1A4, +224,
+        # +290). ARM lays those objects out separately, so the trophy
+        # gallery, lottery and collection read garbage symbol indices
+        # (hardware: data abort in Toy_80306D70 entering the lottery).
+        # Name the tables those offsets denote.
+        for old,new,count in [
+            ('            entry = tbl + M2C_FIELD(state, s32*, 0x10) * 0xC;\n'
+             '            if (*(s32*) (entry + 0x104) != 0) {\n'
+             '                HSD_SetEraseColor(\n'
+             '                    *(u8*) (entry + 0x100), *(u8*) (entry + 0x101),\n'
+             '                    *(u8*) (entry + 0x102), *(u8*) (entry + 0x103));',
+             '            s32 light = M2C_FIELD(state, s32*, 0x10);\n'
+             '            if (_Toy_803FDDE4.values[light].flag != 0) {\n'
+             '                GXColor color = _Toy_803FDDE4.values[light].color;\n'
+             '                HSD_SetEraseColor(color.r, color.g, color.b, color.a);',1),
+            ('    tbl = _Toy_str_TyLight_dat;\n','    (void) tbl;\n    (void) entry;\n',1),
+            ('base->entries[arg0].idx','_Toy_803FDDE4.values[arg0].index',3),
+            ('base->symbols[idx].name','_Toy_803FDDE4.symbols[idx].name',3),
+            ('        base = (TyLightFile*) _Toy_str_TyLight_dat;\n','        (void) base;\n',1),
+            ('    label = &data->ptrs[arg0];\n    joint[0] = HSD_ArchiveGetPublicAddress(tg->x50, *(label += 0x188 / 4));',
+             '    label = &_Toy_803FDEA0[arg0];\n    joint[0] = HSD_ArchiveGetPublicAddress(tg->x50, *label);',1),
+            ('(&data->ptrs[arg0 * 3])[0x224 / 4]','(&_Toy_803FDF3C)[arg0].animjoint',1),
+            ('(&data->ptrs[arg0 * 3])[0x228 / 4]','(&_Toy_803FDF3C)[arg0].matanim_joint',1),
+            ('(&data->ptrs[arg0 * 3])[0x22C / 4]','(&_Toy_803FDF3C)[arg0].shapeanim_joint',1),
+            ('    ptr = (char**) (data + arg0 * 4);\n    if (*(ptr += 0x69) != NULL) {',
+             '    ptr = &_Toy_803FDEBC[arg0];\n    if (*ptr != NULL) {',1),
+            ('            arg0 = (u32) data + arg0 * 0xC;\n            ptr = ((ToyPanelLabelData*) arg0)->ptrs;\n'
+             '            joint = HSD_ArchiveGetPublicAddress(td->archive, ptr[0x290 / 4]);\n'
+             '            data = HSD_ArchiveGetPublicAddress(td->archive, ptr[0x294 / 4]);\n'
+             '            shapanim =\n                HSD_ArchiveGetPublicAddress(td->archive, ptr[0x298 / 4]);',
+             '            joint = HSD_ArchiveGetPublicAddress(td->archive, _Toy_803FDFA8[arg0].animjoint);\n'
+             '            data = HSD_ArchiveGetPublicAddress(td->archive, _Toy_803FDFA8[arg0].matanim_joint);\n'
+             '            shapanim =\n                HSD_ArchiveGetPublicAddress(td->archive, _Toy_803FDFA8[arg0].shapeanim_joint);',1)]:
+            assert changed.count(old)==count,(old[:70],changed.count(old))
+            changed=changed.replace(old,new)
+        for stale in ('data->ptrs','base->entries','base->symbols','entry + 0x10','ptr[0x29'):
+            assert stale not in changed,stale
+        out=ROOT/'build/overlays'/source.name;out.parent.mkdir(parents=True,exist_ok=True)
+        out.write_text(changed,encoding='utf-8');return out
+    if source.name in ('gm_180A.c','gm_181A.c','gm_16F1.c','gmtoulib.c','gmtou_0.c','gmtou_1.c','gmtou_2.c','gmtoumode.c'):
+        changed=source.read_text(encoding='utf-8')
+        def once(old,new,count=1):
+            nonlocal changed
+            assert changed.count(old)==count,(source.name,old[:70],changed.count(old))
+            changed=changed.replace(old,new)
+        def shared(storage,size,members):
+            # One allocation for globals the matching code reaches by offset
+            # from the first; ARM data sections are placed independently.
+            text='u8 '+storage+'['+hex(size)+'] __attribute__((aligned(8),used));\n'
+            for name,offset in members:
+                text+='__asm__(".global '+name+'\\n.set '+name+','+storage+'+'+str(offset)+'\\n");\n'
+            return text
+        if source.name=='gm_180A.c':
+            # Home-Run Contest reads its distance tracker (80472EC8) as +0x80
+            # of the contest state (80472E48). Separately placed, the writes
+            # hit the model pointers after it (NULL joint at contest start)
+            # and the real tracker stayed 0 (no distance, records or unlocks).
+            once('static struct lbl_80472E48_t lbl_80472E48;\nstatic s32 lbl_80472EC8[4];',
+                 'extern struct lbl_80472E48_t lbl_80472E48;\nextern s32 lbl_80472EC8[4];\n'
+                 '_Static_assert(sizeof(struct lbl_80472E48_t)==0x80,"Home-Run state ABI");\n'+
+                 shared('mp_homerun_state',0x90,[('lbl_80472E48',0),('lbl_80472EC8',0x80)]))
+        if source.name=='gm_181A.c':
+            # Multi-Man Melee reaches its record state (80473594) as +0x6BC of
+            # 80472ED8; that only held by link-order chance.
+            once('lbl_80472ED8_t lbl_80472ED8;\nRegClearRecordState lbl_80473594;',
+                 'extern lbl_80472ED8_t lbl_80472ED8;\nextern RegClearRecordState lbl_80473594;\n'
+                 '_Static_assert(sizeof(lbl_80472ED8_t)==0x6BC&&sizeof(RegClearRecordState)==0x14,"Multi-Man record ABI");\n'+
+                 shared('mp_multiman_state',0x6D0,[('lbl_80472ED8',0),('lbl_80473594',0x6BC)]))
+        if source.name=='gm_16F1.c':
+            # Scores for all six player slots, as in fn_8016FAD4.
+            once('    s32 player_net;\n    s32 scores[4];','    s32 player_net;\n    s32 scores[6];')
+        if source.name in ('gmtoulib.c','gmtou_0.c','gmtou_1.c','gmtou_2.c'):
+            # Tournament code mixes named TmData fields with GameCube byte
+            # offsets (0x37 + n*0x12, 0x4B8...), which assume the packed
+            # entrant rows gm/types.h declares only for matching builds.
+            # LINT selects that packing (and checks the layout's size).
+            changed='#define LINT 1\n'+changed
+        if source.name=='gmtoulib.c':
+            # The bracket camera is +0x24 of the three camera vectors, i.e.
+            # the separate 803D9DD0; unset, zoom and pan used a NULL CObj.
+            once('''        CObjData* cobj_data = (CObjData*) &lbl_803D9DAC;
+        cobj_data->cobj_data.cobj = cobj;
+        {
+            HSD_CObj** cobj_ptr = &cobj_data->cobj_data.cobj;''','''        lbl_803D9DD0.cobj = cobj;
+        {
+            HSD_CObj** cobj_ptr = &lbl_803D9DD0.cobj;''')
+            # The tournament settings (804771C4) follow the 64 bracket rows.
+            once('((TmData*) &((BracketData*) lbl_80473AB8)->srcs[3])','(&gm_804771C4)',8)
+            # Two-digit names write a terminator at [9]; the original rows
+            # had linker padding there.
+            for name in ('lbl_803D9EE8','lbl_803D9EF4','lbl_803D9F00'):
+                once('static char '+name+'[] = {','static char '+name+'[12] = {')
+        if source.name=='gmtoumode.c':
+            # Sudden-death setup reads the match result that followed the
+            # enter data in the GameCube image.
+            once('&((MatchExitInfo*) (src + 1))->match_end','&gm_80487810.match_end')
         out=ROOT/'build/overlays'/source.name;out.parent.mkdir(parents=True,exist_ok=True)
         out.write_text(changed,encoding='utf-8');return out
     if source.name=='mnevent.c':
@@ -219,6 +331,47 @@ extern ToyAnimState Toy_804A2AA8;
         assert block.count(old)==1
         block=block.replace(old,old+"\n        if (!__builtin_isfinite(arg0->mtx[0][0])) {\n            extern void mp_collision_repair_matrix(HSD_JObj*);\n            mp_collision_repair_matrix(arg0);\n        }")
         changed=changed[:start]+block+changed[end:]
+        # The original clears byte by byte; -fno-builtin keeps that loop, and
+        # stage code clears large structures with it every frame. The word
+        # store implementation writes the same zero bytes.
+        old='''void memzero(void* mem, ssize_t size)
+{
+    u8* bytes = mem;
+    while (size--) {
+        *bytes++ = 0;
+    }
+}'''
+        assert changed.count(old)==1
+        changed=changed.replace(old,'''void memzero(void* mem, ssize_t size)
+{
+    if (size > 0) {
+        __builtin_memset(mem, 0, size);
+    }
+}''')
+        out=ROOT/'build/overlays'/source.name;out.parent.mkdir(parents=True,exist_ok=True)
+        out.write_text(changed,encoding='utf-8');return out
+    if source.name=='grpstadium.c':
+        # Pokemon Stadium's big screen shows EFB copies of the frame. Keep the
+        # 250x160 text window (rendered and copied every frame). Skip the two
+        # live views, a 640x406 full-screen capture and a 124x80 player
+        # close-up, which each need a GPU sync and a CPU readback here; during
+        # those modes the screen shows its image preloaded from the archive.
+        changed=source.read_text(encoding='utf-8')
+        for old,new in (('        lb_800122C8(&copy->desc, 0, 36, 0);\n','        /* Live view disabled (native performance). */\n'),
+                        ('        lb_800122C8(&new_var->desc, new_var->x1A, new_var->x1C, 0);\n','        /* Live view disabled (native performance). */\n')):
+            assert changed.count(old)==1,(source.name,old)
+            changed=changed.replace(old,new)
+        # Without captures the live view images (7: whole stage, 8: player
+        # close-up) are uninitialized preload memory. The screen shows its
+        # text/Pokemon display instead; training, which only uses the live
+        # view, keeps the idle screen. The chooser still rotates normally.
+        old='''    gp->u.display.xEA = gp->u.display.xE4;
+    gp->u.display.xE4 = arg1;'''
+        assert changed.count(old)==1,source.name
+        changed=changed.replace(old,'''    if (arg1 == 7 || arg1 == 8) {
+        arg1 = gm_8018841C() ? 0 : 1;
+    }
+'''+old)
         out=ROOT/'build/overlays'/source.name;out.parent.mkdir(parents=True,exist_ok=True)
         out.write_text(changed,encoding='utf-8');return out
     if source.name=='granime.c':
@@ -362,7 +515,7 @@ unsigned mp_bottom_css(unsigned slot)
             changed=changed.replace(old,old+guard)
         out=ROOT/'build/overlays'/source.name;out.parent.mkdir(parents=True,exist_ok=True)
         out.write_text(changed,encoding='utf-8');return out
-    if source.name not in ('lbaudio_ax.c','lbarq.c','camera.c','cobj.c','itcoin.c','mninfo.c','gmmain.c','devcom.c','lbmemory.c','lbfile.c','ftdata.c','gm_1A3F.c','lbcardnew.c','gmtitle.c','hsd_4D11.c','tydisplay.c','texp.c','psdisp.c','hsd_3915.c','gm_1832.c','synth.c','ftmaterial.c','grdisplay.c','gobjuserdata.c','eflib.c','shadow.c','lbrefract.c','itspawn.c','gm_1798.c','gm_1601.c','itfreeze.c','itlinkarrow.c','player.c','ftCo_Damage.c','particle.c','mnitemsw.c','mnname.c','mnnamenew.c','tobj.c','gm_1A45.c','lb_0192.c'):return source
+    if source.name not in ('lbaudio_ax.c','lbarq.c','camera.c','cobj.c','itcoin.c','mninfo.c','gmmain.c','devcom.c','lbmemory.c','lbfile.c','ftdata.c','gm_1A3F.c','lbcardnew.c','gmtitle.c','hsd_4D11.c','tydisplay.c','texp.c','psdisp.c','hsd_3915.c','gm_1832.c','synth.c','ftmaterial.c','grdisplay.c','gobjuserdata.c','eflib.c','shadow.c','lbrefract.c','itspawn.c','gm_1798.c','gm_1601.c','itfreeze.c','itlinkarrow.c','player.c','ftCo_Damage.c','particle.c','mnitemsw.c','mnname.c','mnnamenew.c','tobj.c','gm_1A45.c','lb_0192.c','cmsnap.c','lb_01F8.c','ground.c','gmstaffroll.c','lbbgflash.c','lbspdisplay.c'):return source
     contents=source.read_text(encoding='utf-8')
     changed=contents.replace('void inline itCoin_ResetRotation','static inline void itCoin_ResetRotation').replace('inline void mnInfo_CreateEntries','static inline void mnInfo_CreateEntries')
     if source.name in ('gm_1A45.c','lb_0192.c'):
@@ -391,7 +544,18 @@ unsigned mp_bottom_css(unsigned slot)
         # Perspective aspect is also the union's bottom field for other
         # projection types; the helper is identity for those cameras.
         changed=re.sub(re.escape(token)+r'(?!\s*=)', 'mp_display_camera_aspect(cobj)',changed)
-        changed=changed.replace('    current = cobj;', '    current = cobj;\n    mp_gx_display_width(mp_display_camera_width(cobj));\n    extern float mp_display_camera_convergence(HSD_CObj*);\n    extern void mp_gx_camera_convergence(float);\n    mp_gx_camera_convergence(mp_display_camera_convergence(cobj));')
+        changed=changed.replace('    current = cobj;', '    current = cobj;\n    mp_gx_display_width(mp_display_camera_width(cobj));\n    extern unsigned mp_display_camera_mips(HSD_CObj*);\n    extern void mp_gx_texture_mips(unsigned);\n    mp_gx_texture_mips(mp_display_camera_mips(cobj));\n    extern float mp_display_camera_convergence(HSD_CObj*);\n    extern void mp_gx_camera_convergence(float);\n    mp_gx_camera_convergence(mp_display_camera_convergence(cobj));')
+        # The erase rectangle exactly fills the frustum at mid depth, where
+        # stereo shifts it by up to 6 pixels per eye and bares the viewport
+        # edge. Extend it sideways; the camera scissor still bounds the fill.
+        old='''    HSD_EraseRect(top_res, bottom_res, left_res, right_res, -z_val,
+                  enable_color, enable_alpha, enable_depth);'''
+        assert changed.count(old)==1
+        changed=changed.replace(old,'''    if (HSD_CObjGetProjectionType(cobj) != PROJ_ORTHO) {
+        left_res *= 1.125F;
+        right_res *= 1.125F;
+    }
+'''+old)
     if source.name=='lbrefract.c':
         changed=changed.replace('    switch (HSD_CObjGetProjectionType(cobj)) {',
             '    extern float mp_display_camera_aspect(HSD_CObj*);\n    switch (HSD_CObjGetProjectionType(cobj)) {')
@@ -602,6 +766,80 @@ unsigned mp_bottom_css(unsigned slot)
         changed=changed.replace('while (HSD_Synth_804D772C != 0) {\n        callback();', 'while (HSD_Synth_804D772C != 0) {\n        mp_engine_poll();\n        callback();')
     if source.name in ('psdisp.c','hsd_3915.c','gm_1832.c'):
         changed=re.sub(r'GXWGFifo\.(u8|u16|u32|f32)\s*=\s*([^;]+);',r'mp_gx_write_\1(\2);',changed)
+    if source.name=='lbspdisplay.c':
+        # The screen-capture display (Classic's stage-clear blur) redraws a
+        # 640x480 capture of the whole display; span it in widescreen, and
+        # take the capture with the same full-display column mapping.
+        old='    cobj = HSD_CObjAlloc();'
+        assert changed.count(old)==1
+        changed=changed.replace(old,'    cobj = mp_display_overlay_camera(HSD_CObjAlloc());')
+        old='''    if (data->callback != NULL) {
+        data->callback(gobj);
+    }'''
+        assert changed.count(old)==1
+        changed=changed.replace(old,'''    if (data->callback != NULL) {
+        mp_gx_display_width(mp_display_camera_width(GET_COBJ(gobj)));
+        data->callback(gobj);
+    }''')
+        changed='extern struct HSD_CObj* mp_display_overlay_camera(struct HSD_CObj*);\nextern unsigned mp_display_camera_width(struct HSD_CObj*);\nextern void mp_gx_display_width(unsigned);\n'+changed
+    if source.name=='lbbgflash.c':
+        # Hit flashes, fades and strip wipes are 640x480 quads under this
+        # camera; in widescreen they must span the whole display.
+        old='HSD_CObjLoadDesc((HSD_CObjDesc*) &lbl_803BB028)'
+        assert changed.count(old)==2
+        changed=changed.replace(old,'mp_display_overlay_camera('+old+')')
+        changed=changed.replace('void lbBgFlash_800208EC(int arg0)','extern HSD_CObj* mp_display_overlay_camera(HSD_CObj*);\nvoid lbBgFlash_800208EC(int arg0)',1)
+    if source.name=='gmstaffroll.c':
+        # The staff roll's second camera draws only the HUD (sight, name plate,
+        # score) as models just in front of it; show that layer flat. The 3D
+        # corridor camera keeps its depth.
+        old='        gm_804D6834 = cobj;'
+        assert changed.count(old)==1
+        changed=changed.replace(old,old+'\n        {\n            extern void mp_display_flat_camera(HSD_CObj*);\n            mp_display_flat_camera(cobj);\n        }')
+    if source.name=='ground.c':
+        # A map part's own background camera widens with the world view.
+        old='            temp_r27 = lb_80013B14(archive->unk4->unk8[map_id].x10);'
+        assert changed.count(old)==1
+        changed=changed.replace(old,old+'\n            {\n                extern void mp_display_background_camera(HSD_CObj*);\n                mp_display_background_camera(temp_r27);\n            }')
+    if source.name=='lb_01F8.c':
+        # Congratulations art is one baseline JPEG ("THP" still). The THP
+        # library's decoder is paired-single assembly; decode natively into
+        # an RGB565 texture and show it as an ordinary sprite (the original
+        # composites Y/U/V planes through a four-stage TEV).
+        start=changed.index('    THPInit();\n    lbFile_80016760(filename, &lbl_804335B8.unk94, &lbl_804335B8.unk98);')
+        end=changed.index('    HSD_Free(decode_buf);\n}',start)+len('    HSD_Free(decode_buf);\n}')
+        changed=changed[:start]+'''    lbFile_80016760(filename, &lbl_804335B8.unk94, &lbl_804335B8.unk98);
+    {
+        u32 bytes = ((width + 3) / 4) * ((height + 3) / 4) * 32;
+        lbl_804335B8.x20 = HSD_MemAlloc(bytes);
+        if (!mp_platform_jpeg_rgb565(lbl_804335B8.unk94, lbl_804335B8.unk98,
+                                     ((u32) width << 16) | (u32) height,
+                                     lbl_804335B8.x20))
+        {
+            OSReport("Congratulations image not decoded: %s\\n", filename);
+            memset(lbl_804335B8.x20, 0, bytes);
+        }
+        DCFlushRange(lbl_804335B8.x20, bytes);
+        lbl_804335B8.x44 = NULL;
+        lbl_804335B8.x68 = NULL;
+    }
+}'''+changed[end:]
+        old='    lbl_804335B8.x70.image_ptr = NULL;'
+        assert changed.count(old)==1;changed=changed.replace(old,'    lbl_804335B8.x70.image_ptr = lbl_804335B8.x20;')
+        old='    lbl_804335B8.x70.format = GX_TF_RGBA8;'
+        assert changed.count(old)==1;changed=changed.replace(old,'    lbl_804335B8.x70.format = GX_TF_RGB565;')
+        old='    lbl_804335B8.x90->x40 |= 0x10;\n'
+        assert changed.count(old)==1;changed=changed.replace(old,'')
+        start=changed.index('void lbMthp8001F928(HSD_GObj* gobj, int arg1)\n{')
+        end=changed.index('    HSD_SObjLib_803A49E0(gobj, arg1);\n}',start)
+        changed=changed[:start]+'void lbMthp8001F928(HSD_GObj* gobj, int arg1)\n{\n'+changed[end:]
+        changed='extern unsigned mp_platform_jpeg_rgb565(const void*, unsigned, unsigned, void*);\n'+changed
+    if source.name=='cmsnap.c':
+        # The camera snapshot is handed to the memory card code as pixels.
+        # Every other texture copy is only sampled by GX and stays on the GPU.
+        old='        lb_800122C8(&_p(unk1), 0, 0, 0);'
+        assert changed.count(old)==1
+        changed='extern void mp_gx_copy_mode(unsigned);\n'+changed.replace(old,'        mp_gx_copy_mode(1); /* CPU readback */\n'+old+'\n        mp_gx_copy_mode(0);')
     if source.name=='gm_1832.c':
         # Classic's team roster splash composites ten pre-rendered fighters
         # with per-pixel Z24X8 replacement. Use ordinary alpha portrait sprites
@@ -610,7 +848,11 @@ unsigned mp_bottom_css(unsigned slot)
         old='''            HSD_ImageDescCopyFromEFB(&lbl_804735E8.x40[i], 0x82, 0, 0, 0);
             HSD_ImageDescCopyFromEFB(&lbl_804735E8.x88[i], 0x82, 0, 1, 1);'''
         assert changed.count(old)==1
-        changed=changed.replace(old,'            HSD_ImageDescCopyFromEFB(&lbl_804735E8.x40[i], 0x82, 0, 1, 1);')
+        # Alpha is each fighter's coverage: the depth image's role on GameCube.
+        changed='extern void mp_gx_copy_mode(unsigned);\n'+changed.replace(old,
+            '            mp_gx_copy_mode(2); /* coverage alpha */\n'
+            '            HSD_ImageDescCopyFromEFB(&lbl_804735E8.x40[i], 0x82, 0, 1, 1);\n'
+            '            mp_gx_copy_mode(0);')
         old='''        img[3].image_ptr = NULL;
         lb_800121FC(&img[3], 0x17C, 0x190, GX_TF_Z24X8, 0);'''
         assert changed.count(old)==1;changed=changed.replace(old,'')
@@ -619,6 +861,18 @@ unsigned mp_bottom_css(unsigned slot)
         old='''            sobj = HSD_SObjLib_803A477C(lbl_804735E8.xDC, &desc.desc, 0, 0,
                                         0x80, 1);'''
         assert changed.count(old)==1;changed=changed.replace(old,old.replace('0x80, 1','0x80, 0'))
+        # The "Stage N" layout camera stages its title, VS emblem and caption
+        # at unrelated depths (the title at a third of the focus distance, the
+        # emblem behind the fighters it covers). Show that layer flat; the
+        # fighter camera keeps its relief.
+        old='    cobj = HSD_CObjLoadDesc(lbl_804D65FC->cameras[0].desc);'
+        assert changed.count(old)==1
+        changed=changed.replace(old,old+'\n    extern void mp_display_flat_camera(HSD_CObj*);\n    mp_display_flat_camera(cobj);')
+        # The progress road map (IrRdMap) is drawn by the fighter camera but
+        # staged near it; as part of the layout it belongs at the screen plane.
+        old='    GObj_SetupGXLink(gobj, HSD_GObj_JObjCallback, 0xC, 0);'
+        assert changed.count(old)==1
+        changed=changed.replace(old,'    {\n        extern void mp_display_flat_callback(HSD_GObj*, int);\n        GObj_SetupGXLink(gobj, mp_display_flat_callback, 0xC, 0);\n    }')
     if source.name=='psdisp.c':
         changed=changed.replace('if (gp == NULL) {\n        *x = gp->pos.x;\n        *y = gp->pos.y;\n        *z = gp->pos.z;', 'if (gp == NULL) {\n        *x = pp->pos.x;\n        *y = pp->pos.y;\n        *z = pp->pos.z;')
     if source.name=='tydisplay.c':
@@ -670,7 +924,12 @@ unsigned mp_bottom_css(unsigned slot)
     if source.name=='gm_1A3F.c':
         changed=changed.replace('    preloadState(state);','    extern void mp_ucf_reset(void); mp_ucf_reset();\n    preloadState(state);')
         changed=changed.replace('    preloadState(state);','    extern void mp_display_set_world(void*); mp_display_set_world(NULL);\n    preloadState(state);')
-        changed=changed.replace('    mode = findMode(mode_kind);','    OSReport("Enter game mode %u\\n",mode_kind);\n    mode = findMode(mode_kind);')
+        # Development hook: a debugger may name the next game mode (the menus
+        # otherwise choose it). Zero, and unused, in normal play.
+        changed=changed.replace('    mode = findMode(mode_kind);','    if (mp_test_mode_override) {\n        mode_kind = mp_test_mode_override;\n        mp_test_mode_override = 0;\n        /* As menu navigation does: 1P-mode checks read this. */\n        state_machine.routing.curr_mode = mode_kind;\n    }\n    OSReport("Enter game mode %u\\n",mode_kind);\n    mode = findMode(mode_kind);')
+        changed+='\nvolatile u8 mp_test_mode_override;\n'
+        changed=changed.replace('u8 runGameMode(u8 mode_kind)\n{','extern volatile u8 mp_test_mode_override;\nu8 runGameMode(u8 mode_kind)\n{',1)
+        assert changed.count('extern volatile u8 mp_test_mode_override;')==1
         changed=changed.replace('    preloadState(state);','    OSReport("Preload scene %u\\n",state->info.scene_kind);\n    u32 mp_load_start = OSGetTick();\n    preloadState(state);\n    OSReport("Preload complete ticks=%u\\n", OSGetTick() - mp_load_start);')
     if source.name=='devcom.c':
         changed=changed.replace('    return (bool) devComStatus[idx];','    extern void mp_engine_poll(void); mp_engine_poll();\n    return (bool) devComStatus[idx];')

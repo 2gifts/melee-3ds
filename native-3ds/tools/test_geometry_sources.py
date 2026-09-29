@@ -1,5 +1,9 @@
 """Stress the actual source-snapshot functions with a tracked host allocator.
 
+Built as a 32-bit host program so pointer-to-page arithmetic matches the 3DS.
+Write tracking is checked directly: marked writes, unrelated pages, partial
+page comparison, and the rolling backstop for an unmarked write.
+
 Functions are extracted from gx.c, not reimplemented. The small cache owner
 stub supplies deterministic eviction, allocation failure and alias cases.
 Live ARM tests separately compare cached draws against fresh GX decoding.
@@ -43,6 +47,17 @@ static void mp_platform_free(void*p){
 #define mp_be_memcmp_block memcmp
 #define HSD_Panic(file,line,text) abort()
 static void geometry_clear(GeometryCache*);
+#define SOURCE_PAGE_SHIFT 12
+#define SOURCE_PAGES 65536u
+static u32 source_page_stamp[SOURCE_PAGES];
+static u8 source_page_volatile[SOURCE_PAGES];
+static u32 source_write_clock=1,source_force_clock=1;
+static unsigned geometry_source_marks,geometry_untracked_changes,geometry_rolling_bytes;
+static unsigned geometry_track_validate,geometry_track_checks,geometry_track_misses,source_frame;
+#define SOURCE_ROLLING_BUDGET 8192u
+static unsigned source_rolling_bucket,source_rolling_index,source_rolling_offset;
+static void OSReport(const char*f,...){(void)f;}
+static void flush(void){} /* pending immediate batch; none in this harness */
 '''
 TEST=r'''
 static void geometry_clear(GeometryCache*e){
@@ -89,6 +104,30 @@ int main(void){
     a=acquire(0,data[0],data[0],17);geometry_budget=130;
     assert(!acquire(1,data[0],data[0],128));clear_all();
     a=acquire(0,data[0],data[0],512);data[0][0]^=1;mp_gx_invalidate_sources();assert(!source_valid(a));clear_all();
+    /* Write tracking. Static arrays must lie inside the tracked page range. */
+    static u8 pages[5][4096] __attribute__((aligned(4096)));
+    assert((uintptr_t)pages+sizeof(pages)<=((uintptr_t)SOURCE_PAGES<<SOURCE_PAGE_SHIFT));
+    for(unsigned i=0;i<sizeof(pages);++i)((u8*)pages)[i]=(u8)(i*37);
+    geometry_budget=65536;
+    a=acquire(0,pages,pages[0]+100,3*4096);assert(!a->untracked);
+    pages[1][7]^=1;assert(source_valid(a));             /* Unmarked write: not yet visible. */
+    pages[1][7]^=1;mp_gx_source_write(pages[4],16);assert(source_valid(a)); /* Other page. */
+    mp_gx_source_write(pages[2],4096);assert(source_valid(a));             /* Marked, unchanged. */
+    pages[2][9]^=1;mp_gx_source_write(pages[2]+9,1);assert(!source_valid(a)); /* Marked change. */
+    pages[2][9]^=1;clear_all();
+    geometry_budget=65536;
+    a=acquire(0,pages,pages[0],2*4096);unsigned before=geometry_source_compares;
+    for(unsigned i=0;i<4;++i)assert(source_valid(a));assert(geometry_source_compares==before);
+    mp_gx_source_write(pages[1]+4000,200);assert(source_valid(a));          /* Partial page run. */
+    assert(geometry_source_compares==before+1&&geometry_source_bytes>=4096);clear_all();
+    geometry_budget=65536;
+    /* Rolling backstop: an unmarked change is found and made volatile. */
+    a=acquire(0,pages,pages[0],4096);a->used=source_frame;pages[0][5]^=1;
+    for(unsigned f=0;f<4&&!a->changed;++f)source_rolling_verify();
+    assert(a->changed&&geometry_untracked_changes==1);clear_all();
+    geometry_budget=65536;
+    a=acquire(0,pages,pages[0],64);assert(a->untracked);pages[0][5]^=1;
+    ++geometry_epoch;assert(!source_valid(a));clear_all();
     uint32_t random=0x31415926;
     for(unsigned i=0;i<20000;++i){
         random=random*1664525+1013904223;unsigned bank=(random>>16)&3,offset=(random>>20)&3;
@@ -111,12 +150,14 @@ def function(source,name):
 def main():
     source=(ROOT/'port/engine/gx.c').read_text(encoding='utf-8')
     typedef=re.search(r'typedef struct GeometrySource \{[^\n]+',source)[0]
-    names=('source_bucket','mp_gx_invalidate_sources','source_release','geometry_alloc','source_valid','source_acquire')
+    names=('source_bucket','source_range_tracked','source_clock_advance','mp_gx_source_write','mp_gx_invalidate_sources',
+           'source_written_pages_differ','source_pages_volatile','source_mark_volatile','source_untracked_change',
+           'source_rolling_verify','source_release','geometry_alloc','source_compare_all','source_valid','source_acquire')
     functions='\n'.join(function(source,n) for n in names)
     out=ROOT/'build/update15-sources';out.mkdir(exist_ok=True)
     c=out/'test.c';c.write_text(PRE+typedef+'\n'+STATE+functions+TEST)
     exe=out/'test.exe'
-    subprocess.run([local_clang(),'-O2','-Wno-pointer-to-int-cast','-I'+str(ROOT/'port/engine'),str(c),'-o',str(exe)],check=True)
+    subprocess.run([local_clang(),'--target=i686-w64-mingw32','-O2','-Wno-pointer-to-int-cast','-I'+str(ROOT/'port/engine'),str(c),'-o',str(exe)],check=True)
     result=json.loads(subprocess.check_output([str(exe)],text=True))
     result['production_functions_sha256']=hashlib.sha256(functions.encode()).hexdigest()
     (ROOT/'build/update15-qa/source-cache-host.json').write_text(json.dumps(result,indent=2)+'\n');print(json.dumps(result))

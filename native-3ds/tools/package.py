@@ -14,7 +14,8 @@ def validate_3dsx(path):
         raise ValueError("Truncated 3DSX header")
     magic, header, reloc_header, version, flags, code, rodata, initialized, bss = \
         struct.unpack_from("<4sHH6I", data)
-    if magic != b"3DSX" or header != 32 or reloc_header != 8 or version != 0 or flags != 0:
+    # A 44-byte header adds the embedded SMDH (launcher title and icon).
+    if magic != b"3DSX" or header not in (32, 44) or reloc_header != 8 or version != 0 or flags != 0:
         raise ValueError("Unexpected 3DSX format")
     if code == 0 or initialized < bss:
         raise ValueError("Invalid 3DSX segment sizes")
@@ -23,6 +24,11 @@ def validate_3dsx(path):
         raise ValueError("Truncated 3DSX relocation headers")
     relocations = struct.unpack_from("<6I", data, header)
     expected = reloc_end + code + rodata + initialized - bss + 4 * sum(relocations)
+    if header == 44:
+        smdh_offset, smdh_size, _romfs = struct.unpack_from("<3I", data, 32)
+        if smdh_offset != expected or data[smdh_offset:smdh_offset + 4] != b"SMDH":
+            raise ValueError("Invalid embedded SMDH")
+        expected = smdh_offset + smdh_size
     if expected != len(data):
         raise ValueError(f"3DSX bounds mismatch: expected {expected}, found {len(data)}")
     return {"bytes": len(data), "sha256": hashlib.sha256(data).hexdigest(),

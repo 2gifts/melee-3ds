@@ -13,7 +13,9 @@ LIBC = ('memcpy memset memmove memcmp memchr strlen strcmp strncmp strcpy strncp
         'puts putchar rand srand qsort sin cos tan asin acos atan atan2 sqrt pow '
         'floor ceil fabs fmod frexp ldexp modf exp log log10 sinf cosf tanf asinf '
         'acosf atanf atan2f sqrtf powf floorf ceilf fabsf fmodf expf logf log10f '
-        'malloc free calloc realloc exit abort').split()
+        'malloc free calloc realloc exit abort strtoul').split()
+INLINE_MATH = ('fabs','fabsf','sqrt','sqrtf')
+LIBC = tuple(n for n in LIBC if n not in INLINE_MATH)
 
 
 def compile_engine(jobs=6,sanitize=False,output_directory=None,clamped_shade=False,lto=False,lto_scope='all',material_program=False,feasibility=False,feasibility_console=False,render_rework=False):
@@ -31,7 +33,17 @@ def compile_engine(jobs=6,sanitize=False,output_directory=None,clamped_shade=Fal
              '-mfpu=vfp','-mfloat-abi=hard','-mtp=soft',*common_flags(),
              '-fno-builtin','-fno-unwind-tables','-fno-asynchronous-unwind-tables',
              '-DMP_GAME_ABI','-Dmain=mp_engine_main','-D__eabi=mp_engine_eabi',
-             '-D__assert=mp_be_assert','-fno-short-enums',*('-D'+n+'=mp_be_'+n for n in LIBC),*includes]
+             '-D__assert=mp_be_assert','-fno-short-enums',*('-D'+n+'=mp_be_'+n for n in LIBC),
+             # Exact single VFP instructions instead of an endianness bridge
+             # into newlib per call (collision and visibility code use these
+             # throughout). IEEE results are identical; errno is never read.
+             '-fno-math-errno',*('-D'+n+'=__builtin_'+n for n in INLINE_MATH),
+             # GameCube archives hold structures at 2-byte offsets (a TLUT
+             # descriptor after a 7-colour palette in TyMnInfo). PowerPC and
+             # single ARM loads accept that; a merged LDM/LDRD alignment-
+             # faults on the 3DS (Azahar does not model the fault). Keep
+             # heap/data loads separate; stack accesses still merge.
+             '-mllvm','-arm-assume-misaligned-load-store',*includes]
     if sanitize:flags+=['-fsanitize=null']
     if clamped_shade:flags+=['-DMP_CLAMPED_SHADE_TEST']
     else:flags+=['-DMP_CLAMPED_SHADE']
@@ -116,7 +128,7 @@ def compile_engine(jobs=6,sanitize=False,output_directory=None,clamped_shade=Fal
         bitcode_list.write_text('\n'.join('"'+p.replace('\\','/')+'"' for p in bitcode))
         raw=out/'engine-lto.raw.o';obj=out/'engine-lto.o'
         command=[str(Path(cc).with_name('ld.lld.exe')),'-r','-m','armelfb',
-                 '--lto-O2','--thinlto-jobs='+str(jobs),'--threads='+str(jobs),
+                 '--lto-O2','-mllvm','-arm-assume-misaligned-load-store','--thinlto-jobs='+str(jobs),'--threads='+str(jobs),
                  '--thinlto-cache-dir='+str(out/'thinlto-cache'),'@'+str(bitcode_list),'-o',str(raw)]
         subprocess.run(command,check=True)
         assert raw.read_bytes()[:6]==b'\x7fELF\x01\x02','LTO output must remain ARM ELF32 big-endian'
@@ -132,8 +144,27 @@ def compile_engine(jobs=6,sanitize=False,output_directory=None,clamped_shade=Fal
     response.write_text('\n'.join('"'+p.replace('\\','/')+'"' for p in objects))
     ar=Path(cc).with_name('llvm-ar.exe')
     subprocess.run([str(ar),'rcs',str(archive),'@'+str(response)],check=True)
+    check_native_imports(archive,Path(cc).with_name('llvm-nm.exe'))
     print(f'Built {len(results)} ARM BE8 engine objects')
     return archive
+
+
+# Engine symbols the final link may resolve from native libraries. They
+# touch no endian-sensitive memory (byte tables, registers, their own
+# setjmp buffer) or are dead-stripped (MSL_TrigF_*). Anything else the
+# engine calls must be an mp_be_ implementation or an explicit bridge.
+NATIVE_IMPORTS_ALLOWED = {'_ctype_','abs','setjmp','longjmp','__fpclassifyf','_stack_addr','_stack_end'}
+
+
+def check_native_imports(archive,nm):
+    def names(flag):
+        listing=subprocess.run([str(nm),flag,'-A',str(archive)],check=True,capture_output=True,text=True).stdout
+        return {line.split()[-1] for line in listing.splitlines() if line.split()}
+    imports=names('--undefined-only')-names('--defined-only')
+    unexpected=sorted(n for n in imports if not n.startswith(('mp_','MSL_TrigF_')) and n not in NATIVE_IMPORTS_ALLOWED)
+    if unexpected:
+        raise SystemExit('BE8 engine would call native little-endian library code: '+', '.join(unexpected)+
+                         '\nAdd an mp_be_ implementation (port/engine/libc.c, LIBC above) or a bridge.')
 
 
 if __name__=='__main__': compile_engine()

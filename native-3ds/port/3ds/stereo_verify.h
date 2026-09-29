@@ -1,11 +1,21 @@
 /* Development-only pixel reference: perspective depth and flat HUD through
  * the same native submission path, without changing the active match. */
 static volatile unsigned stereo_verify;
+static int efb_release_one(const EfbTexture*keep);
 static void verify_stereo(void){
     if(!stereo_active)return;
-    C3D_RenderTarget*saved=target,*test=C3D_RenderTargetCreate(240,800,GPU_RB_RGBA8,(C3D_DEPTHTYPE){.__i=GPU_RB_DEPTH24_STENCIL8});
+    /* Disarm first: a failure below reaches the panic path, which renders. */
+    stereo_verify=0;
+    /* The fixture target needs one contiguous 750 KiB VRAM block (no depth:
+     * fixture draws do not depth test). Retained copies and cold promoted
+     * textures yield VRAM until it fits. */
+    while(efb_release_one(NULL)){}
+    C3D_RenderTarget*saved=target,*test;
+    while(!(test=C3D_RenderTargetCreate(240,800,GPU_RB_RGBA8,(C3D_DEPTHTYPE){.__i=-1}))&&texture_vram_release_one(1)){}
     u8*readback=linearAlloc(240*800*4),*copy=malloc(240*800*4);
-    if(!test||!readback||!copy)mp_native_panic("Stereo verification allocation failed");
+    if(!test||!readback||!copy){char text[160];
+        snprintf(text,sizeof(text),"Stereo verification allocation failed: target=%d readback=%d copy=%d vram free=%u linear free=%u",
+            test!=NULL,readback!=NULL,copy!=NULL,(unsigned)vramSpaceFree(),(unsigned)linearSpaceFree());mp_native_panic(text);}
     const u16 ix[6]={0,0x100,0x200,0,0x200,0x300};target=test;
     unsigned depth=mp_native_stereo_depth,reference=stereo_order_reference;
     for(unsigned mode=0;mode<8;++mode){

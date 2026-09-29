@@ -28,6 +28,8 @@ Installing the CIA alone is insufficient. **Keep the `files` folder on the SD ca
 
 Install a replacement CIA through FBI to update the HOME Menu application. There is normally no need to delete the title first. Keep the existing game files and optional scenery.
 
+Packages before September 2026 put every game file directly in `files/`. That layout still works, but trophies and matches load much more slowly on the console. With the card in your computer, run `python tools/sd_layout.py X:/3ds/melee/files` once (X is the card's drive letter) to move them into the new folders. It only moves files and takes a few seconds. Install the new CIA (and replace any `.3dsx`) at the same time: older builds cannot read the folders and stop at startup.
+
 The `.3dsx` is a separate launch option. Select **melee** in Homebrew Launcher to use it. Replacing that file does **not** update the application installed from a CIA, and reinstalling a CIA does not replace the `.3dsx`.
 
 ## If something is wrong

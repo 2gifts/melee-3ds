@@ -312,8 +312,10 @@ full_vertex:
     mov outtex1.xy, v5
     mov outtex1.z, zeros
     mov outtex1.w, ones
-    mad r11.y, v6.x, r11.w, r11.y
-    add r11.y, r11.y, v6.y
+    add r12.x, r11.w, v6.y
+    mul r12.y, r11.w, v6.z
+    max r12.x, r12.x, r12.y
+    mad r11.y, v6.x, r12.x, r11.y
     mov outpos, r11
     end
 flat_vertex:
@@ -337,8 +339,10 @@ flat_vertex:
     mov outtex1.xy, v5
     mov outtex1.z, zeros
     mov outtex1.w, ones
-    mad r11.y, v6.x, r11.w, r11.y
-    add r11.y, r11.y, v6.y
+    add r12.x, r11.w, v6.y
+    mul r12.y, r11.w, v6.z
+    max r12.x, r12.x, r12.y
+    mad r11.y, v6.x, r12.x, r11.y
     mov outpos, r11
     end
 unlit_vertex:
@@ -381,8 +385,10 @@ unlit_vertex:
     mov outtex1.xy, v5
     mov outtex1.z, zeros
     mov outtex1.w, ones
-    mad r11.y, v6.x, r11.w, r11.y
-    add r11.y, r11.y, v6.y
+    add r12.x, r11.w, v6.y
+    mul r12.y, r11.w, v6.z
+    max r12.x, r12.x, r12.y
+    mad r11.y, v6.x, r12.x, r11.y
     mov outpos, r11
     end
 .end

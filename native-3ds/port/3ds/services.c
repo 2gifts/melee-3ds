@@ -4,7 +4,11 @@
 #include <stdlib.h>
 extern void mp_native_panic(const char*),mp_native_log(const char*);
 unsigned mp_native_idle_count;
-void mp_native_idle(void){++mp_native_idle_count;svcSleepThread(1000000);}
+u64 mp_native_idle_ticks; /* Engine thread waiting for retrace/alarms (thread load). */
+/* Every engine wait (retrace, frame cap, alarms, disc, draw-done) idles
+ * here. A failed GX translator never completes the frame being waited for,
+ * so report its error instead of waiting forever. */
+void mp_native_idle(void){extern void mp_native_gx_check(void);mp_native_gx_check();++mp_native_idle_count;u64 start=svcGetSystemTick();svcSleepThread(1000000);mp_native_idle_ticks+=svcGetSystemTick()-start;}
 extern unsigned mp_native_frame_number(void);
 static unsigned scripted_keys(void){
 #ifdef MP_SMOKE_TEST
@@ -20,11 +24,13 @@ static unsigned scripted_keys(void){
 #ifdef MP_SMOKE_TEST
 /* Only the automated validation build exposes controller injection. Values
  * are native little endian; no original game state is modified by the test. */
-volatile struct{u32 sequence,buttons,frames;s32 x,y;}mp_test_control;
+/* cx/cy (C-stick) follow the original five words; writers of the first
+ * 20 bytes only leave them zero. */
+volatile struct{u32 sequence,buttons,frames;s32 x,y,cx,cy;}mp_test_control;
 static u32 test_sequence,test_until;
-static void test_pad(u32*buttons,circlePosition*stick){
+static void test_pad(u32*buttons,circlePosition*stick,circlePosition*sub){
     u32 f=mp_native_frame_number();
-    if(mp_test_control.sequence){if(test_sequence!=mp_test_control.sequence){test_sequence=mp_test_control.sequence;test_until=f+mp_test_control.frames;}*buttons=f<test_until?mp_test_control.buttons:0;stick->dx=f<test_until?mp_test_control.x*156/80:0;stick->dy=f<test_until?mp_test_control.y*156/80:0;}
+    if(mp_test_control.sequence){if(test_sequence!=mp_test_control.sequence){test_sequence=mp_test_control.sequence;test_until=f+mp_test_control.frames;}*buttons=f<test_until?mp_test_control.buttons:0;stick->dx=f<test_until?mp_test_control.x*156/80:0;stick->dy=f<test_until?mp_test_control.y*156/80:0;sub->dx=f<test_until?mp_test_control.cx*156/80:0;sub->dy=f<test_until?mp_test_control.cy*156/80:0;}
     else {
         if(f>=850&&f<885){stick->dx=25*156/80;stick->dy=156;}
         if(f>=900&&f<908)stick->dx=-156;
@@ -34,7 +40,10 @@ static void test_pad(u32*buttons,circlePosition*stick){
     }
 }
 #else
-static void test_pad(u32*buttons,circlePosition*stick){(void)buttons;(void)stick;}
+static void test_pad(u32*buttons,circlePosition*stick,circlePosition*sub){(void)buttons;(void)stick;(void)sub;}
 #endif
 unsigned mp_native_ticks(void){static u64 start;u64 now=svcGetSystemTick();if(!start)start=now;now-=start;return(u32)((now/SYSCLOCK_ARM11)*40500000ULL+((now%SYSCLOCK_ARM11)*40500000ULL)/SYSCLOCK_ARM11);}
-void mp_native_pad(void*output){u8*p=output;memset(p,0,48);for(int i=1;i<4;++i)p[i*12+10]=0xff;hidScanInput();u32 key=hidKeysHeld()|scripted_keys(),button=0;extern void mp_native_display_keys(unsigned);mp_native_display_keys(key);if((key&(KEY_ZL|KEY_ZR|KEY_SELECT))==(KEY_ZL|KEY_ZR|KEY_SELECT))key&=~(KEY_ZL|KEY_ZR|KEY_SELECT);circlePosition stick,sub;hidCircleRead(&stick);hidCstickRead(&sub);if(key&KEY_A)button|=0x100;if(key&KEY_B)button|=0x200;if(key&KEY_X)button|=0x400;if(key&KEY_Y)button|=0x800;if(key&KEY_START)button|=0x1000;if(key&KEY_L)button|=0x40;if(key&KEY_R)button|=0x20;if(key&(KEY_ZL|KEY_ZR))button|=0x10;if(key&KEY_DLEFT)button|=1;if(key&KEY_DRIGHT)button|=2;if(key&KEY_DDOWN)button|=4;if(key&KEY_DUP)button|=8;test_pad(&button,&stick);p[0]=button>>8;p[1]=button;p[2]=stick.dx*80/156;p[3]=stick.dy*80/156;p[4]=sub.dx*80/156;p[5]=sub.dy*80/156;p[6]=(button&0x40)?255:0;p[7]=(button&0x20)?255:0;p[8]=(button&0x100)?255:0;p[9]=(button&0x200)?255:0;}
+void mp_native_pad(void*output){u8*p=output;memset(p,0,48);for(int i=1;i<4;++i)p[i*12+10]=0xff;hidScanInput();u32 key=hidKeysHeld()|scripted_keys(),button=0;extern void mp_native_display_keys(unsigned);mp_native_display_keys(key);if((key&(KEY_ZL|KEY_ZR|KEY_SELECT))==(KEY_ZL|KEY_ZR|KEY_SELECT))key&=~(KEY_ZL|KEY_ZR|KEY_SELECT);circlePosition stick,sub;hidCircleRead(&stick);hidCstickRead(&sub);if(key&KEY_A)button|=0x100;if(key&KEY_B)button|=0x200;if(key&KEY_X)button|=0x400;if(key&KEY_Y)button|=0x800;if(key&KEY_START)button|=0x1000;if(key&KEY_L)button|=0x40;if(key&KEY_R)button|=0x20;if(key&(KEY_ZL|KEY_ZR))button|=0x10;if(key&KEY_DLEFT)button|=1;if(key&KEY_DRIGHT)button|=2;if(key&KEY_DDOWN)button|=4;if(key&KEY_DUP)button|=8;test_pad(&button,&stick,&sub);p[0]=button>>8;p[1]=button;p[2]=stick.dx*80/156;p[3]=stick.dy*80/156;p[4]=sub.dx*80/156;p[5]=sub.dy*80/156;p[6]=(button&0x40)?255:0;p[7]=(button&0x20)?255:0;p[8]=(button&0x100)?255:0;p[9]=(button&0x200)?255:0;
+    /* Camera Mode: port 4 is the camera controller (bottom.c). */
+    extern volatile unsigned mp_native_camera_mode,mp_native_camera_control,mp_native_camera_match;
+    if(mp_native_camera_mode){p[3*12+10]=0;if(mp_native_camera_control&&mp_native_camera_match){memcpy(p+36,p,10);memset(p,0,10);}}}

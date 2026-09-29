@@ -44,10 +44,10 @@ def observe(control=None):
                         joint=word(gobj+0x28);m=struct.unpack('>12f',read(joint+0x44,48))
                         state['cursor']=(m[3],m[7]);state['local']=xyz(joint+0x38)
                     if word(proc+0x14)==symbols['mnCharSel_CursorThink']:
-                        cursor=read(word(gobj+0x2c),20)
+                        cursor_data=word(gobj+0x2c);cursor=read(cursor_data,20)
                         if cursor[4]==0:
                             state['hand']={'state':cursor[5],'door':cursor[6],
-                                           'xy':struct.unpack('>ff',cursor[12:20])}
+                                           'xy':struct.unpack('>ff',cursor[12:20]),'address':cursor_data}
                     if word(proc+0x14)==symbols['fn_8022AFEC']:
                         menu_data=word(gobj+0x2c)
                         menu=read(menu_data,4) if menu_data else b''
@@ -66,7 +66,7 @@ def observe(control=None):
                         # finishes during a CSS transition.
                         state.pop('hand',None);return state
                     token=read(token_pointer,24)
-                    state['doors'].append({'kind':door[11],'icon':door[14],
+                    state['doors'].append({'kind':door[11],'icon':door[14],'costume':door[13],
                         'selected':door[9],'held':token[5],'xy':struct.unpack('>ff',token[8:16]),
                         'toggle':struct.unpack('>ff',door[20:28])})
                 state['characters']=[]
@@ -110,6 +110,14 @@ def act(buttons=0,frames=2,x=0,y=0):
 
 
 def move_hand(s,target):
+    # Place the hand directly: its position is plain data the cursor logic
+    # reads each frame. Steering with the stick remains the fallback.
+    if 'hand' in s and 'address' in s['hand']:
+        for _ in range(2):
+            poke(s['hand']['address']+12,struct.pack('>ff',*target))
+            s=act(frames=3)
+            if 'hand' not in s:raise RuntimeError('Character selection closed while moving its hand')
+            if max(abs(target[i]-s['hand']['xy'][i]) for i in range(2))<.6:return s
     for _ in range(120):
         if 'hand' not in s:raise RuntimeError('Character selection closed while moving its hand')
         dx,dy=(target[i]-s['hand']['xy'][i] for i in range(2))
@@ -125,11 +133,11 @@ def move_hand(s,target):
     raise RuntimeError('Character hand failed to converge')
 
 
-def select_character(s,door,icon):
+def select_character(s,door,icon,force=False):
     target=s['characters'][icon]
     if not target['available']:raise RuntimeError('Requested character is locked')
     existing=s['doors'][door]
-    if existing['icon']==icon and existing['selected'] and not existing['held'] and existing['kind']==(0 if door==0 else 1):
+    if not force and existing['icon']==icon and existing['selected'] and not existing['held'] and existing['kind']==(0 if door==0 else 1):
         return s
     if s['hand']['state']==1 and s['hand']['door']!=door:
         s=act(0x100);s=act()
@@ -157,6 +165,33 @@ def select_character(s,door,icon):
     return s
 
 
+def pick_character(s,door,icon,force=False):
+    # A token dropped mid-move can land between icons; observe and retry.
+    for attempt in range(3):
+        try:return select_character(s,door,icon,force)
+        except RuntimeError as error:
+            if attempt==2 or 'locked' in str(error):raise
+            print(json.dumps({'retry_door':door,'error':str(error)[:160]}),flush=True)
+            s=act(frames=30)
+            if 'hand' not in s:raise
+
+
+def peek(address,size):
+    with socket.create_connection(('127.0.0.1',24689),3) as sock:
+        sock.settimeout(5);packet(sock,'?');receive(sock)
+        try:
+            packet(sock,f'm{address:x},{size:x}');return bytes.fromhex(receive(sock))
+        finally:packet(sock,'c');packet(sock,'D');receive(sock)
+
+
+def poke(address,data):
+    with socket.create_connection(('127.0.0.1',24689),3) as sock:
+        sock.settimeout(5);packet(sock,'?');receive(sock)
+        try:
+            packet(sock,f'M{address:x},{len(data):x}:'+data.hex());assert receive(sock)=='OK'
+        finally:packet(sock,'c');packet(sock,'D');receive(sock)
+
+
 def open_mode(s,versus):
     s=act()
     for _ in range(24):
@@ -180,6 +215,8 @@ def main():
     ap=argparse.ArgumentParser();ap.add_argument('stage',type=int,default=8,nargs='?')
     ap.add_argument('--character',type=int,default=1);ap.add_argument('--cpu',type=int,default=1)
     ap.add_argument('--versus',action='store_true')
+    ap.add_argument('--extra-cpu',type=int,action='append',default=[],help='More CPU fighters (character icons) for ports 3 and 4')
+    ap.add_argument('--costumes',default='',help='Comma-separated costume per port, set on character select')
     ap.add_argument('--fresh',action='store_true',help='Drive a fresh boot with prompts already skipped')
     ap.add_argument('--stop-at-stage-selection',action='store_true',help='Position cursor and leave final confirmation to a debugger')
     args=ap.parse_args();deadline=time.monotonic()+900;stopped=False;versus_open=False
@@ -197,8 +234,31 @@ def main():
             s=open_mode(s,args.versus);versus_open=True
         if 'hand' in s and not stopped:
             s=act();stopped=True
-            s=select_character(s,0,args.character)
-            s=select_character(s,1,args.cpu)
+            # A colour only reaches the match with a fresh pick: an already
+            # selected token keeps the last match's colours.
+            force=bool(args.costumes)
+            s=pick_character(s,0,args.character,force)
+            s=pick_character(s,1,args.cpu,force)
+            for door,icon in enumerate(args.extra_cpu[:2],2):s=pick_character(s,door,icon,force)
+            # Costumes: the door's colour index, as X/Y on the portrait sets it.
+            # The match takes each port's colour from the CSS data
+            # (vs.start.players[port].color, entries 0x24 apart at +0x70);
+            # the door's copy drives its portrait. Set both, until they hold.
+            costumes=[int(c) for c in args.costumes.split(',') if c]
+            if costumes:
+                css=int.from_bytes(peek(symbols['mnCharSel_804D6CB0'],4),'big')
+                for door in range(len(costumes)):
+                    kind=peek(css+0x70+0x24*door,1)[0]
+                    if kind!=s['characters'][s['doors'][door]['icon']]['character_kind']:
+                        raise RuntimeError(f'CSS player data layout mismatch at port {door}: kind {kind}')
+                for _ in range(10):
+                    players=[peek(css+0x70+0x24*door+3,1)[0] for door in range(len(costumes))]
+                    if players==costumes and [d['costume'] for d in s['doors'][:len(costumes)]]==costumes:break
+                    for door,costume in enumerate(costumes):
+                        poke(symbols['mnCharSel_803F0DFC']+36*door+0x0D,bytes([costume]))
+                        poke(css+0x70+0x24*door+3,bytes([costume]))
+                    s=act(frames=10)
+                else:raise RuntimeError(f'Costumes did not hold: {players} {s["doors"]}')
             s=act(0x1000,4);s=act()
         if 'cursor' in s and s['phase']==0:break
         time.sleep(.1)
@@ -217,7 +277,11 @@ def main():
             from gameplay_test import exchange
             match_deadline=time.monotonic()+90;retry=time.monotonic()+3
             while time.monotonic()<match_deadline:
-                state=exchange()
+                # While the stage loads, the object list holds non-fighters.
+                try:state=exchange()
+                except RuntimeError as error:
+                    if 'not active' not in str(error):raise
+                    time.sleep(.3);continue
                 if state['failed']:raise RuntimeError(state)
                 if len(state['fighters'])>=2:
                     assert state['stage_kind']==target['stage_kind'],(target,state)

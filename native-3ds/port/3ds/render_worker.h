@@ -3,7 +3,8 @@
 /* Native CPU ownership boundary. Engine callbacks/input stay on main;
  * immutable draw packets and explicit CPU retirement fences protect inputs. */
 #ifdef MP_RENDER_WORKER
-void mp_render_worker_start(int is_new);
+void mp_render_worker_start(int is_new, int system_core);
+void mp_native_render_stereo(unsigned depth);
 void mp_render_worker_stop(void);
 void mp_render_worker_barrier(void);
 void mp_render_worker_retire_geometry(void);

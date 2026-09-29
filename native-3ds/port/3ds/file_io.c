@@ -33,18 +33,138 @@ enum {MENU_FILES=9,MENU_CACHE_MAX=9*1024*1024};
 static struct {int id;unsigned char *data;}menu_cache[MENU_FILES];
 static unsigned menu_cache_count,menu_cache_bytes;
 unsigned mp_file_cache_hits,mp_file_cache_read_bytes,mp_file_sd_reads,mp_file_sd_bytes;
+unsigned mp_file_sd_opens,mp_file_sd_open_ticks; /* stream opens, microseconds opening */
 #ifdef MP_SMOKE_TEST
 volatile unsigned mp_file_trace;
+#endif
+/* Names and sizes of every disc and visual file, listed once at startup.
+ * Resolving a name (DVDConvertPathToEntrynum, on the engine thread) then
+ * needs no SD access: opening a file in the 1000-entry disc directory costs
+ * a FAT lookup, and a fighter pick on the CSS resolves several new files.
+ * Streams are still opened by the reader that actually reads the file.
+ *
+ * The console's FAT driver scans a directory linearly on every open, and a
+ * disc file in the original flat 1000-entry folder took about 130 ms to
+ * open on hardware (the trophy Collection opens ~70). The SD package
+ * therefore spreads the top-level files over small folders whose names start
+ * with '_' (files/_Ty03/TyMycR1A.dat). Such folders are transparent: their
+ * files keep their disc names. The flat layout still works. */
+enum {INDEX_BUCKETS=4096};
+typedef struct IndexEntry {struct IndexEntry *next;const char *path;unsigned size;char name[];} IndexEntry;
+static IndexEntry *disc_index[INDEX_BUCKETS],*visual_index[INDEX_BUCKETS];
+static unsigned disc_index_count,visual_index_count,disc_foldered,disc_duplicates;
+static unsigned index_hash(const char *name){unsigned h=2166136261u;while(*name)h=(h^(unsigned char)*name++)*16777619u;return h&(INDEX_BUCKETS-1);}
+static const IndexEntry *index_find(IndexEntry *const *table,const char *name){
+    for(const IndexEntry *e=table[index_hash(name)];e;e=e->next)if(!strcmp(e->name,name))return e;
+    return NULL;
+}
+#ifdef __3DS__
+/* DIR is the folder's path below ROOT; PREFIX is the name prefix its files
+ * have on the disc (the same for a transparent '_' folder as its parent). */
+static unsigned index_directory(FS_Archive sdmc,IndexEntry **table,const char *root,const char *dir,const char *prefix,unsigned depth){
+    char path[512];int n=snprintf(path,sizeof(path),"%s%s",root,dir);if(n<0||(size_t)n>=sizeof(path))return 0;
+    Handle handle;if(R_FAILED(FSUSER_OpenDirectory(&handle,sdmc,fsMakePath(PATH_ASCII,path))))return 0;
+    static FS_DirectoryEntry entries[32];unsigned count=0;u32 read=0;
+    typedef struct{char dir[96],prefix[96];}Subdir;
+    Subdir *subdirs=NULL;unsigned subdir_count=0,subdir_capacity=0;
+    while(R_SUCCEEDED(FSDIR_Read(handle,&read,32,entries))&&read){
+        for(u32 i=0;i<read;++i){
+            char name[256];ssize_t units=utf16_to_utf8((uint8_t*)name,entries[i].name,sizeof(name)-1);
+            if(units<=0||units>=(ssize_t)sizeof(name))continue;name[units]=0;
+            char key[320],location[320];
+            if(snprintf(key,sizeof(key),"%s%s",prefix,name)>=(int)sizeof(key)||
+               snprintf(location,sizeof(location),"%s%s",dir,name)>=(int)sizeof(location))continue;
+            if(entries[i].attributes&FS_ATTRIBUTE_DIRECTORY){
+                if(depth>=3||strlen(location)+1>=sizeof(subdirs[0].dir)||strlen(key)+1>=sizeof(subdirs[0].prefix))continue;
+                if(subdir_count==subdir_capacity){
+                    unsigned capacity=subdir_capacity?subdir_capacity*2:16;
+                    Subdir *grown=realloc(subdirs,capacity*sizeof(Subdir));if(!grown)continue;
+                    subdirs=grown;subdir_capacity=capacity;
+                }
+                Subdir *s=&subdirs[subdir_count++];snprintf(s->dir,sizeof(s->dir),"%s/",location);
+                if(name[0]=='_')snprintf(s->prefix,sizeof(s->prefix),"%s",prefix);
+                else snprintf(s->prefix,sizeof(s->prefix),"%s/",key);
+                continue;
+            }
+            if(entries[i].fileSize>UINT_MAX)continue;
+            /* A file in both layouts (a new package copied over the flat
+             * one) keeps its first location; the leftover copies still make
+             * every open scan the big folder, which the log points out. */
+            if(index_find(table,key)){++disc_duplicates;continue;}
+            size_t key_bytes=strlen(key)+1;
+            IndexEntry *e=malloc(sizeof(IndexEntry)+key_bytes+strlen(location)+1);if(!e)continue;
+            memcpy(e->name,key,key_bytes);e->path=strcpy(e->name+key_bytes,location);e->size=(unsigned)entries[i].fileSize;
+            if(strcmp(key,location))++disc_foldered;
+            unsigned h=index_hash(e->name);e->next=table[h];table[h]=e;++count;
+        }
+    }
+    FSDIR_Close(handle);
+    for(unsigned i=0;i<subdir_count;++i)count+=index_directory(sdmc,table,root,subdirs[i].dir,subdirs[i].prefix,depth+1);
+    free(subdirs);
+    return count;
+}
+static void index_files(void){
+    FS_Archive sdmc;if(R_FAILED(FSUSER_OpenArchive(&sdmc,ARCHIVE_SDMC,fsMakePath(PATH_EMPTY,""))))return;
+    u64 start=svcGetSystemTick();
+    disc_index_count=index_directory(sdmc,disc_index,"/3ds/melee/files/","","",0);
+    unsigned foldered=disc_foldered,duplicates=disc_duplicates;
+    visual_index_count=index_directory(sdmc,visual_index,"/3ds/melee/visuals/","","",0);
+    FSUSER_CloseArchive(sdmc);
+    char text[256];snprintf(text,sizeof(text),"Disc index: %u files (%u in folders%s), %u visual files; %u ms\n",disc_index_count,foldered,
+        duplicates?"; old flat copies also present, delete them for faster loading":"",visual_index_count,(unsigned)((svcGetSystemTick()-start)/(SYSCLOCK_ARM11/1000)));
+    extern void mp_native_log(const char*);mp_native_log(text);
+}
 #endif
 static int path_for(char *path,size_t capacity,const char *name){
     if(!name||!*name||*name=='/'||strstr(name,"..")||strchr(name,':')||strchr(name,'\\'))return 0;
     int n=snprintf(path,capacity,"%s%s",MP_DISC_ROOT,name);return n>=0&&(size_t)n<capacity;
 }
+/* The SD path of a disc file, in either layout (for native readers). */
+int mp_native_file_path(const char *name,char *path,size_t capacity){
+    if(!path_for(path,capacity,name))return 0;
+    const IndexEntry *e=disc_index_count?index_find(disc_index,name):NULL;
+    if(!e)return 1;
+    int n=snprintf(path,capacity,"%s%s",MP_DISC_ROOT,e->path);return n>=0&&(size_t)n<capacity;
+}
+/* The disc file of the latest lookup, when the SD card lacks it, for the
+ * stop screen (an incomplete copy, or files from another version's package).
+ * Melee probes for an optional develop.ini at boot; any later successful
+ * lookup clears the name, so only a failure that stops the game shows it. */
+char mp_native_missing_file[64];
+static int file_missing(const char *name){
+    snprintf(mp_native_missing_file,sizeof(mp_native_missing_file),"%s",name?name:"");
+    return -1;
+}
 int mp_native_file_id(const char *name){
-    char path[512];if(!path_for(path,sizeof(path),name))return -1;
+    char path[512];if(!path_for(path,sizeof(path),name))return file_missing(name);
+    mp_native_missing_file[0]=0;
     for(unsigned i=0;i<file_count;++i)if(!strcmp(name,files[i].name))return i;
     if(file_count==MAX_FILES)return -1;
-    FILE *stream=fopen(path,"rb");if(!stream)return -1;
+    /* A name missing from the index (for example, different letter case on
+     * the FAT volume) takes the original open-based path below. */
+    const IndexEntry *e=disc_index_count?index_find(disc_index,name):NULL;
+    if(e){
+        unsigned n=e->size;
+        if(!mp_native_file_path(name,path,sizeof(path)))return -1;
+        /* Same audited visual replacements as below, recognised by size. */
+        unsigned visual_size=!strcmp(name,"GrIz.dat")?492294:!strcmp(name,"GrSt.dat")?248938:!strcmp(name,"GrOp.dat")?118854:!strcmp(name,"GrNBa.dat")?67235:!strcmp(name,"GrNLa.dat")?660692:0;
+        const IndexEntry *v=visual_size?index_find(visual_index,name):NULL;
+        if(v&&v->size==visual_size){
+            char visual[512];int written=snprintf(visual,sizeof(visual),"%s%s",MP_VISUAL_ROOT,name);
+            FILE *alternate=written>=0&&(size_t)written<sizeof(visual)?fopen(visual,"rb"):NULL;
+            if(alternate){
+                unsigned char header[4]={0};int valid=fread(header,1,4,alternate)==4;
+                unsigned declared=((unsigned)header[0]<<24)|((unsigned)header[1]<<16)|((unsigned)header[2]<<8)|header[3];
+                fclose(alternate);
+                if(valid&&declared==visual_size){strcpy(path,visual);n=visual_size;}
+            }
+        }
+        char *copy=strdup(name);if(!copy)return -1;
+        char *resolved=strdup(path);if(!resolved){free(copy);return -1;}
+        unsigned id=file_count;files[id].name=copy;files[id].path=resolved;files[id].size=n;
+        __atomic_store_n(&file_count,id+1,__ATOMIC_RELEASE);return id;
+    }
+    FILE *stream=fopen(path,"rb");if(!stream)return file_missing(name);
     /* Optional, audited visual archive. Keep the original disc files intact.
      * Resolve once per file ID so lengths and reopened streams always agree. */
     unsigned visual_size=!strcmp(name,"GrIz.dat")?492294:!strcmp(name,"GrSt.dat")?248938:!strcmp(name,"GrOp.dat")?118854:!strcmp(name,"GrNBa.dat")?67235:!strcmp(name,"GrNLa.dat")?660692:0;
@@ -75,7 +195,15 @@ static Reader *open_reader(int id){
         if(!slot||!r->stream||(slot->stream&&r->stamp<slot->stamp))slot=r;
     }
     if(slot->stream){fclose(slot->stream);slot->stream=NULL;}
-    FILE *stream=fopen(files[id].path,"rb");if(!stream)return NULL;
+#ifdef __3DS__
+    u64 start=svcGetSystemTick();
+#endif
+    FILE *stream=fopen(files[id].path,"rb");
+#ifdef __3DS__
+    __atomic_fetch_add(&mp_file_sd_opens,1,__ATOMIC_RELAXED);
+    __atomic_fetch_add(&mp_file_sd_open_ticks,(unsigned)((svcGetSystemTick()-start)/(SYSCLOCK_ARM11/1000000)),__ATOMIC_RELAXED);
+#endif
+    if(!stream)return NULL;
     /* Keep a bounded set of open, buffered streams. HPS playback revisits
      * the same file; reopening it for each DVD block adds avoidable IPC and
      * can starve the cooperative mixer. Buffer ownership ends after fclose. */
@@ -109,14 +237,14 @@ static int locked_file_read(int id,void*dst,unsigned n,unsigned offset){
 #endif
     return result;
 }
+static const char*file_read_kind="sync";
 static void file_read_finished(int id,void*dst,unsigned n,unsigned offset,int result,unsigned ticks){
-#ifdef __3DS__
-    extern void mp_native_texture_dirty(unsigned,unsigned,unsigned);
-    if(result>0)mp_native_texture_dirty((unsigned)dst,result,1);
-#endif
+    /* Texture/geometry invalidation for the read is ordered with GX by the
+     * engine's DVD layer (mp_gx_cache_range); this may not be a GX thread. */
+    (void)dst;(void)result;
 #ifdef MP_SMOKE_TEST
     extern void mp_native_log(const char*);
-    if(mp_file_trace){char text[200];snprintf(text,sizeof(text),"File read %s offset=%u bytes=%u ticks=%u\n",id>=0&&(unsigned)id<file_count?files[id].name:"invalid",offset,n,ticks);mp_native_log(text);}
+    if(mp_file_trace){char text[200];snprintf(text,sizeof(text),"File read %s %s offset=%u bytes=%u ticks=%u\n",file_read_kind,id>=0&&(unsigned)id<file_count?files[id].name:"invalid",offset,n,ticks);mp_native_log(text);}
 #else
     (void)id;(void)dst;(void)n;(void)offset;(void)result;(void)ticks;
 #endif
@@ -156,6 +284,7 @@ static void file_worker(void*unused){
     }
 }
 void mp_native_files_init(void){
+    index_files();
     LightEvent_Init(&io_wake,RESET_ONESHOT);LightLock_Init(&io_lock);
     s32 priority=0x30;svcGetThreadPriority(&priority,CUR_THREAD_HANDLE);
     io_thread=threadCreate(file_worker,NULL,32768,priority>0x18?priority-1:priority,-2,false);
@@ -175,7 +304,9 @@ int mp_native_file_read_async_begin(int id,void*dst,unsigned n,unsigned offset){
 int mp_native_file_read_async_poll(void){
     if(__atomic_load_n(&io_state,__ATOMIC_ACQUIRE)!=2){++mp_async_busy_polls;return -2147483647;}
     int result=io_request.result;
+    file_read_kind="async";
     file_read_finished(io_request.id,io_request.dst,io_request.n,io_request.offset,result,io_request.ticks);
+    file_read_kind="sync";
     __atomic_store_n(&io_state,0,__ATOMIC_RELEASE);return result;
 }
 #ifdef MP_SMOKE_TEST
@@ -233,4 +364,10 @@ void mp_native_files_exit(void){
     for(unsigned i=0;i<READERS;++i)if(readers[i].stream){fclose(readers[i].stream);readers[i].stream=NULL;}
     for(unsigned i=0;i<file_count;++i){free(files[i].name);free(files[i].path);}
     file_count=reader_clock=0;
+    for(unsigned b=0;b<INDEX_BUCKETS;++b){
+        for(IndexEntry *e=disc_index[b],*next;e;e=next){next=e->next;free(e);}
+        for(IndexEntry *e=visual_index[b],*next;e;e=next){next=e->next;free(e);}
+        disc_index[b]=visual_index[b]=NULL;
+    }
+    disc_index_count=visual_index_count=0;
 }

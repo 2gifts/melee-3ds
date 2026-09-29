@@ -101,3 +101,13 @@ void mp_native_draw_elements(GPU_Primitive_t primitive,int count,int type,const 
     GPUCMD_AddRawCommands(packet,words);
     ctx->flags|=C3DiF_DrawUsed;
 }
+
+/* Citro3D clears PICA's texture cache (TEXUNIT_CONFIG bit 16, a separate
+ * masked write) after every texture binding change. The GPU probe's
+ * keep-texture-cache mode suppresses that write to measure its cost. */
+volatile unsigned mp_texture_cache_keep;
+void __real_GPUCMD_Add(u32 header,const u32*param,u32 count);
+void __wrap_GPUCMD_Add(u32 header,const u32*param,u32 count){
+    if(__builtin_expect(mp_texture_cache_keep,0)&&header==GPUCMD_HEADER(0,0x4,GPUREG_TEXUNIT_CONFIG)&&count==1&&param[0]==BIT(16))return;
+    __real_GPUCMD_Add(header,param,count);
+}

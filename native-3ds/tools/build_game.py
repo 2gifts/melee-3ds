@@ -13,6 +13,7 @@ def main():
     ap.add_argument('--banner-capture',action='store_true',help='Include offline banner geometry export (development builds only)')
     ap.add_argument('--audio-hle',action='store_true',help='Exercise NDSP using Azahar HLE without DSP firmware (smoke builds only)')
     ap.add_argument('--release',action='store_true',help='Build a separate homebrew package with physical controls')
+    ap.add_argument('--profile',choices=('unlocked','fresh'),default='unlocked',help='Save profile: everything unlocked (melee.3dsx) or a fresh save earned by play (melee-fresh.3dsx); each keeps its own saves')
     ap.add_argument('--skip-engine',action='store_true')
     ap.add_argument('--sanitize',action='store_true',help='Stop with a source location on original-engine null accesses')
     ap.add_argument('--boot',action='store_true',help='Enter Melee original main and scene loop')
@@ -61,6 +62,8 @@ def main():
     library=engine_out/'libmelee-be8.a'
     if not args.skip_engine: library=compile_engine(sanitize=args.sanitize,output_directory=engine_out,clamped_shade=args.clamped_shade,lto=args.engine_lto,lto_scope=args.engine_lto_scope,material_program=args.material_program,feasibility=args.feasibility,feasibility_console=args.feasibility_console,render_rework=args.render_rework)
     out=args.build_dir or ROOT/('build/game-release' if args.release else 'build/game')
+    # Native objects differ only by the profile define; keep them apart.
+    if args.profile=='fresh':out=Path(str(out)+'-fresh')
     if not out.is_absolute():out=ROOT/out
     out.mkdir(parents=True,exist_ok=True)
     cc=local_clang();bin=Path(cc).parent
@@ -134,10 +137,10 @@ def main():
         from async_renderqueue import generate
         extra.append(generate(out))
         includes+=['-I'+str(ROOT/'port/3ds'),'-DMP_ASYNC_PRESENTATION']
-    for src in (ROOT/'port/3ds/game.c',ROOT/'port/3ds/bottom.c',ROOT/'port/3ds/bottom_draw.c',ROOT/'port/3ds/renderer.c',ROOT/'port/3ds/early_queue.c',ROOT/'port/3ds/citro3d_fix.c',ROOT/'port/3ds/uniform_dispatch.c',ROOT/'port/3ds/services.c',ROOT/'port/3ds/cpu_speed.c',ROOT/'port/3ds/file_io.c',ROOT/'port/3ds/audio.c',ROOT/'port/3ds/command_cache.c',ROOT/'port/3ds/log_io.c',ROOT/'port/3ds/game_bridge.S',shader_c,*([ROOT/'tests/stereo_bounds_reference.c'] if args.smoke else []),*extra):
+    for src in (ROOT/'port/3ds/game.c',ROOT/'port/3ds/bottom.c',ROOT/'port/3ds/bottom_draw.c',ROOT/'port/3ds/renderer.c',ROOT/'port/3ds/early_queue.c',ROOT/'port/3ds/gx_thread.c',ROOT/'port/3ds/linear_lock.c',ROOT/'port/3ds/gpu_busy.c',ROOT/'port/3ds/citro3d_fix.c',ROOT/'port/3ds/uniform_dispatch.c',ROOT/'port/3ds/services.c',ROOT/'port/3ds/cpu_speed.c',ROOT/'port/3ds/file_io.c',ROOT/'port/3ds/audio.c',ROOT/'port/3ds/command_cache.c',ROOT/'port/3ds/log_io.c',ROOT/'port/3ds/jpeg_still.c',ROOT/'port/3ds/card_storage.c',ROOT/'port/3ds/settings.c',ROOT/'port/3ds/game_bridge.S',shader_c,*([ROOT/'tests/stereo_bounds_reference.c'] if args.smoke else []),*extra):
         obj=out/(src.stem+'.o')
         run([cc,*arch,*common_flags(),'-fshort-enums','-D__3DS__',
-             *(['-DMP_SMOKE_TEST'] if args.smoke else []),*(['-DMP_AFFINE_IDENTITY_SHADER'] if args.identity_affine else []),*(['-DMP_UNLIT_AFFINE_SHADER'] if args.unlit_affine else []),*(['-DMP_BANNER_CAPTURE'] if args.banner_capture else []),*(['-DMP_AUDIO_HLE_TEST'] if args.audio_hle else []),*(['-DMP_BOOTMODE'] if args.boot else []),*includes,'-c',src,'-o',obj])
+             *(['-DMP_SMOKE_TEST'] if args.smoke else []),*(['-DMP_AFFINE_IDENTITY_SHADER'] if args.identity_affine else []),*(['-DMP_UNLIT_AFFINE_SHADER'] if args.unlit_affine else []),*(['-DMP_BANNER_CAPTURE'] if args.banner_capture else []),*(['-DMP_AUDIO_HLE_TEST'] if args.audio_hle else []),*(['-DMP_BOOTMODE'] if args.boot else []),*(['-DMP_PROFILE_FRESH'] if args.profile=='fresh' else []),*includes,*(['-I'+str(sdk/'portlibs/3ds/include')] if src.name=='jpeg_still.c' else []),'-c',src,'-o',obj])
         objects.append(obj)
     libs=arm/'arm-none-eabi/lib/armv6k/fpu'
     gcc=sorted((arm/'lib/gcc/arm-none-eabi').iterdir())[-1]/'armv6k/fpu'
@@ -150,18 +153,23 @@ def main():
     linked=out/'melee-linked.elf';elf=out/'melee.elf'
     command=[bin/'ld.lld.exe','-T',script,'--gc-sections','--emit-relocs','--wrap=GX_ProcessCommandList',
              *('--wrap='+name for name in ('C3D_UpdateUniforms','C3Di_LoadShaderUniforms','C3Di_ClearShaderUniforms','C3Di_DirtyUniforms')),
+             *('--wrap='+name for name in ('linearAlloc','linearMemAlign','linearRealloc','linearFree','linearSpaceFree')),
+             '--wrap=gspSubmitGxCommand','--wrap=gxCmdQueueInterrupt','--wrap=GPUCMD_Add',
              '--error-limit=0','-Map='+str(out/'melee.map'),
              libs/'3dsx_crt0.o',gcc/'crti.o',gcc/'crtbegin.o',*objects,
-             '-L'+str(sdk/'libctru/lib'),'-L'+str(libs),'-L'+str(gcc),
-             '--start-group',library,'-lcitro2d','-lcitro3d','-lctru','-lm','-lc','-lsysbase','-lgcc',
+             '-L'+str(sdk/'libctru/lib'),'-L'+str(sdk/'portlibs/3ds/lib'),'-L'+str(libs),'-L'+str(gcc),
+             '--start-group',library,'-lturbojpeg','-lcitro2d','-lcitro3d','-lctru','-lm','-lc','-lsysbase','-lgcc',
              '--end-group',gcc/'crtend.o',gcc/'crtn.o','-o',linked]
     run(command)
     from be8_image import prepare as prepare_image
     image_info=prepare_image(linked,elf)
-    dest=args.output if args.output is not None else ROOT/('dist/native-alpha/3ds/melee/melee.3dsx' if args.release else 'dist/3ds/melee/melee-development.3dsx')
+    name={'unlocked':'melee','fresh':'melee-fresh'}[args.profile]
+    dest=args.output if args.output is not None else ROOT/(f'dist/native-alpha/3ds/melee/{name}.3dsx' if args.release else f'dist/3ds/melee/{name}-development.3dsx')
     if not dest.is_absolute():dest=ROOT/dest
     dest.parent.mkdir(parents=True,exist_ok=True)
-    run([ROOT/'.toolchain/bin/3dsxtool.exe',elf,dest])
+    from launcher_icon import make_smdh
+    smdh=make_smdh(out,args.profile)
+    run([ROOT/'.toolchain/bin/3dsxtool.exe',elf,dest,*([f'--smdh={smdh}'] if smdh else [])])
     print('Built native engine integration:',dest,'Build-time BE8 relocation words:',image_info['be8_words'])
 
 

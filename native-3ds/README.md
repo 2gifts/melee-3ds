@@ -22,6 +22,22 @@ Replace the example ISO path with your own. Bootstrap obtains the pinned compile
 
 The SD package is **`dist/native-alpha/`**. Copy its `3ds` folder to the SD root. This is ready for Homebrew Launcher. Keep the complete `files` folder; the executable alone is not the game.
 
+### Two ways to play: everything unlocked or a fresh save
+
+There are two builds, and you can install either or both. They share the game files but keep separate saves on a virtual memory card in slot A.
+
+| Launcher entry | Build command | Starts with | Saves in |
+|---|---|---|---|
+| **Super Smash Bros. Melee** (`melee.3dsx`) | `python tools/build_game.py --release` | Every fighter and stage unlocked, tournament-style rules (4 stocks, 8 minutes, items off). This matches the Slippi unlocked setup. | `SD:/3ds/melee/saves/unlocked/` |
+| **Melee: Fresh Save** (`melee-fresh.3dsx`) | `python tools/build_game.py --release --profile fresh` | A new, vanilla save. Unlock fighters, stages, trophies and events by playing Classic, Adventure, All-Star, Events, Stadium and VS. | `SD:/3ds/melee/saves/fresh/` |
+
+Run `python tools/package_native.py` after building either or both.
+
+- **Save files:** Dolphin `.gci` format. You can copy a Dolphin or real GameCube Melee save (`01-GALE-SuperSmashBros0110290334.gci`) into a profile folder to continue it.
+- **Safety copies:** each save keeps a `.bak` of the previous version, and deleted saves are kept as `.deleted` copies.
+- **Both builds include:** UCF, and C-stick attacks in single-player modes.
+- **Camera Mode:** in Special Melee, tap **CAMERA** on the bottom screen during the match to steer the camera and take photos. Z is the shutter. Photos save to the card and open under Data › Snapshots.
+
 ## Create a CIA for HOME Menu
 
 CIA packaging uses the same release executable and SD files. **The custom disc icon, diorama, and sound are local assets and are not included in Git.** A fresh clone does not produce the custom CIA with the game-build commands alone. Banner authoring is a separate advanced step; use Homebrew Launcher if you do not have compatible prepared artwork.
@@ -33,7 +49,7 @@ python tools/bootstrap_home_menu.py --skip-python
 python tools/package_cia.py --art path/to/prepared-art --version 15
 ```
 
-The output is **`dist/home-menu/melee-3ds.cia`**. The packager accepts the confirmed banner profile and checks the executable and package before writing its verification report. It intentionally rejects an incompatible custom banner. The included `banner_assets.py`, `capture_banner_scene.py`, `make_home_menu_art.py`, and `convert_home_menu_banner.py` are developer authoring tools, not an automatic disc-to-CIA installer.
+The output is **`dist/home-menu/melee-3ds.cia`**. Add `--profile fresh` to package the fresh-save build as **`dist/home-menu/melee-3ds-fresh.cia`**. It is a separate title with a blue disc icon, so both can be installed at once. The packager accepts the confirmed banner profile and checks the executable and package before writing its verification report. It intentionally rejects an incompatible custom banner. The included `banner_assets.py`, `capture_banner_scene.py`, `make_home_menu_art.py`, and `convert_home_menu_banner.py` are developer authoring tools, not an automatic disc-to-CIA installer.
 
 For an existing validated in-place cosmetic variant, retain its matching original art directory and pass `--cosmetic-baseline path/to/original-art`. Do not use that option to bypass validation of unrelated artwork. Follow the [FBI installation guide](docs/HOME_MENU.md) after packaging.
 
@@ -52,6 +68,6 @@ Copy the audited `references/diet-melee/files/GrIz.dat` and the four prepared `.
 
 ## Rebuilding later
 
-Run `git pull --ff-only`, then rebuild with `python tools/build_game.py --release` and `python tools/package_native.py`. Repackage and reinstall the CIA to update the HOME Menu application, or replace `melee.3dsx` for Homebrew Launcher. Existing extracted assets can stay on the card.
+Run `git pull --ff-only`, then rebuild with `python tools/build_game.py --release` (add `--profile fresh` for the fresh-save build) and `python tools/package_native.py`. Repackage and reinstall the CIA to update the HOME Menu application, or replace `melee.3dsx` / `melee-fresh.3dsx` for Homebrew Launcher. Existing extracted assets and saves can stay on the card. If the card's `3ds/melee/files` folder still holds all game files directly (packages before September 2026), run `python tools/sd_layout.py X:/3ds/melee/files` once to move them into the faster folder layout.
 
 [Source terms](LICENSE-SCOPE.md) · [Third-party notices](docs/THIRD_PARTY_NOTICES.md)

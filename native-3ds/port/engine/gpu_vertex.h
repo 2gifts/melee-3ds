@@ -14,5 +14,10 @@ typedef struct { float value[MP_GPU_UNIFORMS][4];unsigned matrix_rows;float mate
     /* Only the separate clamped program reads fixed attributes 7 and 8.
      * Ordinary shaders keep their exact instruction stream and 95 uniforms. */
     unsigned post_transform;float post_scale[4],post_bias[4];
+    /* GX texgen evaluated by the renderer on cached raw attributes, so that
+     * animated texture matrices (TObj SRT) and camera-dependent environment
+     * maps do not change the cached geometry: tc = matrix.(src,1), then
+     * optional normalize, post matrix and (3x4) q divide, as in gx.c. */
+    float texgen_matrix[3][4],texgen_post[3][4];unsigned texgen_mode;
 } MPGPUUniforms;
 #endif
