@@ -2,6 +2,8 @@
 
 [Project overview, performance, and controls](../README.md) · [CIA installation](docs/HOME_MENU.md)
 
+**Most players should use the one-click builder instead:** download `Melee-3DS-CIA-Builder` from the [latest release](https://github.com/2gifts/melee-3ds/releases/latest), extract it, and double-click `Build Melee CIA.bat` (see `tools/easy_build.py`). This guide is the manual route.
+
 The documented build route uses **64-bit Windows, Git, Python 3.11 or newer**, several GB of free disk space, and an internet connection. You need your own unmodified **US Melee v1.02 ISO/GCM**. Other regions and revisions are unsupported; convert an RVZ to ISO before extraction.
 
 ## Build the game and SD files

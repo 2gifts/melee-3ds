@@ -1,9 +1,15 @@
-"""Stage a local SD-card package using the user's extracted game assets."""
+"""Stage a local SD-card package using the user's extracted game assets.
+
+--link hard-links the game files to the extracted ones when they are on the
+same drive, instead of copying 1.4 GB (tools/easy_build.py)."""
 from pathlib import Path
 import datetime
 import hashlib
 import json
+import os
 import shutil
+import sys
+LINK='--link' in sys.argv[1:]
 from package import validate_3dsx
 ROOT=Path(__file__).resolve().parents[1]
 package=ROOT/'dist/native-alpha'
@@ -31,7 +37,11 @@ for entry in manifest['files']:
         else:flat.rename(target)
     if not target.is_file() or target.stat().st_size!=size or digest(target)!=entry['sha256']:
         if path.stat().st_size!=size or digest(path)!=entry['sha256']:raise ValueError(f'Extracted asset hash mismatch: {relative}')
-        shutil.copy2(path,target)
+        target.unlink(missing_ok=True)
+        try:
+            if not LINK:raise OSError
+            os.link(path,target)  # --link: share the extracted file's data (same drive)
+        except OSError:shutil.copy2(path,target)
         if digest(target)!=entry['sha256']:raise ValueError(f'Packaged asset hash mismatch: {relative}')
     count+=1;total+=size
 report={'built_utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),

@@ -49,11 +49,19 @@ The game logic runs at full speed (60 updates per second) almost everywhere; in 
 - Your own **US Melee v1.02 disc dump** (`GALE01`, revision 2).
 - About **1.5 GB of free SD space**, plus space for the installed application.
 
-**This repository distributes source and build tools, not a prebuilt CIA or game data.** Build with your own disc dump using the [build guide](native-3ds/README.md). CIA packaging additionally requires locally prepared HOME Menu artwork; the guide explains that requirement. No ISO, extracted assets, fonts, or firmware are included.
+**This repository distributes source and build tools, not a prebuilt CIA or game data.** No ISO, extracted assets, fonts, or firmware are included. You build the game from your own disc dump, and on Windows that takes one click:
+
+## Build it the easy way (Windows)
+
+1. Download **`Melee-3DS-CIA-Builder`** from the [latest release](https://github.com/2gifts/melee-3ds/releases/latest) and extract the zip.
+2. Double-click **`Build Melee CIA.bat`** and choose your Melee `.iso` (US v1.02).
+3. Wait 30–60 minutes. A folder opens with everything for your SD card, both CIA files, and a short "What to do next" guide.
+
+The builder downloads its own tools, so there is nothing to install. It needs 64-bit Windows 10 or 11, an internet connection, and about 8 GB of free space. Its CIAs use a simple HOME Menu banner made from your disc. For other systems or the full options, use the [build guide](native-3ds/README.md).
 
 ## Install with FBI
 
-Once you have your locally built `melee-3ds.cia` and extracted SD package:
+The easy builder's "What to do next.txt" covers these steps. Once you have your locally built `melee-3ds.cia` and extracted SD package:
 
 1. Power off the console and put its SD card in your computer.
 2. Copy the generated **`3ds` folder from `native-3ds/dist/native-alpha/`** to the SD root, merging folders. The game files must end up in **`SD:/3ds/melee/files/`**, grouped into small folders such as `files/_Ty01/` (the console opens files slowly in one large folder).

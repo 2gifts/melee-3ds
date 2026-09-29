@@ -46,15 +46,10 @@ def banner_image():
     return image
 
 
-def make_smdh(out, profile):
-    bannertool = ROOT / '.toolchain/home-menu/bannertool/windows-x86_64/bannertool.exe'
-    try:
-        from PIL import Image
-        banner = banner_image()
-    except ImportError:
-        return None
-    if banner is None or not bannertool.exists():
-        return None
+def icon_image(profile, banner=None):
+    """48x48: the disc banner's logo on a card in the profile colour."""
+    from PIL import Image
+    banner = banner or banner_image()
     icon = Image.new('RGBA', (48, 48), COLOURS[profile] + (255,))
     frame = Image.new('RGBA', (46, 46), (16, 16, 16, 255))
     icon.alpha_composite(frame, (1, 1))
@@ -62,6 +57,18 @@ def make_smdh(out, profile):
     icon.alpha_composite(logo, (1, 8))
     band = Image.new('RGBA', (46, 12), COLOURS[profile] + (255,))
     icon.alpha_composite(band, (1, 30))
+    return icon
+
+
+def make_smdh(out, profile):
+    bannertool = ROOT / '.toolchain/home-menu/bannertool/windows-x86_64/bannertool.exe'
+    try:
+        banner = banner_image()
+    except ImportError:
+        return None
+    if banner is None or not bannertool.exists():
+        return None
+    icon = icon_image(profile, banner)
     png = out / f'launcher-{profile}.png'
     smdh = out / f'launcher-{profile}.smdh'
     icon.convert('RGB').save(png)

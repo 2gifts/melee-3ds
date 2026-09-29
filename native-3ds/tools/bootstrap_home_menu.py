@@ -50,11 +50,16 @@ def acquire(name, url, digest, strip_root):
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('--skip-python', action='store_true', help='Python dependencies are already installed')
+    ap.add_argument('--cia-only', action='store_true',
+                    help='Only makerom and bannertool (CIA packaging with the generated 2D banner)')
     args = ap.parse_args()
     BASE.mkdir(parents=True, exist_ok=True)
-    for tool in TOOLS:
+    # pycgfx and its Python packages only author the 3D diorama. Its GitHub
+    # source archive is also not guaranteed to keep the pinned checksum.
+    tools = [t for t in TOOLS if not args.cia_only or t[0] != 'pycgfx']
+    for tool in tools:
         acquire(*tool)
-    if not args.skip_python:
+    if not args.skip_python and not args.cia_only:
         subprocess.run([sys.executable, '-m', 'pip', 'install', '--target', str(BASE/'python'),
                         'gltflib==1.0.13', 'dataclasses-json==0.6.7', 'marshmallow==3.26.2',
                         'typing-inspect==0.9.0', 'mypy-extensions==1.1.0'], check=True)

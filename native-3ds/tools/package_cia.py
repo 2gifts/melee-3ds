@@ -58,12 +58,19 @@ def main():
     ap.add_argument('--cci', type=Path, help='Also emit a local emulator test cartridge')
     ap.add_argument('--cosmetic-baseline', type=Path,
                     help='Explicit candidate: verify an in-place patch against this console-tested art directory')
+    ap.add_argument('--generated-banner', action='store_true',
+                    help='Use a 2D banner and icon made from the disc files (tools/simple_banner.py) instead of --art')
     args = ap.parse_args()
     profile = PROFILES[args.profile]
     args.elf = args.elf or ROOT/profile['elf']
     args.output = args.output or ROOT/profile['output']
     title_id = 0x0004000000000000 | profile['unique'] << 8
-    if args.profile == 'fresh':
+    generated = args.generated_banner
+    if generated:
+        assert not args.cosmetic_baseline, '--generated-banner makes its own art'
+        from simple_banner import make_art
+        args.art = make_art(args.profile)
+    elif args.profile == 'fresh':
         args.art = fresh_art(args.art)
     rsf = ROOT/'port/3ds/melee.rsf'
     if args.profile != 'unlocked':
@@ -82,7 +89,8 @@ def main():
     # Reject known unsafe profiles before writing any installable output.
     baseline_model = (args.cosmetic_baseline/'banner.cgfx').read_bytes() if args.cosmetic_baseline else None
     baseline_container = (args.cosmetic_baseline/'banner.bin').read_bytes() if args.cosmetic_baseline else None
-    verify_release_model((args.art/'banner.cgfx').read_bytes(),cosmetic_baseline=baseline_model)
+    if not generated:
+        verify_release_model((args.art/'banner.cgfx').read_bytes(),cosmetic_baseline=baseline_model)
     with wave.open(str(args.art/'announcer.wav'), 'rb') as wav:
         assert wav.getnchannels() == 2 and wav.getsampwidth() == 2
         assert 0 < wav.getnframes()/wav.getframerate() <= 3
@@ -91,8 +99,10 @@ def main():
     run(bannertool, 'makesmdh', '-s', profile['short'],
         '-l', profile['long'], '-p', '2gifts and contributors',
         '-i', args.art/'icon.png', '-o', args.art/'icon.smdh', '-r', 'regionfree',
-        '-f', 'visible,allow3d,new3ds,recordusage,extendedbanner')
-    if args.cosmetic_baseline:
+        '-f', 'visible,allow3d,new3ds,recordusage' + ('' if generated else ',extendedbanner'))
+    if generated:
+        pass  # simple_banner.make_art already ran makebanner on its image and sound.
+    elif args.cosmetic_baseline:
         # patch_home_banner.py has already recompressed into the original slot.
         # Running makebanner again would move the unchanged sound resource.
         # The fresh-save title's icon differs by design; its banner does not.
@@ -101,14 +111,16 @@ def main():
     else:
         run(bannertool, 'makebanner', '-ci', args.art/'banner.cgfx',
             '-a', args.art/'announcer.wav', '-o', args.art/'banner.bin')
-    verify_release_container((args.art/'banner.bin').read_bytes(),cosmetic_baseline=baseline_container)
+    if not generated:
+        verify_release_container((args.art/'banner.bin').read_bytes(),cosmetic_baseline=baseline_container)
     packed = (args.art/'banner.bin').read_bytes()
     assert lz11(packed[u32(packed,8):]) == (args.art/'banner.cgfx').read_bytes(), 'Packed model differs from verified art'
     args.output.parent.mkdir(parents=True, exist_ok=True)
     common = ['-target', 't', '-exefslogo', '-elf', args.elf, '-rsf', rsf,
               '-banner', args.art/'banner.bin', '-icon', args.art/'icon.smdh']
     run(makerom, '-f', 'cia', *common, '-ver', args.version, '-o', args.output)
-    result = verify(args.output, args.elf, args.art,cosmetic_baseline=args.cosmetic_baseline,title_id=title_id)
+    result = verify(args.output, args.elf, args.art,cosmetic_baseline=args.cosmetic_baseline,title_id=title_id,
+                    generated_banner=generated)
     result['development_only'] = args.development
     args.output.with_suffix('.verified.json').write_text(json.dumps(result, indent=2)+'\n')
     if args.cci:

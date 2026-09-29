@@ -26,3 +26,5 @@ __pycache__/
 *.bin
 *.log
 *.dmp
+# The one-click builder launcher (the repository root ignores *.bat).
+!/tools/easy_build/Build Melee CIA.bat

@@ -89,9 +89,10 @@ def write_wav(path,channels,rate):
     with wave.open(str(path),'wb') as f:
         f.setnchannels(len(channels));f.setsampwidth(2);f.setframerate(rate);f.writeframes(pcm.tobytes())
 
-def extract_announcer():
+def announcer_clips():
+    """The title screen's announcer calls: [(channels of samples, rate)]."""
     raw=(ROOT/'assets/GALE01/files/audio/nr_title.ssm').read_bytes()
-    header,data_size,count,bank=struct.unpack_from('>4I',raw);base=len(raw)-data_size;o=16;result=[]
+    header,data_size,count,bank=struct.unpack_from('>4I',raw);base=len(raw)-data_size;o=16;clips=[]
     for i in range(count):
         channels,rate=struct.unpack_from('>II',raw,o);pcm=[]
         for ch in range(channels):
@@ -100,8 +101,14 @@ def extract_announcer():
             co=struct.unpack_from('>16h',raw,q+16);h1,h2=struct.unpack_from('>hh',raw,q+52)
             off=base+start//16*8
             pcm.append(dsp(raw[off:],co,samples,h1,h2))
+        clips.append((pcm,rate));o+=8+channels*64
+    return clips
+
+def extract_announcer():
+    result=[]
+    for i,(pcm,rate) in enumerate(announcer_clips()):
         dest=OUT/f'announcer-{i}.wav';write_wav(dest,pcm,rate)
-        result.append(dict(index=i,channels=channels,rate=rate,seconds=len(pcm[0])/rate,file=dest.name));o+=8+channels*64
+        result.append(dict(index=i,channels=len(pcm),rate=rate,seconds=len(pcm[0])/rate,file=dest.name))
     (OUT/'announcer-inventory.json').write_text(json.dumps(result,indent=2)+'\n');return result
 
 if __name__=='__main__':

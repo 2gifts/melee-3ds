@@ -153,7 +153,7 @@ def verify_launch_logo(data):
                 both_screens=True,sha256=hashlib.sha256(data).hexdigest())
 
 
-def verify(path, elf_path, art, *, cosmetic_baseline=None, title_id=TITLE_ID):
+def verify(path, elf_path, art, *, cosmetic_baseline=None, title_id=TITLE_ID, generated_banner=False):
     TITLE_ID = title_id
     raw = path.read_bytes()
     hdr, _, _, cert, ticket_size, tmd_size, meta_size, size = struct.unpack_from('<IHHIIIIQ', raw)
@@ -213,15 +213,22 @@ def verify(path, elf_path, art, *, cosmetic_baseline=None, title_id=TITLE_ID):
     icon, banner = files['icon'], files['banner']
     assert icon[:4] == b'SMDH' and len(icon) == 0x36c0
     assert u32(icon, 0x2018) == 0x7fffffff
-    assert u32(icon, 0x2028) & 0x1025 == 0x1025, '3D/New3DS/extended-banner flags are required'
+    # The diorama is an extended banner; bannertool's 2D template is not.
+    flags = 0x1005 if generated_banner else 0x1025
+    assert u32(icon, 0x2028) & flags == flags, '3D/New3DS(/extended-banner) flags are required'
     assert banner[:4] == b'CBMD'
     cgfx = lz11(banner[u32(banner, 8):])
     assert cgfx == (art/'banner.cgfx').read_bytes()
     assert cgfx[:4] == b'CGFX' and len(cgfx) <= 0x80000
-    baseline_model = (cosmetic_baseline/'banner.cgfx').read_bytes() if cosmetic_baseline else None
-    baseline_container = (cosmetic_baseline/'banner.bin').read_bytes() if cosmetic_baseline else None
-    verify_release_container(banner,cosmetic_baseline=baseline_container)
-    banner_validation = verify_release_model(cgfx,cosmetic_baseline=baseline_model)
+    if generated_banner:
+        # bannertool's standard 2D banner (tools/simple_banner.py), not the
+        # console-tested diorama that the release lock covers.
+        banner_validation = dict(generated_2d_banner=True, cgfx_sha256=hashlib.sha256(cgfx).hexdigest())
+    else:
+        baseline_model = (cosmetic_baseline/'banner.cgfx').read_bytes() if cosmetic_baseline else None
+        baseline_container = (cosmetic_baseline/'banner.bin').read_bytes() if cosmetic_baseline else None
+        verify_release_container(banner,cosmetic_baseline=baseline_container)
+        banner_validation = verify_release_model(cgfx,cosmetic_baseline=baseline_model)
     sound = u32(banner, 0x84)
     assert sound % 16 == 0 and 0x88 < sound < len(banner)
     sound_validation = verify_sound(banner[sound:], art/'announcer.wav')
