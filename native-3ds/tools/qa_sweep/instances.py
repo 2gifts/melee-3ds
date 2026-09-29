@@ -79,5 +79,7 @@ def prepare(index):
 
 
 def reset_saves(home):
-    """Remove an instance's memory-card saves (both profiles)."""
+    """Remove an instance's memory-card saves (both profiles) and settings
+    (tap jump, custom buttons)."""
     shutil.rmtree(home / 'user/sdmc/3ds/melee/saves', ignore_errors=True)
+    (home / 'user/sdmc/3ds/melee/settings.txt').unlink(missing_ok=True)

@@ -51,15 +51,13 @@ void mp_native_bottom_frame(unsigned fps,unsigned expanded,unsigned rate,unsigne
     if(mp_test_bottom_disabled)return;
     if(mp_test_bottom_touch){x=mp_test_bottom_touch&65535;y=mp_test_bottom_touch>>16;touch=1;mp_test_bottom_touch=0;}
 #endif
-    /* The open CONTROLS page has its own option: tap jump. */
-    extern unsigned mp_bottom_guide_hit(unsigned,unsigned);
-    extern unsigned mp_native_tap_jump(void);extern void mp_native_set_tap_jump(unsigned);
-    if(touch&&guide&&mp_bottom_guide_hit(x,y)==MP_BOTTOM_TAP_JUMP){mp_native_set_tap_jump(!mp_native_tap_jump());dirty=1;touch=0;}
+    /* The open CONTROLS page: tabs, button customization, tap jump. */
+    if(touch&&guide&&mp_bottom_guide_touch(x,y)){dirty=1;touch=0;}
     if(touch){switch(mp_bottom_hit(x,y)){
         case MP_BOTTOM_FPS:show_fps^=1;dirty=1;break;
         case MP_BOTTOM_VIEW:mp_native_toggle_display();break;
         case MP_BOTTOM_RATE:mp_native_cycle_rate();break;
-        case MP_BOTTOM_GUIDE:if(mp_native_camera_mode)mp_native_camera_control^=1;else guide^=1;dirty=1;break;
+        case MP_BOTTOM_GUIDE:if(mp_native_camera_mode)mp_native_camera_control^=1;else{guide^=1;mp_bottom_guide_reset();}dirty=1;break;
     }}
     MPBottomState state;mp_game_bottom_snapshot(&state);
     /* The bridge changes ARM endianness, not the bytes of pointed-to data. */
@@ -82,7 +80,7 @@ void mp_native_bottom_frame(unsigned fps,unsigned expanded,unsigned rate,unsigne
     if(state.scene==2||state.scene==3||state.scene==4||state.scene==44)match=state;
     else if(state.scene==5){unsigned scene=state.scene;state=match;state.scene=scene;}
     /* Close the guide at scene changes so it never masks a new match. */
-    if(state.scene!=previous.scene)guide=0;
+    if(state.scene!=previous.scene&&guide){guide=0;mp_bottom_guide_reset();}
 #ifdef MP_SMOKE_TEST
     mp_bottom_observed=state;mp_bottom_fps_visible=show_fps;mp_bottom_guide_visible=guide;
 #endif

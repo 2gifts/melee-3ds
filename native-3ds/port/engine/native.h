@@ -14,6 +14,7 @@ int mp_platform_file_read_async_begin(int id,void *dst,unsigned size,unsigned of
 int mp_platform_file_read_async_poll(void);
 #define MP_FILE_READ_BUSY (-2147483647)
 void mp_platform_pad(void *statuses);
+void mp_platform_pad_battle(unsigned battle);
 void mp_platform_frame_render(void);
 void mp_platform_frame_main(void);
 /* Top-screen VBlank count (video_pad.c) and the frame-rate cap in retraces

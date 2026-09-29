@@ -24,7 +24,6 @@ extern unsigned mp_bottom_css(unsigned);
  * the 11-bit unlock masks; trophies with a nonzero count; cleared events. */
 static void progress(MPBottomState* s)
 {
-    extern unsigned mp_platform_profile(void);
     const u16* trophies = gmMainLib_GetTrophyFlags();
     u64 events = gmMainLib_804D3EE0->thing.x1A68 & ((1ULL << 51) - 1);
     unsigned i, count = 0;
@@ -33,7 +32,6 @@ static void progress(MPBottomState* s)
     for (i = 0; i < 293; ++i) count += (trophies[i] & 0xFF) != 0;
     s->trophies = count;
     s->events = __builtin_popcountll(events);
-    s->profile = mp_platform_profile();
     /* Easiest unlocks first; the bottom screen hints at the first locked. */
     {
         static const u8 order[11] = {15, 22, 20, 21, 24, 25, 7, 9, 23, 10, 3};
@@ -50,6 +48,11 @@ void mp_bottom_snapshot(MPBottomState* s)
     s->scene = mp_bottom_scene;
     s->mode = gm_GetCurrentGameMode();
     for (i = 0; i < 4; ++i) s->players[i].kind = 3;
+    {
+        /* The build's save profile (1: fresh save), for every screen. */
+        extern unsigned mp_platform_profile(void);
+        s->profile = mp_platform_profile();
+    }
     if (s->scene == 0xff) return;
     if (s->scene == 1) s->menu = mn_804A04F0.cur_menu;
     {

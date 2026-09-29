@@ -25,7 +25,7 @@ Play Versus against CPUs, practice in Training, and explore Melee on a different
 
 - Native stereoscopic **3D in gameplay and perspective menus**, adjusted with the system slider.
 - **4:3 by default**, with an optional expanded view that reveals more of the scene without stretching it.
-- A **touch-screen dashboard** with portraits, stocks, and damage for up to four fighters, plus menu guidance, an optional FPS display, a frame-rate mode switch, and a tap-jump option.
+- A **touch-screen dashboard** with portraits, stocks, and damage for up to four fighters, plus menu guidance, an optional FPS display, a frame-rate mode switch, and **custom button mapping**.
 - Original music and sound effects, **UCF 0.84 input fixes**, and **C-stick attacks in single-player modes**.
 - **Two builds, installable side by side:** everything unlocked with editable tournament-friendly defaults, or a **fresh save** with vanilla options that you unlock by playing. Progress saves to the SD card as Dolphin-compatible memory-card files.
 - **HOME Menu launch through an installable CIA**, with a disc icon and a Final Destination/Fox diorama. Homebrew Launcher is also supported.
@@ -91,7 +91,7 @@ In the everything-unlocked build, Versus starts with **4 stocks, 8 minutes, item
 | START | Confirm / pause / Training menu |
 | 3D slider | Adjust depth; fully down selects 2D |
 | Touch the bottom-screen buttons | Toggle the FPS display, choose the frame-rate mode (AUTO / 30 / 60), change the view, or show controls |
-| Touch TAP JUMP (on the CONTROLS page) | Turn jumping with up on the Circle Pad on or off; saved on the SD card |
+| Touch CONTROLS, then CUSTOMIZE | Remap buttons for matches (for example ZL to jump) and turn tap jump on or off; saved on the SD card |
 | Hold ZL + ZR, then press SELECT | Toggle 4:3 / expanded view |
 | SELECT | Exit to HOME or Homebrew Launcher |
 

@@ -43,7 +43,15 @@ void VIWaitForRetrace(void){
 }
 u32 VIGetRetraceCount(void){return retraces;}u32 VIGetTvFormat(void){return 0;}u32 VIGetDTVStatus(void){return 0;}
 void VIConfigure(GXRenderModeObj*m){mode=*m;}void VISetBlack(BOOL b){black=b;}void VIFlush(void){}void VISetNextFrameBuffer(void*p){framebuffer=p;}
-BOOL PADInit(void){return 1;}u32 PADRead(PADStatus*p){mp_platform_pad(p);return PAD_CHAN0_BIT;}
+BOOL PADInit(void){return 1;}
+/* Custom buttons apply only in an unpaused match: a VS-type, sudden-death,
+ * Training or Camera Mode scene with no pause flags (pause menu, Training
+ * menu, GAME! freeze, event pauses). Menus keep the standard layout. */
+u32 PADRead(PADStatus*p){
+    extern unsigned mp_bottom_scene;extern int gm_801A4624(void);
+    unsigned scene=mp_bottom_scene;
+    mp_platform_pad_battle((scene==2||scene==3||scene==4||scene==44)&&!gm_801A4624());
+    mp_platform_pad(p);return PAD_CHAN0_BIT;}
 void PADSetSpec(u32 s){pad_spec=s;}unsigned long PADGetSpec(void){return pad_spec;}
 void PADSetSamplingRate(unsigned long n){(void)n;}int PADReset(unsigned long mask){(void)mask;return 1;}BOOL PADRecalibrate(u32 mask){(void)mask;return 1;}
 void PADControlMotor(s32 chan,u32 command){(void)chan;(void)command;}

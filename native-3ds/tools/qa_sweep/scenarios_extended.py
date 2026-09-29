@@ -490,19 +490,39 @@ def player_airborne():
         return bool(g.word(fp + 0xe0))
 
 
-def jumped(s, buttons=0, x=0, y=0):
-    """Stand still, then input; True if player 1 left the ground."""
-    s.hold(0, 40, settle=1.5)
-    if player_airborne():
-        raise Outcome('error', 'player 1 is not standing on the ground')
-    s.pad(buttons, 10, x, y)
-    seen = False
-    end = time.monotonic() + 1.5
-    while time.monotonic() < end and not seen:
-        seen = player_airborne()
+def jumped(s, buttons=0, x=0, y=0, tries=2):
+    """Stand still, then input; True if player 1 left the ground. An
+    injected stick-up that lands on a frame when the fighter stores its
+    input (fighter.c x221D_b3) is not a tap, in either build; retry once."""
+    for _ in range(tries):
+        s.hold(0, 40, settle=1.5)
+        if player_airborne():
+            raise Outcome('error', 'player 1 is not standing on the ground')
+        s.pad(buttons, 10, x, y)
+        seen = watch_airborne()
+        s.hold(0, 90, settle=2.5)
+        if seen:
+            return True
+    return False
+
+
+def game_frame():
+    with Gdb() as g:
+        return g.word(symbols['engine_frames'], 'little')
+
+
+def watch_airborne(frames=60, limit=15):
+    """True if player 1 leaves the ground within FRAMES game frames. Counts
+    frames, not seconds: a busy emulator (or a capture) can stall a while."""
+    start = game_frame()
+    end = time.monotonic() + limit
+    while time.monotonic() < end:
+        if player_airborne():
+            return True
+        if game_frame() - start > frames:
+            return False
         time.sleep(.05)
-    s.hold(0, 90, settle=2.5)
-    return seen
+    return False
 
 
 def touch(x, y):
@@ -518,30 +538,148 @@ def tap_jump_toggle(s):
     from sweeplib import SD
     settings = SD / 'settings.txt'
     boot_to_menu(s)
-    select_match(s, 2, 9, 16)
+    select_match(s, 2, 9, 25)  # Final Destination: no stage hazards
     s.wait(4)
     results = {'stick-up, tap jump on': jumped(s, y=80)}
     touch(280, 225)  # open CONTROLS
     with Gdb() as g:
         if not g.word(symbols['mp_bottom_guide_visible'], 'little'):
             raise Outcome('fail', 'CONTROLS page did not open')
-    touch(160, 195)  # TAP JUMP row
+    touch(265, 14)   # CUSTOMIZE tab
+    touch(100, 199)  # TAP JUMP switch
     s.capture('bottom-tap-jump-off')
     with Gdb() as g:
         state = g.word(symbols['tap_jump'], 'little')
     results['stick-up, tap jump off'] = jumped(s, y=80)
     results['X, tap jump off'] = jumped(s, 0x400)
-    saved_off = settings.read_text() if settings.exists() else None
-    touch(160, 195)
+    saved_off = settings.read_text().splitlines()[0] if settings.exists() else None
+    touch(100, 199)
     s.capture('bottom-tap-jump-on')
     results['stick-up, tap jump on again'] = jumped(s, y=80)
     time.sleep(1)
-    saved_on = settings.read_text() if settings.exists() else None
+    saved_on = settings.read_text().splitlines()[0] if settings.exists() else None
     s.note(f'{results}; switch state after first touch {state}; settings {saved_off!r} -> {saved_on!r}')
     expected = {'stick-up, tap jump on': True, 'stick-up, tap jump off': False, 'X, tap jump off': True,
                 'stick-up, tap jump on again': True}
-    if results != expected or state != 0 or saved_off != 'tap_jump=0\n' or saved_on != 'tap_jump=1\n':
+    if results != expected or state != 0 or saved_off != 'tap_jump=0' or saved_on != 'tap_jump=1':
         raise Outcome('fail', f'tap jump switch: {results}, state {state}, saved {saved_off!r}/{saved_on!r}')
+
+
+# --- Custom buttons (CONTROLS > CUSTOMIZE) ------------------------------------------
+KEYS = {'A': 1, 'B': 2, 'START': 8, 'X': 1 << 10, 'ZL': 1 << 14, 'ZR': 1 << 15}
+
+
+def set_keys(keys):
+    """Hold 3DS KEYS, mapped like physical buttons (mp_test_keys)."""
+    with Gdb() as g:
+        g.write(symbols['mp_test_keys'], keys.to_bytes(4, 'little'))
+
+
+def tap_keys(keys, seconds=.3):
+    set_keys(keys)
+    time.sleep(seconds)
+    set_keys(0)
+
+
+def keys_jumped(s, keys, tries=2):
+    """Stand still, then hold 3DS KEYS; True if player 1 left the ground
+    (retried once, like jumped)."""
+    for _ in range(tries):
+        s.hold(0, 40, settle=1.5)
+        if player_airborne():
+            raise Outcome('error', 'player 1 is not standing on the ground')
+        set_keys(keys)
+        seen = watch_airborne()
+        set_keys(0)
+        s.hold(0, 90, settle=2.5)
+        if seen:
+            return True
+    return False
+
+
+def battle_state():
+    """1 while the custom buttons apply (an unpaused match; services.c)."""
+    with Gdb() as g:
+        return g.word(symbols['pad_battle'], 'little')
+
+
+@scenario('custom-controls')
+def custom_controls(s):
+    """CONTROLS > CUSTOMIZE: map ZL and A to jump ("Z-jump"). They jump in a
+    match; X still jumps and ZR still grabs; A still opens menus; the
+    Training menu uses the standard buttons; settings.txt keeps the mapping."""
+    from sweeplib import SD
+    settings = SD / 'settings.txt'
+    boot_to_menu(s)
+    touch(280, 225)  # CONTROLS
+    s.capture('bottom-guide')
+    touch(265, 14)   # CUSTOMIZE tab
+    s.capture('bottom-customize')
+    touch(230, 46)   # ZL
+    with Gdb() as g:
+        picked = g.word(symbols['mp_bottom_controls_state'], 'little')
+    s.capture('bottom-picker')
+    touch(90, 117)   # JUMP
+    touch(80, 46)    # A
+    touch(90, 117)   # JUMP
+    s.capture('bottom-custom')
+    touch(182, 14)   # GUIDE tab
+    s.capture('bottom-guide-custom')
+    touch(280, 225)  # close
+    time.sleep(1)
+    saved = settings.read_text() if settings.exists() else ''
+    before = s.menu().get('menu')
+    tap_keys(KEYS['A'])  # opens the highlighted main-menu item, as usual
+    time.sleep(1.5)
+    after = s.menu().get('menu')
+    tap_keys(KEYS['B'])
+    time.sleep(1.5)
+    select_match(s, 2, 9, 25)  # Final Destination: no stage hazards
+    s.wait(4)
+    jumps = {name: keys_jumped(s, KEYS[name]) for name in ('ZL', 'A', 'X', 'ZR')}
+    playing = battle_state()
+    s.hold(0x1000, 3, settle=2)  # the Training menu
+    paused = battle_state()
+    s.capture('training-menu')
+    s.hold(0x1000, 3, settle=2)
+    s.note(f'picker state {picked:#x}; menu {before} -> {after}; jumps {jumps}; '
+           f'custom buttons active: playing {playing}, Training menu {paused}')
+    s.note('settings.txt: ' + ' '.join(saved.split()))
+    problems = []
+    if picked != 1 | 7 << 8:
+        problems.append(f'picker state {picked:#x}')
+    if 'button_zl=jump' not in saved or 'button_a=jump' not in saved:
+        problems.append('mapping not saved')
+    if before == after:
+        problems.append('3DS A did not work in the main menu')
+    if jumps != {'ZL': True, 'A': True, 'X': True, 'ZR': False}:
+        problems.append(f'jumps {jumps}')
+    if playing != 1 or paused != 0:
+        problems.append(f'custom buttons playing {playing}, paused {paused}')
+    if problems:
+        raise Outcome('fail', '; '.join(problems))
+
+
+@scenario('reload-custom-controls')
+def reload_custom_controls(s):
+    """After custom-controls (driver --keep-saves): the saved Z-jump works at
+    start-up; RESET restores the standard layout and saves it."""
+    from sweeplib import SD
+    boot_to_menu(s)
+    select_match(s, 2, 9, 25)  # Final Destination: no stage hazards
+    s.wait(4)
+    loaded = {name: keys_jumped(s, KEYS[name]) for name in ('ZL', 'ZR')}
+    touch(280, 225)  # CONTROLS
+    touch(265, 14)   # CUSTOMIZE
+    touch(274, 199)  # RESET
+    s.capture('bottom-reset')
+    touch(280, 225)
+    reset = {name: keys_jumped(s, KEYS[name]) for name in ('ZL', 'A')}
+    time.sleep(1)
+    saved = (SD / 'settings.txt').read_text()
+    s.note(f'loaded {loaded}; after reset {reset}; settings.txt: ' + ' '.join(saved.split()))
+    if loaded != {'ZL': True, 'ZR': False} or reset != {'ZL': False, 'A': False} or 'button_zl=grab' not in saved:
+        raise Outcome('fail', f'loaded {loaded}, after reset {reset}')
 
 
 # --- Boot memory-card notice in stereo (text depth vs its window) -------------------
