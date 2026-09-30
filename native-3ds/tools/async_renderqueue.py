@@ -7,14 +7,16 @@ license remains in port/3ds/vendor/CITRO3D-LICENSE.txt.
 import hashlib
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
-PIN='db6571674f9e1679270630aef62a0640a59ff428a94c0a52b837f25811f9f3d1'
+# SHA-256 of the pinned file with LF line endings. Git may check it out with
+# CRLF (core.autocrlf), so the check ignores line endings.
+PIN='8face2edf47bd759f6ed7cb5dd339b6d0e959e3424bd6c6ab556144151436b93'
 
 
 def source():
     path=ROOT/'references/citro3d/source/renderqueue.c'
     if not path.exists():
         raise SystemExit(f'{path} is missing; run python tools/bootstrap.py --portable-windows to fetch the pinned Citro3D source')
-    if hashlib.sha256(path.read_bytes()).hexdigest()!=PIN:
+    if hashlib.sha256(path.read_bytes().replace(b'\r\n',b'\n')).hexdigest()!=PIN:
         raise SystemExit(f'{path} is not the pinned Citro3D version; delete references/citro3d and run python tools/bootstrap.py --portable-windows')
     s=path.read_text()
     def replace(old,new,count=1):
