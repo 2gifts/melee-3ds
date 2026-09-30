@@ -29,6 +29,29 @@ static void translator_main(void*unused){
     /* Spin before sleeping only on a core of its own (never core 0). */
     mp_game_gx_translate(mp_gx_translator_core==2?GX_SPIN:0);
 }
+/* HOME Menu: on APTHOOK_ONSUSPEND citro3d drains and clears the GPU queue
+ * (C3Di_AptEventHook). aptMainLoop runs on the engine thread right after it
+ * hands a frame to this thread, which is then usually still submitting it,
+ * and the render queue's own check stops the app (issue #5). Hooks run
+ * newest first, so this one, registered after C3D_Init, waits beforehand
+ * until every recorded frame is rendered; the engine records nothing while
+ * it is inside aptMainLoop. 1 when drained. */
+static aptHookCookie apt_cookie;
+int mp_gx_thread_drain(void){
+    extern u32 mp_gx_fifo_state[]; /* BE8 words: [6] frames recorded, [7] frames done */
+    if(!translator||__atomic_load_n(&failed,__ATOMIC_ACQUIRE))return 1;
+    u64 start=svcGetSystemTick();
+    while(__builtin_bswap32(__atomic_load_n(&mp_gx_fifo_state[7],__ATOMIC_ACQUIRE))!=
+          __builtin_bswap32(__atomic_load_n(&mp_gx_fifo_state[6],__ATOMIC_ACQUIRE))){
+        if(__atomic_load_n(&failed,__ATOMIC_ACQUIRE)||svcGetSystemTick()-start>3ULL*SYSCLOCK_ARM11)return 0;
+        svcSleepThread(500000);
+    }
+    return 1;
+}
+static void on_apt(APT_HookType hook,void*unused){
+    (void)unused;
+    if(hook==APTHOOK_ONSUSPEND&&!mp_gx_thread_drain())mp_native_log("HOME Menu: the renderer did not finish its frame within 3 s\n");
+}
 int mp_gx_thread_create(int is_new){
     if(translator||!is_new)return 0;
 #ifdef MP_SMOKE_TEST
@@ -40,7 +63,7 @@ int mp_gx_thread_create(int is_new){
     s32 priority=0x30;svcGetThreadPriority(&priority,CUR_THREAD_HANDLE);
     translator=threadCreate(translator_main,NULL,256*1024,priority,2,false);
     if(!translator){mp_game_gx_disable();mp_native_log("Core 2 unavailable for the GX translator; direct GX\n");return 0;}
-    mp_gx_translator_active=1;
+    mp_gx_translator_active=1;aptHook(&apt_cookie,on_apt,NULL);
     mp_native_log("GX translator thread created with core-2 affinity; engine thread records GX commands\n");
     return 1;
 }
@@ -61,6 +84,7 @@ void mp_gx_thread_stop(void){
     if(!translator||mp_gx_thread_is_current())return;
     LightEvent_Signal(&go);
     if(!__atomic_load_n(&failed,__ATOMIC_ACQUIRE))mp_game_gx_stop();
+    aptUnhook(&apt_cookie);
     threadJoin(translator,U64_MAX);threadFree(translator);translator=NULL;
     mp_gx_translator_active=0;mp_game_gx_disable();
 }

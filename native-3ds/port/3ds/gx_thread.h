@@ -6,6 +6,8 @@ int mp_gx_thread_create(int is_new);
 void mp_gx_thread_go(void);
 void mp_gx_thread_stop(void);
 int mp_gx_thread_is_current(void);
+/* Wait until every recorded frame is rendered (HOME Menu suspend). */
+int mp_gx_thread_drain(void);
 void mp_gx_thread_panic(const char *message) __attribute__((noreturn));
 extern unsigned mp_gx_translator_active, mp_gx_translator_core;
 #endif

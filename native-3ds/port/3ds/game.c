@@ -67,6 +67,7 @@ volatile unsigned mp_test_memory_compare;
 volatile unsigned mp_test_rotation_check;
 volatile unsigned mp_test_ppc_math_check;
 volatile unsigned mp_test_stall;
+volatile unsigned mp_test_suspend,mp_test_suspends; /* HOME Menu suspend stand-in (1 with drain, 2 without) */
 #endif
 unsigned mp_native_frame_number(void){return engine_frames;}
 void mp_native_log(const char*);
@@ -212,6 +213,17 @@ void mp_native_frame_main(void)
     if(mp_test_rotation_check==1){extern unsigned mp_game_rotation_check(void);mp_test_rotation_check=mp_game_rotation_check();}
     if(mp_test_ppc_math_check==1){extern unsigned mp_game_ppc_math_check(void);mp_test_ppc_math_check=mp_game_ppc_math_check();}
     if(mp_test_async_files==1){extern int mp_native_async_self_test(void);if(mp_native_async_self_test())mp_test_async_files=2;}
+#endif
+#ifdef MP_SMOKE_TEST
+    /* Azahar has no HOME Menu. Stand in for its suspend at the same point:
+     * the APT hook's drain (1) or not (2), then citro3d's own queue drain
+     * (C3Di_AptEventHook, APTHOOK_ONSUSPEND) and the VBlank hooks. */
+    if(mp_test_suspend){
+        extern void C3Di_RenderQueueWaitDone(void),C3Di_RenderQueueDisableVBlank(void),C3Di_RenderQueueEnableVBlank(void);
+        if(mp_test_suspend==1)mp_gx_thread_drain();
+        C3Di_RenderQueueWaitDone();C3Di_RenderQueueDisableVBlank();C3Di_RenderQueueEnableVBlank();
+        ++mp_test_suspends;
+    }
 #endif
     hidScanInput();
     unsigned held=hidKeysHeld();mp_native_display_keys(held);

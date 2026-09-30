@@ -697,3 +697,39 @@ def memcard_stereo(s):
     data = bytearray((SD / 'engine-right.bgr').read_bytes())
     data[0::3], data[2::3] = data[2::3], data[0::3]
     Image.frombytes('RGB', (240, 400), bytes(data)).transpose(Image.Transpose.ROTATE_90).save(s.out / 'notice-right.png')
+
+
+# --- HOME Menu suspend (issue #5) ----------------------------------------------------
+def home_suspend(mode):
+    def run(s):
+        """Azahar has no HOME Menu: run citro3d's suspend drain every frame,
+        at the point aptMainLoop handles HOME (game.c mp_test_suspend), on
+        the title screen (where issue #5 crashed), in menus and in a match."""
+        def set_mode(value):
+            with Gdb() as g:
+                g.write(symbols['mp_test_suspend'], value.to_bytes(4, 'little'))
+
+        def suspends():
+            with Gdb() as g:
+                return g.word(symbols['mp_test_suspends'], 'little')
+        s.wait_scene(0, 90, press=0x100, every=3)  # title screen: PRESS START
+        set_mode(mode)
+        s.wait(8)
+        on_title = suspends()
+        s.capture('title')
+        set_mode(0)
+        boot_to_menu(s)
+        set_mode(mode)
+        select_match(s, 2, 9, 25)
+        s.wait(6)
+        s.capture('match')
+        total = suspends()
+        set_mode(0)
+        s.note(f'suspend stand-ins: {on_title} on the title screen, {total} in total')
+        # Each stand-in syncs the GPU, so the emulator runs slowly meanwhile.
+        if on_title < 20 or total <= on_title:
+            raise Outcome('fail', f'suspend stand-in ran {on_title}/{total} times')
+    return run
+
+
+scenario('home-suspend')(home_suspend(1))
