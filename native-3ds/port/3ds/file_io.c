@@ -115,6 +115,8 @@ static void index_files(void){
     extern void mp_native_log(const char*);mp_native_log(text);
 }
 #endif
+/* Disc files found at startup (a complete US v1.02 extraction has 1209). */
+unsigned mp_native_disc_file_count(void){return disc_index_count;}
 static int path_for(char *path,size_t capacity,const char *name){
     if(!name||!*name||*name=='/'||strstr(name,"..")||strchr(name,':')||strchr(name,'\\'))return 0;
     int n=snprintf(path,capacity,"%s%s",MP_DISC_ROOT,name);return n>=0&&(size_t)n<capacity;

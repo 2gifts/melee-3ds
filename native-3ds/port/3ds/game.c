@@ -295,6 +295,33 @@ void mp_native_panic(const char*s){
     printf("SELECT: exit game\nDetails: /3ds/melee/game.log\n");
 #endif
     longjmp(failure_return,1);}
+/* A complete US v1.02 extraction has 1209 disc files, in either SD layout.
+ * Without them Melee's own start-up waits forever for its sound banks
+ * (stuck on PREPARING MENUS), so say where the files belong instead. With
+ * only some missing, the player may still try. 1: start the game. */
+enum{MP_DISC_FILES=1209};
+static int disc_files_ready(void){
+    extern unsigned mp_native_disc_file_count(void);
+    unsigned found=mp_native_disc_file_count();
+    char text[160];snprintf(text,sizeof(text),"Game files: %u of %u found in sdmc:/3ds/melee/files\n",found,MP_DISC_FILES);
+    mp_native_log(text);
+    if(found>=MP_DISC_FILES)return 1;
+    flush_log();
+    char lead[48];snprintf(lead,sizeof(lead),"%u OF %u GAME FILES FOUND",found,MP_DISC_FILES);
+    mp_native_bottom_notice(found?"SOME FILES ARE MISSING":"GAME FILES NOT FOUND",found?lead:"MELEE NEEDS ITS GAME FILES",
+        "THEY BELONG IN SD:/3DS/MELEE/FILES","COPY THE WHOLE 3DS FOLDER FROM YOUR BUILD","TO THE ROOT OF THE SD CARD, THEN TRY AGAIN",
+        found?"A: START ANYWAY    SELECT: EXIT":"SELECT: EXIT");
+#ifdef MP_SMOKE_TEST
+    capture_frame();
+#endif
+    while(aptMainLoop()){
+        hidScanInput();u32 keys=hidKeysDown();
+        if(keys&KEY_SELECT)break;
+        if(found&&(keys&KEY_A)){mp_native_log("Game files: starting anyway\n");return 1;}
+        gspWaitForVBlank();
+    }
+    return 0;
+}
 static void *read_asset(const char *name,unsigned *size)
 {
     extern int mp_native_file_path(const char*,char*,size_t);
@@ -335,6 +362,12 @@ int main(void)
     mp_native_cpu_init(is_new);
     extern void mp_native_files_init(void);mp_native_files_init();
     mp_native_bottom_art();
+    if(!disc_files_ready()){
+        mp_native_cpu_exit();
+        {extern void mp_native_files_exit(void);mp_native_files_exit();}
+        mp_native_log("Game application exit (game files missing)\n");mp_log_close();
+        mp_native_bottom_exit();mp_renderer_exit();gfxExit();return 0;
+    }
     extern void mp_native_settings_load(void);mp_native_settings_load();
     if(is_new){extern unsigned __ctru_heap_size;extern unsigned mp_native_cache_menus(unsigned);
         unsigned geometry=__ctru_heap_size>=80*1024*1024?12*1024*1024:6*1024*1024;

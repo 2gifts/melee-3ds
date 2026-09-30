@@ -10,6 +10,11 @@ void mp_bottom_art_exit(void);
 void mp_bottom_draw(uint16_t* pixels, const MPBottomState* state,
                     unsigned fps, unsigned show_fps, unsigned expanded, unsigned rate, unsigned guide);
 void mp_bottom_loading(uint16_t* pixels, const char* message);
+/* A full-screen message (missing game files); the hint is the last line. */
+void mp_bottom_notice(uint16_t* pixels, const char* title, const char* lead, const char* line1,
+                      const char* line2, const char* line3, const char* hint);
+void mp_native_bottom_notice(const char* title, const char* lead, const char* line1,
+                             const char* line2, const char* line3, const char* hint);
 unsigned mp_bottom_hit(unsigned x, unsigned y);
 /* The CONTROLS page (guide, button customization): a touch above the
  * footer, 1 if used; reset whenever the page opens or closes. */

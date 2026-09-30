@@ -45,6 +45,9 @@ void mp_native_bottom_art(void){
     mp_bottom_loading(pixels,"PREPARING MENUS");
     if(last_vblank!=C3D_FrameCounter(1))present();ready=1;
 }
+void mp_native_bottom_notice(const char* title,const char* lead,const char* line1,const char* line2,const char* line3,const char* hint){
+    mp_bottom_notice(pixels,title,lead,line1,line2,line3,hint);present();
+}
 void mp_native_bottom_frame(unsigned fps,unsigned expanded,unsigned rate,unsigned touch,unsigned x,unsigned y){
     if(!ready)return;
 #ifdef MP_SMOKE_TEST

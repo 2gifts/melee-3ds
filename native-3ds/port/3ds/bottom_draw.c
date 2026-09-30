@@ -417,6 +417,12 @@ void mp_bottom_loading(uint16_t* pixels,const char* message){
     center(160,70,"MELEE",63,ink);rect(60,134,200,2,gold);center(160,152,message,15,gold);
     center(160,207,"NATIVE NINTENDO 3DS PORT",11,muted);
 }
+void mp_bottom_notice(uint16_t* pixels,const char* title,const char* lead,const char* line1,const char* line2,const char* line3,const char* hint){
+    canvas=pixels;background();header(title,"3DS");
+    fit(17,46,lead,19,286,gold);rect(17,78,38,2,gold);
+    fit(17,96,line1,14,286,ink);fit(17,122,line2,12,286,muted);fit(17,140,line3,12,286,muted);
+    rect(0,190,320,50,RGB(10,18,29));rect(0,190,320,1,RGB(80,98,111));fit(17,207,hint,14,286,gold);
+}
 void mp_bottom_draw(uint16_t* pixels,const MPBottomState* s,unsigned fps,unsigned show_fps,unsigned expanded,unsigned rate,unsigned guide){
     canvas=pixels;background();
     int battle=s->scene==2||s->scene==3||s->scene==4||s->scene==44;
