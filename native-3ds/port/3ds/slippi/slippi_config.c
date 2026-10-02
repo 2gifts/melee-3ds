@@ -72,6 +72,8 @@ int slippi_config_load(slippi_config *cfg, const char *path)
         else if (!strcmp(key, "test_drop_pct")) cfg->test_drop_pct = v < 0 ? 0 : v > 90 ? 90 : v;
         else if (!strcmp(key, "mm_retries")) cfg->mm_retries = v;
         else if (!strcmp(key, "selftest")) cfg->selftest = v;
+        else if (!strcmp(key, "character") || !strcmp(key, "color") || !strcmp(key, "stage") ||
+                 !strcmp(key, "stage_select") || !strcmp(key, "boot_menu")) { /* engine / boot menu keys */ }
         else if (!strcmp(key, "selftest_frames")) cfg->selftest_frames = v;
         else if (!strcmp(key, "selftest_character")) cfg->selftest_character = v;
         else if (!strcmp(key, "selftest_allow_real_mm")) cfg->selftest_allow_real_mm = v;

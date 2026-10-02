@@ -377,6 +377,7 @@ int main(void)
         int r=slippi_selftest_run();flush_log();
         printf("Slippi self-test %s (sdmc:/3ds/melee/game.log)\n",r==0?"PASSED":"FAILED");
         if(selftest==2){mp_native_log("Game application exit (self-test)\n");mp_log_close();gfxExit();return 0;}}}
+    {extern void slippi_boot_menu(void);slippi_boot_menu();}
     if(!mp_renderer_init()){mp_native_log("GPU initialization failed\n");mp_log_close();gfxExit();return 1;}
     mp_native_bottom_init();
     mp_native_cpu_init(is_new);

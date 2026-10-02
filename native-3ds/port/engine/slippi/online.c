@@ -162,6 +162,9 @@ static void load_config(void)
         }
     }
     mp_platform_free((void*) text);
+    if (mp_platform_slippi_session() == 2) {
+        return;   /* the boot menu chose offline */
+    }
     if (on.opponent[0] != 0) {
         on.configured = 1;
         mp_platform_slippi_unlimited();

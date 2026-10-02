@@ -50,7 +50,7 @@ def main():
     home = emu.prepare('game', 24840)
     sd = emu.sd(home)
     write_profile(sd / 'slippi', 'a', USERS['b']['connectCode'], args, args.delay,
-                  [f'character={args.character}', 'color=0', f'stage={args.stage}', 'stage_select=1'])
+                  [f'character={args.character}', 'color=0', f'stage={args.stage}', 'stage_select=1', 'boot_menu=0'])
     log = sd / 'game.log'
     log.unlink(missing_ok=True)
     proc = emu.launch(home, Path(args.dsx).resolve(), hidden=not args.show)

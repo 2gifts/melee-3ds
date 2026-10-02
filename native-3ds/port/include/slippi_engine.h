@@ -14,6 +14,8 @@ unsigned mp_platform_slippi_file_size(void);
 int mp_platform_slippi_file_write(const char* path, const void* data, unsigned size, int append);
 /* Development builds: disable the automatic end-of-run frame limit. */
 void mp_platform_slippi_unlimited(void);
+/* Boot menu result: 0 not shown, 1 play online, 2 play offline. */
+int mp_platform_slippi_session(void);
 
 /* ---- replay playback (port/engine/slippi/replay.c) ---- */
 struct Fighter;
