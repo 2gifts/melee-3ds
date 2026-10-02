@@ -9,12 +9,14 @@
 #include <melee/mp/mpcoll.h>
 #include <sysdolphin/baselib/controller.h>
 #include <sysdolphin/baselib/gobj.h>
+#include <slippi_rules.h>
 
 static MPUcfPad pads[4];
 volatile unsigned mp_ucf_enabled=1;
 unsigned mp_ucf_checks[8],mp_ucf_applied[8];
 void mp_ucf_reset(void){memset(pads,0,sizeof(pads));}
-static int active(Fighter*f){return mp_ucf_enabled&&f->x618_player_id<4;}
+/* UCF 0.84 is part of Slippi's General Codes (mp_slippi_rules_mask bit MP_SR_UCF). */
+static int active(Fighter*f){return mp_ucf_enabled&&mp_slippi_rule(MP_SR_UCF)&&f->x618_player_id<4;}
 void mp_ucf_input(Fighter*f){
     if(!active(f)||ftCo_800A2040(f))return;
     ++mp_ucf_checks[0];
@@ -42,7 +44,9 @@ void mp_ucf_dashback(Fighter*f){
 int mp_ucf_sdi(Fighter*f){
     if(!active(f))return 0;++mp_ucf_checks[2];
     float x=f->input.lstick[1].x,y=f->input.lstick[1].y,t=p_ftCommonData->sdi_min_stick_mag;
-    int yes=(f->x673<2||f->x674<2)&&x*x+y*y<t*t&&mp_ucf_delta2(&pads[f->x618_player_id],3)>62*62;
+    /* fmuls y*y, fmadds x*x+yy, fmuls t*t; continue when t*t > mag. */
+    float yy=y*y,mag=mp_ucf_fmadds(x,x,yy),tt=t*t;
+    int yes=(f->x673<2||f->x674<2)&&tt>mag&&mp_ucf_delta2(&pads[f->x618_player_id],3)>62*62;
     mp_ucf_applied[2]+=yes;return yes;
 }
 int mp_ucf_shield_sdi(Fighter*f){
@@ -65,7 +69,8 @@ int mp_ucf_suppress_spotdodge(Fighter*f){
     if(!active(f))return 0;++mp_ucf_checks[6];
     int yes=f->input.cstick[0].y>p_ftCommonData->x314&&
         f->x670_timer_lstick_tilt_x>=p_ftCommonData->x320&&f->input.lstick[0].y>-.8f&&
-        mpColl_IsOnPlatform(&f->coll_data)&&mp_ucf_rim(f->input.lstick[0].x,f->input.lstick[0].y);
+        f->coll_data.floor.index!=-1&&(f->coll_data.floor.flags&0x100)&&
+        mp_ucf_rim(f->input.lstick[0].x,f->input.lstick[0].y);
     mp_ucf_applied[6]+=yes;return yes;
 }
 float mp_ucf_squat_threshold(Fighter*f){
