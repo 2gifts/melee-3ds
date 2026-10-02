@@ -34,7 +34,8 @@ def main():
     obj_dir.mkdir(exist_ok=True)
     flags = ['-std=gnu11', '-O2', '-g', '-Wall', '-Wextra', '-Wno-unused-parameter', '-Wno-sign-compare',
              '-I' + str(SLIPPI), '-I' + str(SLIPPI / 'enet/include'), '-D_WIN32_WINNT=0x0601']
-    lib = sorted(SLIPPI.glob('*.c'))
+    # slippi_files.c is the engine's SD helper (3DS only).
+    lib = sorted(p for p in SLIPPI.glob('*.c') if p.name != 'slippi_files.c')
     enet = sorted((SLIPPI / 'enet').glob('*.c'))
     objects = []
     for src in lib + enet:
