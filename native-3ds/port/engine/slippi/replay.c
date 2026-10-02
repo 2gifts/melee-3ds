@@ -53,9 +53,10 @@ static int frame_index = FIRST_FRAME;
 static int terminated;
 static int finished;
 
-/* Flushed every 16 KiB (about 100 frames), so a run that stalls still
- * leaves its output up to the stall. */
-static u8 out_buf[16 * 1024];
+/* Flushed every 10 records. On Azahar, a run whose flushes were 16 or
+ * 64 KiB stopped advancing after several hundred frames (no end marker,
+ * the run timed out); with small writes every replay plays to its end. */
+static u8 out_buf[400];
 static unsigned out_len;
 static int out_started;
 static int online_rec;        /* recording an online match (no injection) */
