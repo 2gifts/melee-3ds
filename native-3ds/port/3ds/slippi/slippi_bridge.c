@@ -6,6 +6,7 @@
 
 /* Lockstep frame state (CEXISlippi members used by handleOnlineInputs). */
 static int stall_frames;
+static uint64_t stall_since_us;   /* when the current wait for a remote pad began */
 static int frames_to_skip, is_currently_skipping;
 static char error_text[160];
 
@@ -53,10 +54,12 @@ int slippi_net_remote_ready(void)
     return s[2] != 0;
 }
 
+/* Bytes 8 and 9 are 0 as in Slippi Ishiiruka (what Slippi Launcher ships;
+ * mainline has 1, 1 there): the PC's replays record 0 at 0x9. */
 /* CEXISlippi::prepareOnlineMatchState's static block: "a VS match with P1 Red
  * Falco vs P2 Red Bowser vs P3 Young Link vs P4 Young Link on Battlefield". */
 static const unsigned char match_block_template[0x138] = {
-    0x32, 0x01, 0x86, 0x4C, 0xC3, 0x00, 0x00, 0x00, 0x01, 0x01, 0x00, 0xFF, 0xFF, 0x6E, 0x00,
+    0x32, 0x01, 0x86, 0x4C, 0xC3, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0x6E, 0x00,
     0x1F, 0x00, 0x00, 0x01, 0xE0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x3F,
     0x80, 0x00, 0x00, 0x3F, 0x80, 0x00, 0x00, 0x3F, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -200,7 +203,10 @@ static int should_skip(int frame, int *disconnect)
     slippi_state *g = &g_slippi;
     *disconnect = 0;
     if (slippi_remote_pad_locked(frame, NULL) != 1) {
-        if (++stall_frames > 60 * 7) {
+        /* Dolphin's 420-frame rule, by time: the engine may retry a frame many
+         * times per 16.7 ms while it waits. */
+        if (stall_frames++ == 0) stall_since_us = sp_time_us();
+        if (sp_time_us() - stall_since_us > 7000000ull) {
             sp_log("force-disconnecting after a 7 s stall (frame %d, latest remote %d)", frame, (int)g->remote_head_frame);
             g->disconnect_reason = 0;
             slippi_p2p_disconnect();

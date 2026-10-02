@@ -79,7 +79,7 @@ static struct {
     u8 desync_write_idx;
     DesyncLocal desync_local[DESYNC_ENTRIES];
     int disconnected, disconnect_shown, desync_shown, game_over, game_end_frame;
-    unsigned skips, skip_run, frames;
+    unsigned skips, skip_run, frames, waits, wait_ms, longest_wait_ms, no_sample_bodies;
 } on;
 
 static void logf_(const char* fmt, int a, int b, int c)
@@ -262,19 +262,43 @@ static int hooks_on(void)
     return on.active && mp_slippi_engine_leaving() == 0;
 }
 
-/* ---- TriggerSendInput (80376A28), right after PADRead ----
- * Nonzero: drop this sample (the remote pad for the frame is not here yet). */
+/* ---- the pads of each engine body ----
+ * Slippi assigns online frame N to the pad sample that the engine body whose
+ * unpaused-frame counter (gm_80479D58.unk_8) is N consumes (Melee Unlocked
+ * measured this on the console code). The 3DS loads matches more slowly, so
+ * its pad alarm keeps firing during the match's on_enter; numbering samples at
+ * PADRead time would hand online frames to samples the scene loop then
+ * flushes, shifting every remote input. So the exchange happens here, at the
+ * top of the body, on the queue entry the body is about to read, and the body
+ * waits until the remote pad for its frame has arrived. */
+
 int mp_slippi_online_pad_renew(PADStatus* stat)
 {
-    int frame, i, result;
-    u8 remote[PAD_SIZE];
-    PADStatus* source;
+    (void) stat;
+    return 0;
+}
 
-    if (!hooks_on()) {
-        return 0;
+void mp_platform_idle(void);
+
+static void exchange_pads(int frame)
+{
+    PadLibData* p = &HSD_PadLibData;
+    PADStatus* stat;
+    PADStatus* source;
+    u8 remote[PAD_SIZE];
+    int i, result, waited = 0;
+
+    if (p->qcount == 0 || p->queue == NULL) {
+        if (on.no_sample_bodies++ < 8) {
+            logf_("Slippi online: body %d has no pad sample\n", frame, 0, 0);
+        }
+        return;
     }
-    mp_platform_slippi_net_poll();
-    frame = on.frame;
+    stat = p->queue[p->qread].stat;
+    if (frame < 1) {
+        memset(stat, 0, 4 * sizeof *stat);
+        return;
+    }
     if (frame < START_SYNC_FRAME - on.delay) {
         memset(stat, 0, 4 * sizeof *stat);
     }
@@ -293,24 +317,28 @@ int mp_slippi_online_pad_renew(PADStatus* stat)
             break;
         }
     }
-    result = mp_platform_slippi_net_send_inputs(frame, on.delay, on.stable_finalized, on.tx_checksum,
-                                                on.last_local, remote);
-    if (result == RESP_SKIP && !on.game_over) {
-        if (on.skip_run++ == 0 && on.skips < 64) {
-            logf_("Slippi online: waiting for the opponent at frame %d\n", frame, 0, 0);
+    for (;;) {
+        mp_platform_slippi_net_poll();
+        result = mp_platform_slippi_net_send_inputs(frame, on.delay, on.stable_finalized, on.tx_checksum,
+                                                    on.last_local, remote);
+        if (result != RESP_SKIP || on.game_over) {
+            break;
         }
-        on.skips++;
-        return 1;
+        if (waited++ == 0) {
+            on.waits++;
+        }
+        mp_platform_idle();   /* about 1 ms */
     }
-    if (result == RESP_DISCONNECTED || (result != RESP_NORMAL && result != RESP_SKIP)) {
+    on.wait_ms += (unsigned) waited;
+    if ((unsigned) waited > on.longest_wait_ms) {
+        on.longest_wait_ms = (unsigned) waited;
+    }
+    if (result != RESP_NORMAL) {
         if (!on.disconnected) {
             logf_("Slippi online: disconnected at frame %d (%d)\n", frame, result, 0);
         }
         on.disconnected = 1;
         memset(remote, 0, sizeof remote);
-    }
-    if (on.skip_run) {
-        on.skip_run = 0;
     }
     /* The local player's pad is the one from `delay` frames ago. */
     wire_to_pad(&stat[on.local_index], on.delay_buffer[on.delay_index]);
@@ -318,9 +346,13 @@ int mp_slippi_online_pad_renew(PADStatus* stat)
     on.delay_index = (u8) ((on.delay_index + 1) % on.delay);
     wire_to_pad(&stat[on.remote_index], remote);
     on.finalized = frame;
-    on.frame = frame + 1;
     on.frames++;
-    return 0;
+    if (frame % 600 == 0) {
+        logf_("Slippi online: frame %d, waited for the opponent %d times (%d ms)\n", frame, (int) on.waits,
+              (int) on.wait_ms);
+        logf_("Slippi online: ping %d ms, longest wait %d ms\n", mp_platform_slippi_net_ping_ms(),
+              (int) on.longest_wait_ms, 0);
+    }
 }
 
 /* ---- StartEngineLoop (801A4DE4), top of each engine body ---- */
@@ -332,6 +364,7 @@ void mp_slippi_online_frame_begin(void)
         return;
     }
     frame = global_frame();
+    exchange_pads(frame);
     if (on.disconnected && !on.disconnect_shown && !on.game_over) {
         on.disconnect_shown = 1;
         mp_slippi_gmvs_end_online(on.remote_index);
@@ -532,7 +565,7 @@ void mp_slippi_online_start_melee(StartMeleeData* data)
     on.desync_last_frame = 0;
     on.desync_write_idx = 0;
     on.disconnected = on.disconnect_shown = on.desync_shown = on.game_over = on.game_end_frame = 0;
-    on.skips = on.skip_run = on.frames = 0;
+    on.skips = on.skip_run = on.frames = on.waits = on.wait_ms = on.longest_wait_ms = on.no_sample_bodies = 0;
     *seed_ptr = on.rng_offset;
     /* No transformation from a held A. */
     for (i = 0; i < 4; i++) {
@@ -550,8 +583,9 @@ void mp_slippi_online_match_exit(void)
     if (!on.active) {
         return;
     }
-    logf_("Slippi online: match exit after %d frames, %d skipped samples, desync %d\n", (int) on.frames,
-          (int) on.skips, on.desync_shown);
+    logf_("Slippi online: match exit after %d frames, %d waits for the opponent, desync %d\n", (int) on.frames,
+          (int) on.waits, on.desync_shown);
+    logf_("Slippi online: waited %d ms in total, longest %d ms\n", (int) on.wait_ms, (int) on.longest_wait_ms, 0);
     on.active = 0;
 }
 
