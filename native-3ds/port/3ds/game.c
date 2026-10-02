@@ -369,6 +369,14 @@ int main(void)
     }
     mp_native_log("Image layout verified; BE8 relocations prepared at build time\n");
     flush_log();
+    /* Slippi experiment: network self-test when sdmc:/3ds/melee/slippi/config.ini
+     * has selftest=1 (selftest_exit=1 quits afterwards). No config, no effect. */
+    {extern int slippi_selftest_requested(void),slippi_selftest_run(void);
+     int selftest=slippi_selftest_requested();
+     if(selftest){printf("Slippi network self-test running...\n");
+        int r=slippi_selftest_run();flush_log();
+        printf("Slippi self-test %s (sdmc:/3ds/melee/game.log)\n",r==0?"PASSED":"FAILED");
+        if(selftest==2){mp_native_log("Game application exit (self-test)\n");mp_log_close();gfxExit();return 0;}}}
     if(!mp_renderer_init()){mp_native_log("GPU initialization failed\n");mp_log_close();gfxExit();return 1;}
     mp_native_bottom_init();
     mp_native_cpu_init(is_new);

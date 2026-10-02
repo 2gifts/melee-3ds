@@ -186,3 +186,41 @@ mp_be_thread_trampoline:
     mov r0,r4
     bl mp_engine_thread_start
     b .
+/* Slippi online experiment: engine -> native network API
+ * (port/include/slippi_net_bridge.h, port/3ds/slippi/slippi_bridge.c). */
+SDKBRIDGE mp_platform_slippi_net_start,slippi_net_start
+SDKBRIDGE mp_platform_slippi_net_status,slippi_net_status
+SDKBRIDGE mp_platform_slippi_net_error,slippi_net_error
+SDKBRIDGE mp_platform_slippi_net_poll,slippi_net_poll
+SDKBRIDGE mp_platform_slippi_net_stop,slippi_net_stop
+SDKBRIDGE mp_platform_slippi_net_local_index,slippi_net_local_index
+SDKBRIDGE mp_platform_slippi_net_set_selections,slippi_net_set_selections
+SDKBRIDGE mp_platform_slippi_net_remote_ready,slippi_net_remote_ready
+SDKBRIDGE mp_platform_slippi_net_match_block,slippi_net_match_block
+SDKBRIDGE mp_platform_slippi_net_new_game,slippi_net_new_game
+SDKBRIDGE mp_platform_slippi_net_remote_checksum,slippi_net_remote_checksum
+SDKBRIDGE mp_platform_slippi_net_remote_checksum_frame,slippi_net_remote_checksum_frame
+SDKBRIDGE mp_platform_slippi_net_remote_checksum_value,slippi_net_remote_checksum_value
+SDKBRIDGE mp_platform_slippi_net_ping_ms,slippi_net_ping_ms
+/* Six arguments: the fifth and sixth arrive on the caller's stack as
+ * big-endian words. Load them while still big-endian, then store them
+ * little-endian where the native callee expects its stack arguments. */
+.macro SDKBRIDGE6 name,target
+.section .text.\name,"ax",%progbits
+.global \name
+.type \name,%function
+\name:
+    push {r4,r5,r6,lr}
+    ldr r4,[sp,#16]
+    ldr r5,[sp,#20]
+    setend le
+    sub sp,sp,#8
+    str r4,[sp]
+    str r5,[sp,#4]
+    bl \target
+    add sp,sp,#8
+    setend be
+    pop {r4,r5,r6,pc}
+.size \name,.-\name
+.endm
+SDKBRIDGE6 mp_platform_slippi_net_send_inputs,slippi_net_send_inputs
