@@ -47,6 +47,12 @@ def prepare():
     old='#define __frsqrte(x) sqrt(x)'
     assert placeholder.count(old)==1, 'Reciprocal-square-root placeholder changed'
     placeholder=placeholder.replace(old,'double mp_frsqrte(double);\n#define __frsqrte(x) mp_frsqrte(x)')
+    # Slippi determinism (docs/slippi/determinism.md): MSL's sqrtf_accurate
+    # has a fourth Newton step, and __fabs is the double fabs instruction.
+    for old,new in (('#define sqrtf_accurate(x) sqrtf(x)','float mp_sqrtf_accurate(float);\n#define sqrtf_accurate(x) mp_sqrtf_accurate(x)'),
+                    ('#define __fabs(f) fabsf(f)','#define __fabs(f) __builtin_fabs(f)')):
+        assert placeholder.count(old)==1,old
+        placeholder=placeholder.replace(old,new)
     (ROOT/'build/compat/placeholder.h').write_text(placeholder)
     vectors=json.loads((ROOT/'tests/fixtures/frsqrte.json').read_text())['vectors']
     (ROOT/'build/compat/ppc_math_vectors.h').write_text(

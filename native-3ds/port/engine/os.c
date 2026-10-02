@@ -25,7 +25,7 @@ volatile OSHeapHandle __OSCurrHeap=-1;
 static BOOL interrupts=1;static int pumping;
 static u32 tick_high,last_tick,progressive,sound_mode;
 static OSContext context,*current_context=&context;
-void OSInit(void){if(!arena){arena=mp_platform_alloc(ARENA_BYTES);HSD_ASSERT(1,arena);arena_low=arena;arena_high=arena+ARENA_BYTES;}}
+void OSInit(void){if(!arena){extern void mp_fp_boot_check(void);mp_fp_boot_check();arena=mp_platform_alloc(ARENA_BYTES);HSD_ASSERT(1,arena);arena_low=arena;arena_high=arena+ARENA_BYTES;}}
 void*OSGetArenaLo(void){OSInit();return arena_low;}void*OSGetArenaHi(void){OSInit();return arena_high;}
 void OSSetArenaLo(void*p){arena_low=p;}void OSSetArenaHi(void*p){arena_high=p;}
 void*OSAllocFromArenaLo(u32 size,u32 align){OSInit();uintptr_t p=((uintptr_t)arena_low+align-1)&~(uintptr_t)(align-1);HSD_ASSERT(1,p+size<=(uintptr_t)arena_high);arena_low=(u8*)(p+size);mp_gx_source_write((void*)p,size);return(void*)p;}
