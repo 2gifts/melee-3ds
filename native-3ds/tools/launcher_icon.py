@@ -10,7 +10,7 @@ import subprocess
 from build import ROOT
 
 TITLES = {
-    'unlocked': ('Super Smash Bros. Melee', 'Everything unlocked - saves in 3ds/melee/saves/unlocked'),
+    'unlocked': ('Melee: Slippi Direct (experimental)', 'Slippi online test build - setup in 3ds/melee/slippi'),
     'fresh': ('Melee: Fresh Save', 'Unlock everything by playing - saves in 3ds/melee/saves/fresh'),
 }
 COLOURS = {'unlocked': (176, 24, 32), 'fresh': (28, 72, 176)}
