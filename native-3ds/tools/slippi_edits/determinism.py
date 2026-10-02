@@ -80,6 +80,28 @@ HAND = {
          '    {\n'
          '        isPointInCircle = true;', 1),
     ],
+    # Census: the grab/bury/sing escape timers end in `+ k * (n - port)`;
+    # the console computes that product before the handicap call and keeps it
+    # across the call, so it is added unfused (0x800C0DC4 fmuls, 0x800C0E08
+    # fadds). clang would fuse it as the right operand of the sum.
+    'melee/ft/kinds/ftCommon/ftCo_Bury.c': [
+        ('             (p_ftCommonData->x604 *\n'
+         '              (p_ftCommonData->x608 - (Player_80033BB8(fp->player_id) + 1)))));',
+         '             MU_P(p_ftCommonData->x604 *\n'
+         '              (p_ftCommonData->x608 - (Player_80033BB8(fp->player_id) + 1)))));', 1),
+    ],
+    'melee/ft/kinds/ftCommon/ftCo_DamageSong.c': [
+        ('         p_ftCommonData->x630 *\n'
+         '             (p_ftCommonData->x634 - ((Player_80033BB8(fp->player_id)) + 1)));',
+         '         MU_P(p_ftCommonData->x630 *\n'
+         '             (p_ftCommonData->x634 - ((Player_80033BB8(fp->player_id)) + 1))));', 1),
+    ],
+    'melee/ft/kinds/ftCommon/ftCo_DamageBind.c': [
+        ('             p_ftCommonData->x664 * (p_ftCommonData->pressed_inputs -\n'
+         '                                     (Player_80033BB8(fp->player_id) + 1))));',
+         '             MU_P(p_ftCommonData->x664 * (p_ftCommonData->pressed_inputs -\n'
+         '                                     (Player_80033BB8(fp->player_id) + 1)))));', 1),
+    ],
     'melee/ft/kinds/ftCommon/ftCo_Guard.c': [
         # Melee Unlocked (ftCo_800925A4): the console rounds the shield drain
         # product before the subtraction (0x80092628 fmuls, then fsubs).
@@ -109,6 +131,19 @@ HAND = {
          '        inv = (f64) 1.0F / len;\n    }\n'
          '    arg2->x *= inv;\n    arg2->y *= inv;\n    arg2->z *= inv;\n    return len;\n}\n'
          '#define it_802A3C98(a0, a1, a2) mp_it_802A3C98_inl(a0, a1, a2)\n', 1),
+    ],
+    'melee/it/itmaplib.c': [
+        # Census (it_8027781C): the speed's squares come from memory and the
+        # console does not fuse them (0x80277894 fmuls x2, fadds).
+        ('    return sqrtf_accurate_local(product_xy(v, v));',
+         '    return sqrtf_accurate_local(MU_P(v->x * v->x) + MU_P(v->y * v->y));', 1),
+    ],
+    'sysdolphin/baselib/quatlib.c': [
+        # Census (HSD_QuatLib_8037EF28, quaternion slerp): the console
+        # computes 2*t once for both sinf arguments (0x8037F080 fmuls) and
+        # subtracts it unfused.
+        ('            sp = sinf((f32) (M_PI_2 * (1.0F - (2.0F * t))));',
+         '            sp = sinf((f32) (M_PI_2 * (1.0F - MU_P(2.0F * t))));', 1),
     ],
     'sysdolphin/baselib/spline.c': [
         # Melee Unlocked: one p1 multiply, then fmadds for p0, d0, d1 (the
@@ -158,6 +193,12 @@ HAND = {
          '    hurt_len_sq = axis.z * axis.z + hurt_len_sq;',
          '    hurt_len_sq = mu_fmadds(axis.x, axis.x, hurt_len_sq);\n'
          '    hurt_len_sq = mu_fmadds(axis.z, axis.z, hurt_len_sq);', 1),
+        # Census (lbColl_800077A0): the console squares diff_cb, reloaded from
+        # the stack, unfused (fmuls x3, fadds x2); diff_ba's squares fuse.
+        ('        dot_diff_cb = diff_cb.x * diff_cb.x + diff_cb.y * diff_cb.y +\n'
+         '                      diff_cb.z * diff_cb.z;',
+         '        dot_diff_cb = MU_P(diff_cb.x * diff_cb.x) + MU_P(diff_cb.y * diff_cb.y) +\n'
+         '                      MU_P(diff_cb.z * diff_cb.z);', 1),
     ],
     'melee/lb/lbvector.c': [
         # Census (tools/slippi/fma_census.py): lbVector_Len is unfused where
@@ -200,3 +241,16 @@ FIXES = {}
 for table in (HAND, PORTED):
     for key, edits in table.items():
         FIXES.setdefault(key, []).extend(edits)
+
+
+def _check_unique_keys():
+    """A repeated key in HAND would silently drop the earlier edits."""
+    import ast
+    from pathlib import Path
+    for node in ast.walk(ast.parse(Path(__file__).read_text(encoding='utf-8'))):
+        if isinstance(node, ast.Assign) and getattr(node.targets[0], 'id', None) == 'HAND':
+            keys = [k.value for k in node.value.keys]
+            assert len(keys) == len(set(keys)), 'duplicate key in determinism.HAND'
+
+
+_check_unique_keys()

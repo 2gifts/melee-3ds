@@ -26,7 +26,7 @@ MSL_SOURCES = ('math.c','math_1.c','math_data.c','trigf.c','float.c')
 DECOMP_SQRT = ('-Usqrtf','-Dsqrtf=mp_be_sqrtf')
 
 
-def compile_engine(jobs=6,sanitize=False,output_directory=None,clamped_shade=False,lto=False,lto_scope='all',material_program=False,feasibility=False,feasibility_console=False,render_rework=False):
+def compile_engine(jobs=6,sanitize=False,output_directory=None,clamped_shade=False,lto=False,lto_scope='all',material_program=False,feasibility=False,feasibility_console=False,render_rework=False,fpscr_ieee=False):
     if feasibility and not output_directory:raise ValueError('Feasibility instrumentation requires isolated output')
     if material_program and not (clamped_shade and output_directory):raise ValueError('Material program experiment requires an isolated clamped-shade test build')
     if lto and output_directory is None:raise ValueError('LTO requires an isolated engine output directory')
@@ -57,6 +57,10 @@ def compile_engine(jobs=6,sanitize=False,output_directory=None,clamped_shade=Fal
     else:flags+=['-DMP_CLAMPED_SHADE']
     if material_program:flags+=['-DMP_MATERIAL_PROGRAM_TEST']
     if feasibility:flags+=['-DMP_FEASIBILITY_TEST']
+    if fpscr_ieee:
+        # Slippi determinism experiment: IEEE subnormals/NaNs (mp_fpscr.h).
+        if not output_directory:raise ValueError('IEEE FPSCR experiment requires isolated output')
+        flags+=['-DMP_ENGINE_FPSCR=MP_FPSCR_IEEE_RN']
     if render_rework:
         if not output_directory:raise ValueError('Renderer comparison requires isolated output')
         flags+=['-DMP_RENDER_REWORK_TEST']

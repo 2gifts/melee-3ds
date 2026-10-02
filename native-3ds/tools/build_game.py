@@ -32,6 +32,7 @@ def main():
     ap.add_argument('--feasibility',action='store_true',help='Isolated callback/graphics measurement build; never a release')
     ap.add_argument('--feasibility-console',action='store_true',help='Separate physical-controls measurement build with sparse automatic logs; no rendering omissions')
     ap.add_argument('--render-rework',action='store_true',help='Isolated renderer equivalence/performance controls')
+    ap.add_argument('--fpscr-ieee',action='store_true',help='Slippi determinism experiment: run the engine with IEEE subnormals and NaN propagation (FZ=0, DN=0); emulator only, see port/include/mp_fpscr.h')
     args=ap.parse_args()
     if args.render_rework and not (args.smoke and args.build_dir and args.engine_build_dir and args.render_worker):ap.error('--render-rework requires isolated smoke directories and --render-worker')
     if args.feasibility_console:
@@ -60,7 +61,7 @@ def main():
     engine_out=args.engine_build_dir or ROOT/'build/engine-be8'
     if not engine_out.is_absolute():engine_out=ROOT/engine_out
     library=engine_out/'libmelee-be8.a'
-    if not args.skip_engine: library=compile_engine(sanitize=args.sanitize,output_directory=engine_out,clamped_shade=args.clamped_shade,lto=args.engine_lto,lto_scope=args.engine_lto_scope,material_program=args.material_program,feasibility=args.feasibility,feasibility_console=args.feasibility_console,render_rework=args.render_rework)
+    if not args.skip_engine: library=compile_engine(sanitize=args.sanitize,output_directory=engine_out,clamped_shade=args.clamped_shade,lto=args.engine_lto,lto_scope=args.engine_lto_scope,material_program=args.material_program,feasibility=args.feasibility,feasibility_console=args.feasibility_console,render_rework=args.render_rework,fpscr_ieee=args.fpscr_ieee)
     out=args.build_dir or ROOT/('build/game-release' if args.release else 'build/game')
     # Native objects differ only by the profile define; keep them apart.
     if args.profile=='fresh':out=Path(str(out)+'-fresh')
@@ -128,6 +129,9 @@ def main():
                 source.write(f'const unsigned char mp_light_reference_{name}[] __attribute__((aligned(4)))={{'+','.join(str(b) for b in data)+f'}};\nconst unsigned mp_light_reference_{name}_size={len(data)};\n')
     extra=[]
     if args.feasibility_console:includes+=['-DMP_FEASIBILITY_AUTO']
+    if args.fpscr_ieee:
+        if not (args.smoke and args.build_dir and args.engine_build_dir):ap.error('--fpscr-ieee requires isolated smoke directories')
+        includes+=['-DMP_ENGINE_FPSCR=MP_FPSCR_IEEE_RN']
     if args.render_worker:
         includes+=['-DMP_RENDER_WORKER']
         extra.append(ROOT/'port/3ds/render_worker.c')
