@@ -98,7 +98,8 @@ static double pack(uint64_t r, int e, int sign)
     return out.d;
 }
 
-double mp_fma(double x, double y, double z)
+/* Exact integer fma (musl's algorithm): any operands. */
+static double fma_integer(double x, double y, double z)
 {
     Bits64 bx = { x }, by = { y }, bz = { z };
     struct mp_num nx = normalize(bx.u), ny = normalize(by.u), nz = normalize(bz.u);
@@ -178,6 +179,64 @@ double mp_fma(double x, double y, double z)
     }
     e -= d;
     return pack(rhi, e, sign);
+}
+
+/* Fast path, in ordinary double arithmetic (Boldo & Melquiond, "Emulation
+ * of a FMA and correctly rounded sums: proved algorithms using rounding to
+ * odd", IEEE TC 57(4), 2008, Algorithm 5): with (uh, ul) the exact product
+ * a*b (Dekker/Veltkamp, no hardware fma needed), (th, tl) the exact sum
+ * c + uh, and v = ul + tl rounded to odd, RN(th + v) = RN(a*b + c). Valid
+ * when nothing overflows or underflows, which the exponent window below
+ * guarantees (so flush-to-zero cannot touch an intermediate either). The
+ * Newton steps of MSL's sqrtf always take it. tools/slippi/fp_vectors.py and
+ * the boot self-test check it against exact rational arithmetic. */
+static inline void two_product(double a, double b, double* hi, double* lo)
+{
+    const double split = 134217729.0; /* 2^27 + 1 */
+    double ta = split * a, tb = split * b;
+    double ah = ta - (ta - a), al = a - ah;
+    double bh = tb - (tb - b), bl = b - bh;
+    double p = a * b;
+    *hi = p;
+    *lo = ((ah * bh - p) + ah * bl + al * bh) + al * bl;
+}
+static inline void two_sum(double a, double b, double* s, double* e)
+{
+    double sum = a + b, bb = sum - a;
+    *s = sum;
+    *e = (a - (sum - bb)) + (b - bb);
+}
+static inline double add_round_to_odd(double a, double b)
+{
+    double s, e;
+    two_sum(a, b, &s, &e);
+    if (e != 0.0) {
+        Bits64 v = { s };
+        if (!(v.u & 1)) {
+            /* the neighbour on the side of the exact sum has an odd last bit */
+            if ((e > 0.0) == (s > 0.0)) v.u += 1;
+            else v.u -= 1;
+            s = v.d;
+        }
+    }
+    return s;
+}
+
+double mp_fma(double a, double b, double c)
+{
+    Bits64 ba = { a }, bb = { b }, bc = { c };
+    unsigned ea = (unsigned) (ba.u >> 52) & 0x7ff, eb = (unsigned) (bb.u >> 52) & 0x7ff,
+             ec = (unsigned) (bc.u >> 52) & 0x7ff;
+    /* |a|,|b| in [2^-400, 2^401), c zero or in [2^-700, 2^901): every
+     * partial product, sum and rounding error stays a normal double. */
+    if (ea - (0x3ff - 400) <= 800 && eb - (0x3ff - 400) <= 800 &&
+        (ec - (0x3ff - 700) <= 1600 || !(bc.u << 1))) {
+        double uh, ul, th, tl;
+        two_product(a, b, &uh, &ul);
+        two_sum(c, uh, &th, &tl);
+        return th + add_round_to_odd(ul, tl);
+    }
+    return fma_integer(a, b, c);
 }
 
 /* PowerPC fnmsub (double): -(a*c - b), one rounding. */

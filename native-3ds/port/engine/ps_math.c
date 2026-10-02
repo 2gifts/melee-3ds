@@ -22,9 +22,11 @@ double mp_frsqrte(double);
 double mp_fres(double);
 float sinf(float), cosf(float);
 
-static inline float mul(float a, float b) { return (float) ((double) a * (double) b); }
-static inline float add(float a, float b) { return (float) ((double) a + (double) b); }
-static inline float sub(float a, float b) { return (float) ((double) a - (double) b); }
+/* For float operands a single-precision IEEE operation equals Dolphin's
+ * double-then-single rounding (53 >= 2*24+2), so these are plain VFP ops. */
+static inline float mul(float a, float b) { return a * b; }
+static inline float add(float a, float b) { return a + b; }
+static inline float sub(float a, float b) { return a - b; }
 static inline float mad(float a, float b, float c)
 { return (float) ((double) a * (double) b + (double) c); }
 static inline float msub(float a, float b, float c)

@@ -32,6 +32,7 @@ DEFINE = re.compile(r'^define\b.*?@("?)([^"(\s]+)\1\(')
 CALL = re.compile(r'^(\s*)(%[-\w.$]+) = (?:tail |notail )?call (?:[a-z]+ )*(float|double) '
                   r'@llvm\.fmuladd\.(f32|f64)\((.*)\)(.*)$')
 VECTOR = re.compile(r'@llvm\.fmuladd\.v\d+')
+NARROW = re.compile(r'^\s*(%[-\w.$]+) = (fpext|sitofp|uitofp) (?:[a-z]+ )*(float|i1|i8|i16) (\S+) to double')
 FNEG = re.compile(r'^\s*(%[-\w.$]+) = fneg (?:[a-z]+ )*(float|double) (.+?)\s*(?:,\s*!.*)?$')
 
 
@@ -77,6 +78,22 @@ def _operands(text):
     return parts
 
 
+def _constant_bits(text):
+    """Significant bits of an LLVM double constant, or None."""
+    import struct
+    try:
+        if text.startswith('0x') and len(text) == 18:
+            bits = int(text[2:], 16)
+        else:
+            bits = struct.unpack('>Q', struct.pack('>d', float(text)))[0]
+    except ValueError:
+        return None
+    if not bits << 1 & ((1 << 64) - 1):
+        return 0
+    mantissa = (bits & ((1 << 52) - 1)) | (1 << 52)
+    return 53 - ((mantissa & -mantissa).bit_length() - 1)
+
+
 def _value(operand, ty):
     # Drop the type and any parameter attributes ("float noundef %3").
     words = operand.split()
@@ -84,19 +101,32 @@ def _value(operand, ty):
     return words[-1]
 
 
+def _width(value, narrow, negs):
+    """Upper bound on the significant bits of a double SSA value."""
+    while value in negs:
+        value = negs[value]
+    if value in narrow:
+        return narrow[value]
+    if not value.startswith('%'):
+        bits = _constant_bits(value)
+        if bits is not None:
+            return bits
+    return 53
+
+
 def rewrite(ir, no_contract=None, keep_fused=False, module=''):
     """Return (new_ir, stats). keep_fused leaves fused f32 calls in place
     (census builds count them after optimization)."""
     no_contract = no_contract or {}
     out, stats = [], {'f32': 0, 'f64': 0, 'f32_unfused': 0, 'f64_unfused': 0, 'fnmsub': 0}
-    fn, kinds, negs, counter = None, set(), {}, 0
+    fn, kinds, negs, narrow, counter = None, set(), {}, {}, 0
     uses_fma = False
     for line in ir.splitlines():
         m = DEFINE.match(line)
         if m:
             fn = m.group(2)
             kinds = kinds_for(no_contract, module, fn)
-            negs = {}
+            negs, narrow = {}, {}
             out.append(line)
             continue
         if line.startswith('}'):
@@ -106,6 +136,9 @@ def rewrite(ir, no_contract=None, keep_fused=False, module=''):
         n = FNEG.match(line)
         if n:
             negs[n.group(1)] = n.group(3).split()[-1]
+        w = NARROW.match(line)
+        if w:
+            narrow[w.group(1)] = {'float': 24, 'i1': 1, 'i8': 8, 'i16': 16}[w.group(3)]
         c = CALL.match(line)
         if not c or fn is None:
             out.append(line)
@@ -141,6 +174,17 @@ def rewrite(ir, no_contract=None, keep_fused=False, module=''):
             else:
                 out.append(f'{indent}{t}s = fadd double {t}p, {t}c')
                 out.append(f'{indent}{result} = fptrunc double {t}s to float')
+        elif _width(a, narrow, negs) + _width(b, narrow, negs) <= 53:
+            # Both factors have few significant bits (floats, small integers,
+            # short constants): the product is exact in double and the fused
+            # result is one rounded double add, as in the f32 case.
+            stats['f64_exact_product'] = stats.get('f64_exact_product', 0) + 1
+            out.append(f'{indent}{t}p = fmul double {a}, {b}')
+            if negated:
+                out.append(f'{indent}{t}s = fsub double {t}p, {addend}')
+                out.append(f'{indent}{result} = fneg double {t}s')
+            else:
+                out.append(f'{indent}{result} = fadd double {t}p, {addend}')
         else:
             uses_fma = True
             if negated:
