@@ -42,7 +42,14 @@ Run `python tools/package_native.py` after building either or both.
 
 ## Create a CIA for HOME Menu
 
-CIA packaging uses the same release executable and SD files. **The custom disc icon, diorama, and sound are local assets and are not included in Git.** A fresh clone does not produce the custom CIA with the game-build commands alone. Banner authoring is a separate advanced step; use Homebrew Launcher if you do not have compatible prepared artwork.
+CIA packaging uses the same release executable and SD files. The HOME Menu banner, icon and sound are made on your computer from your extracted disc; none of them are in Git:
+
+```powershell
+python tools/bootstrap_home_menu.py
+python tools/package_cia.py --generated-banner
+```
+
+`tools/disc_diorama.py` poses the two Foxes with the game's own models and animations, adds the original Final Destination (simplified to fit the HOME Menu's limits) and the title logo, and draws a disc icon from the title lettering. If its converter (pycgfx) is missing, the packager falls back to a 2D banner (`tools/simple_banner.py`); `--flat-banner` asks for that directly.
 
 With a prepared, validated art directory containing `banner.cgfx`, `banner.bin`, `icon.png`, and `announcer.wav`:
 
@@ -51,7 +58,7 @@ python tools/bootstrap_home_menu.py --skip-python
 python tools/package_cia.py --art path/to/prepared-art --version 15
 ```
 
-The output is **`dist/home-menu/melee-3ds.cia`**. Add `--profile fresh` to package the fresh-save build as **`dist/home-menu/melee-3ds-fresh.cia`**. It is a separate title with a blue disc icon, so both can be installed at once. The packager accepts the confirmed banner profile and checks the executable and package before writing its verification report. It intentionally rejects an incompatible custom banner. The included `banner_assets.py`, `capture_banner_scene.py`, `make_home_menu_art.py`, and `convert_home_menu_banner.py` are developer authoring tools, not an automatic disc-to-CIA installer.
+The output is **`dist/home-menu/melee-3ds.cia`**. Add `--profile fresh` to package the fresh-save build as **`dist/home-menu/melee-3ds-fresh.cia`**. It is a separate title with a blue disc icon, so both can be installed at once. The packager accepts the confirmed banner profile and checks the executable and package before writing its verification report. It intentionally rejects an incompatible custom banner. The included `capture_banner_scene.py` and `make_home_menu_art.py` are the original emulator-capture authoring tools.
 
 For an existing validated in-place cosmetic variant, retain its matching original art directory and pass `--cosmetic-baseline path/to/original-art`. Do not use that option to bypass validation of unrelated artwork. Follow the [FBI installation guide](docs/HOME_MENU.md) after packaging.
 

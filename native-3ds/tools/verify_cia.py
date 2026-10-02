@@ -214,13 +214,18 @@ def verify(path, elf_path, art, *, cosmetic_baseline=None, title_id=TITLE_ID, ge
     assert icon[:4] == b'SMDH' and len(icon) == 0x36c0
     assert u32(icon, 0x2018) == 0x7fffffff
     # The diorama is an extended banner; bannertool's 2D template is not.
-    flags = 0x1005 if generated_banner else 0x1025
+    # generated_banner: True for the 2D banner, 'diorama' for the 3D one
+    # made from the disc files (tools/disc_diorama.py).
+    flags = 0x1005 if generated_banner is True else 0x1025
     assert u32(icon, 0x2028) & flags == flags, '3D/New3DS(/extended-banner) flags are required'
     assert banner[:4] == b'CBMD'
     cgfx = lz11(banner[u32(banner, 8):])
     assert cgfx == (art/'banner.cgfx').read_bytes()
     assert cgfx[:4] == b'CGFX' and len(cgfx) <= 0x80000
-    if generated_banner:
+    if generated_banner == 'diorama':
+        from disc_diorama import verify_diorama
+        banner_validation = verify_diorama(banner, cgfx)
+    elif generated_banner:
         # bannertool's standard 2D banner (tools/simple_banner.py), not the
         # console-tested diorama that the release lock covers.
         banner_validation = dict(generated_2d_banner=True, cgfx_sha256=hashlib.sha256(cgfx).hexdigest())

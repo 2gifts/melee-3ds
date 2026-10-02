@@ -1,11 +1,11 @@
 """A 2D HOME Menu banner, icon and banner sound made from the user's disc.
 
-This is the easy route's art (tools/easy_build.py). The console-tested 3D
-diorama needs an emulator capture and hand-made art; this needs only the
-extracted disc files, Pillow, numpy and bannertool:
+The easy route's fallback art (tools/easy_build.py, package_cia.py): the 3D
+diorama (tools/disc_diorama.py) also needs the pycgfx converter; this needs
+only the extracted disc files, Pillow, numpy and bannertool:
 
   banner  256x128: Melee's title-screen logo on the profile colour
-  icon    48x48:   the Homebrew Launcher icon (tools/launcher_icon.py)
+  icon    48x48:   a disc drawn from the title lettering (tools/launcher_icon.py)
   sound   2.95 s:  the title call "Super Smash Bros. Melee" over the menu
                    theme, as in the diorama banner (tools/home_banner_audio.py)
 
@@ -22,7 +22,7 @@ from PIL import Image, ImageFilter
 from assets import ROOT
 from banner_assets import Archive, announcer_clips, texture
 from home_banner_audio import menu_music
-from launcher_icon import COLOURS, icon_image
+from launcher_icon import COLOURS, disc_icon
 
 RATE = 32000
 SECONDS = 2.95
@@ -108,11 +108,10 @@ def wsola(x, speed, frame=1024, search=256):
     return out/np.maximum(norm, 1e-3)
 
 
-def banner_sound(path):
+def banner_sound(path, frames=round(SECONDS*RATE)):
     call, rate = title_call()
     call = call[round(2.43*rate):]
     voice = wsola(resample(call, rate, RATE), 1.455)
-    frames = round(SECONDS*RATE)
     voice = np.pad(voice, ((0, max(0, frames-len(voice))), (0, 0)))[:frames]
     if voice.shape[1] == 1:
         voice = np.repeat(voice, 2, 1)
@@ -120,7 +119,7 @@ def banner_sound(path):
     fade[:320] = np.linspace(0, 1, 320)
     fade[-1920:] = np.linspace(1, 0, 1920)
     voice *= fade[:, None]
-    music, music_rate = menu_music(SECONDS)
+    music, music_rate = menu_music(frames/RATE)
     theme = resample(np.array(music, float).T/32768, music_rate, RATE)[:frames]
     ramp = np.ones(frames)
     ramp[:640] = np.linspace(0, 1, 640)
@@ -142,7 +141,7 @@ def make_art(profile, out=None):
     out = Path(out or ROOT/f'build/home-menu/generated-{profile}')
     out.mkdir(parents=True, exist_ok=True)
     banner_image(profile).save(out/'banner.png')
-    icon_image(profile).convert('RGB').save(out/'icon.png')
+    disc_icon(profile).save(out/'icon.png')
     banner_sound(out/'announcer.wav')
     subprocess.run([str(BANNERTOOL), 'makebanner', '-i', str(out/'banner.png'), '-a', str(out/'announcer.wav'),
                     '-o', str(out/'banner.bin')], check=True, capture_output=True)

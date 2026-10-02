@@ -59,7 +59,9 @@ def main():
     ap.add_argument('--cosmetic-baseline', type=Path,
                     help='Explicit candidate: verify an in-place patch against this console-tested art directory')
     ap.add_argument('--generated-banner', action='store_true',
-                    help='Use a 2D banner and icon made from the disc files (tools/simple_banner.py) instead of --art')
+                    help='Make the banner and icon from the disc files instead of --art: the 3D diorama '
+                         '(tools/disc_diorama.py), or the 2D banner (tools/simple_banner.py) if that fails')
+    ap.add_argument('--flat-banner', action='store_true', help='With --generated-banner: always the 2D banner')
     args = ap.parse_args()
     profile = PROFILES[args.profile]
     args.elf = args.elf or ROOT/profile['elf']
@@ -68,8 +70,17 @@ def main():
     generated = args.generated_banner
     if generated:
         assert not args.cosmetic_baseline, '--generated-banner makes its own art'
-        from simple_banner import make_art
-        args.art = make_art(args.profile)
+        try:
+            if args.flat_banner:
+                raise RuntimeError('--flat-banner')
+            from disc_diorama import make_art
+            args.art = make_art(args.profile)
+            generated = 'diorama'
+        except Exception as error:
+            # Its converter is an optional download; never lose the CIA over it.
+            print(f'3D banner unavailable ({type(error).__name__}: {error}); using the 2D banner', flush=True)
+            from simple_banner import make_art
+            args.art = make_art(args.profile)
     elif args.profile == 'fresh':
         args.art = fresh_art(args.art)
     rsf = ROOT/'port/3ds/melee.rsf'
@@ -99,9 +110,9 @@ def main():
     run(bannertool, 'makesmdh', '-s', profile['short'],
         '-l', profile['long'], '-p', '2gifts and contributors',
         '-i', args.art/'icon.png', '-o', args.art/'icon.smdh', '-r', 'regionfree',
-        '-f', 'visible,allow3d,new3ds,recordusage' + ('' if generated else ',extendedbanner'))
+        '-f', 'visible,allow3d,new3ds,recordusage' + ('' if generated is True else ',extendedbanner'))
     if generated:
-        pass  # simple_banner.make_art already ran makebanner on its image and sound.
+        pass  # Its make_art already ran makebanner on the model and sound.
     elif args.cosmetic_baseline:
         # patch_home_banner.py has already recompressed into the original slot.
         # Running makebanner again would move the unchanged sound resource.

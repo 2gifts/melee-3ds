@@ -253,6 +253,10 @@ class Build:
                 remove_tree(self.src/p)
         self.tool('tools/bootstrap_home_menu.py', '--cia-only',
                   fail='Downloading the CIA tools failed. Check your internet connection and run the builder again.')
+        # The 3D HOME Menu banner's converter. Optional: without it the CIAs
+        # get the 2D banner (tools/package_cia.py falls back by itself).
+        if run([self.python, 'tools/bootstrap_home_menu.py', '--diorama-only'], self.src, self.env):
+            say('  (The 3D banner tools did not download; the CIAs will use the 2D banner.)')
         self.mark('tools')
 
     # 4
