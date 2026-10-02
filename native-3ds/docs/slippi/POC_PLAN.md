@@ -21,12 +21,13 @@ into the main port.
 
 | Area | Where | Status |
 |---|---|---|
-| Replay playback + per-frame state dump (determinism oracle) | `port/engine/slippi/replay.c`, `tools/slippi_edits/replay.py`, `tools/slippi/` | in progress |
-| Bit-exact maths (contraction, sqrtf, trig, PSMTX, FPSCR) | `tools/slippi_edits/determinism.py`, IR pass in `engine_build.py` | in progress |
-| Slippi online gameplay codes (RNG reseed, UCF parity, zero-init, ...) | `tools/slippi_edits/online_rules.py`, `port/engine/slippi/` | todo |
+| Replay playback + per-frame state dump (determinism oracle) | `port/engine/slippi/replay.c`, `tools/slippi_edits/base_replay.py`, `tools/slippi/replay_*.py` | done |
+| Bit-exact maths (contraction, sqrtf, trig, PSMTX, FPSCR) | `docs/slippi/determinism.md` | done: the Direct replay matches bit for bit (except 2 known spawn-frame playback ULPs) |
+| Slippi online gameplay codes (UCF parity, zero-init, LGL, ...) | `tools/slippi_edits/online_rules.py`, `docs/slippi/rules.md` | in progress |
 | Network: soc:U, ENet, matchmaking, Slippi P2P protocol | `port/3ds/slippi/`, `docs/slippi/network.md` | done; tested vs fake MM/peer (PC, Azahar) |
-| Online frame driver (lockstep pads, delay, checksum, match start) | `port/engine/slippi/online.c` + edits | todo |
-| Minimal UI (connect code via swkbd, character pick, status) | bottom screen | todo |
+| Online frame driver (lockstep pads, delay, checksum, match start, RNG reseed) | `port/engine/slippi/online.c`, `tools/slippi_edits/online.py` | done; a full match runs in Azahar vs the fake peer (`tools/slippi/online_game_test.py`) |
+| Boot menu (connect code via swkbd, character, colour, stage, delay) | `port/3ds/slippi/slippi_boot_ui.c` | done (needs a hardware look) |
+| Real test: 3DS vs stock Slippi Dolphin through mm.slippi.gg | needs a second Slippi account for the 3DS | todo |
 
 ## Test assets
 
