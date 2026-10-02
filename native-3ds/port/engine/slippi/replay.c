@@ -52,7 +52,9 @@ static int frame_index = FIRST_FRAME;
 static int terminated;
 static int finished;
 
-static u8 out_buf[64 * 1024];
+/* Flushed every 16 KiB (about 100 frames), so a run that stalls still
+ * leaves its output up to the stall. */
+static u8 out_buf[16 * 1024];
 static unsigned out_len;
 static int out_started;
 

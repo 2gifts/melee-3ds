@@ -15,7 +15,7 @@ struct Fighter {
     struct {Vec2 lstick[3],cstick[3];}input;
     struct {struct {struct {bool has_turned,just_turned;}turn;}co;}mv;
     struct {Nana*x444;}cpu;
-    int coll_data;
+    struct {struct {int index;unsigned flags;} floor;} coll_data;
 };
 enum {Ft_Kind_Zelda=19};
 static struct {float dash_smash_stick_threshold,sdi_min_stick_mag,x210,x314;int x320;float x94;} common={.8f,.7f,.8f,-.7f,4,.65f};
@@ -26,12 +26,23 @@ static struct {unsigned qread,qnum;typeof(raw_queue[0])*queue;} HSD_PadLibData={
 static Fighter_GObj*secondary;
 static int ftCo_800A2040(Fighter*f){return f->is_cpu;}
 static Fighter_GObj*Player_GetEntityAtIndex(int slot,int index){assert(slot<6&&index==1);return secondary;}
-static int mpColl_IsOnPlatform(int*c){return *c;}
+#define MP_SR_UCF 1u
+static int mp_slippi_rule(unsigned bit){(void)bit;return 1;}
 #include "ucf_body.inc"
 static Fighter make(void){Fighter f={0};f.facing_dir=1;return f;}
 static void speed(int x,int y){memset(pads,0,sizeof(pads));mp_ucf_push(&pads[0],0,0);mp_ucf_push(&pads[0],0,0);mp_ucf_push(&pads[0],x,y);}
 int main(void){
     unsigned cases=0;
+    /* fmadds against a correctly rounded fused multiply-add. */
+    {unsigned s=12345;for(int i=0;i<2000000;++i){float v[3];for(int k=0;k<3;++k){s=s*1103515245u+12345u;unsigned b=s;s=s*1103515245u+12345u;b^=s>>16;
+        b=(b&0x807FFFFFu)|((unsigned)(100+(b>>23)%56)<<23);memcpy(&v[k],&b,4);}
+        float want=fmaf(v[0],v[1],v[2]),got=mp_ucf_fmadds(v[0],v[1],v[2]);
+        if(memcmp(&want,&got,4)){printf("fmadds %a %a %a: %a vs %a\n",(double)v[0],(double)v[1],(double)v[2],(double)got,(double)want);return 1;}}
+     float x=.7f,y=.1f;assert(mp_ucf_fmadds(x,x,y*y)==fmaf(x,x,y*y));
+     /* (1+2^-12)^2 is a float tie; a tiny addend decides it, which a plain
+      * double sum loses and the round-to-odd sum keeps. */
+     float a=1.0f+0x1p-12f,c=0x1p-80f;
+     assert((float)((double)a*a+c)!=fmaf(a,a,c)&&mp_ucf_fmadds(a,a,c)==fmaf(a,a,c)&&mp_ucf_fmadds(a,a,-c)==fmaf(a,a,-c));}
     for(int x=-128;x<128;++x)for(int y=-128;y<128;++y){
         float a=.37f,b=-.23f;mp_ucf_cardinal(x,y,&a,&b);
         if(abs(x)>=80&&abs(y)<=6){assert(a==(x<0?-1.f:1.f)&&b==0);}
@@ -59,8 +70,9 @@ int main(void){
     f.input.lstick[1].x=0;speed(76,0);f.x670_timer_lstick_tilt_x=1;assert(mp_ucf_tumble(&f));
     f.x670_timer_lstick_tilt_x=2;assert(!mp_ucf_tumble(&f));
     f.x670_timer_lstick_tilt_x=1;f.input.lstick[1].x=-.8f;assert(!mp_ucf_tumble(&f));
-    f=make();f.coll_data=1;f.input.lstick[0]=(Vec2){.8f,-.65f};f.x670_timer_lstick_tilt_x=4;
-    assert(mp_ucf_suppress_spotdodge(&f));f.coll_data=0;assert(!mp_ucf_suppress_spotdodge(&f));f.coll_data=1;
+    f=make();f.coll_data.floor.index=3;f.coll_data.floor.flags=0x100;f.input.lstick[0]=(Vec2){.8f,-.65f};f.x670_timer_lstick_tilt_x=4;
+    assert(mp_ucf_suppress_spotdodge(&f));f.coll_data.floor.flags=0;assert(!mp_ucf_suppress_spotdodge(&f));
+    f.coll_data.floor.flags=0x100;f.coll_data.floor.index=-1;assert(!mp_ucf_suppress_spotdodge(&f));f.coll_data.floor.index=3;
     f.input.cstick[0].y=-.8f;assert(!mp_ucf_suppress_spotdodge(&f));f.input.cstick[0].y=0;
     f.input.lstick[0].y=-.8f;assert(!mp_ucf_suppress_spotdodge(&f));
     f.input.lstick[0]=(Vec2){.8f,-.65f};f.x670_timer_lstick_tilt_x=0;assert(mp_ucf_squat_threshold(&f)==.59f);
