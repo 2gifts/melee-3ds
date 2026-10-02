@@ -4,6 +4,11 @@
 # Format: <function> [f32] [f64]   (no kind = both)
 # Maintained with tools/slippi/fma_census.py --write-no-contract
 # (docs/slippi/determinism.md).
+# Melee Unlocked's MU_P(...) wraps in headers (overlays edit .c files only):
+# each wraps every product of the helper, i.e. the helper fuses nothing.
+lbVector_Len f32  # melee/lb/lbvector.h, sqrtf argument
+lbVector_Len_xy f32  # melee/lb/lbvector.h, sqrtf argument
+HSD_MtxColMag f32  # sysdolphin/baselib/mtx.h, sqrtf argument
 C_MTXLookAt f32  # census: console fused none
 Camera_8002C5B4 f32  # census: console fused none
 Camera_8002F0E4 f32  # census: console fused none
@@ -35,19 +40,10 @@ lbColl_80008FC8 f32  # census: console fused none
 lbColl_800096B4 f32  # census: console fused none
 mnInfoBonus_80252ADC f32  # census: console fused none
 mpColl_LoadECB_JObj f32  # census: console fused none
-upstream_melee_src_melee_ft_kinds_ftCommon_ftCo_SpecialS::doEnter f32  # census: console fused none
 upstream_melee_src_melee_gr_groldkongo::grOldKongo_8020F888_inline f32  # census: console fused none
-upstream_melee_src_melee_gr_groldkongo::stageGObj2_GObjProc f32  # census: console fused none
-upstream_melee_src_melee_gr_grpura::stageGObj1_GObjProc f32  # census: console fused none
 upstream_melee_src_melee_gr_grshrineroute::grShrineRoute_8020A21C f32  # census: console fused none
 upstream_melee_src_melee_it_kinds_itdrmariopill::itDrmariopill_UnkMotion0_Coll f32  # census: console fused none
 upstream_melee_src_melee_it_kinds_itluigifireball::calc_dist_2d_accurate f32  # census: console fused none
 upstream_melee_src_melee_it_kinds_itmariofireball::calc_dist_2d_accurate f32  # census: console fused none
 upstream_melee_src_sysdolphin_baselib_cobj::roll2upvec f32  # census: console fused none
 upstream_melee_src_sysdolphin_baselib_controller::HSD_PadClampCheck3 f32  # census: console fused none
-upstream_melee_src_sysdolphin_baselib_robj::HSD_MtxColMag f32  # census: console fused none
-# Melee Unlocked's MU_P(...) wraps in headers (overlays edit .c files only):
-# each wraps every product of the helper, i.e. the helper fuses nothing.
-lbVector_Len f32  # melee/lb/lbvector.h, sqrtf argument
-lbVector_Len_xy f32  # melee/lb/lbvector.h, sqrtf argument
-HSD_MtxColMag f32  # sysdolphin/baselib/mtx.h, sqrtf argument

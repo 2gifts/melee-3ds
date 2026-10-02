@@ -37,6 +37,7 @@ sys.path.insert(0, str(ROOT / 'tools'))
 import fp_contract  # noqa: E402
 
 SYMBOLS = ROOT / 'upstream/melee/config/GALE01/symbols.txt'
+SPLITS = ROOT / 'upstream/melee/config/GALE01/splits.txt'
 DOL = ROOT / 'assets/GALE01/sys/main.dol'
 RELEVANCE = ('melee_ft_', 'melee_lb_', 'melee_mp_', 'melee_it_', 'melee_gr_', 'melee_cm_',
              'sysdolphin_baselib_', 'MSL_', 'dolphin_math')
@@ -96,8 +97,25 @@ def retail_counts():
             elif op == 63 and xo == 26:
                 c['frsqrte'] += 1
                 last_rsqrte = i // 4
-        out.setdefault(name, c)
+        out.setdefault(name, []).append(c)
     return out
+
+
+def text_ranges():
+    """engine object stem -> retail .text ranges of that source file."""
+    out, current = {}, None
+    for line in SPLITS.read_text(errors='replace').splitlines():
+        if line and not line[0].isspace() and line.endswith(':') and line != 'Sections:':
+            path = line[:-1]
+            current = out.setdefault('upstream_melee_src_' + path.replace('/', '_').rsplit('.', 1)[0], [])
+            continue
+        m = re.match(r'\s+\.text\s+start:0x([0-9A-Fa-f]+) end:0x([0-9A-Fa-f]+)', line)
+        if m and current is not None:
+            current.append((int(m.group(1), 16), int(m.group(2), 16)))
+    return out
+
+
+RANGES = None
 
 
 def native_counts(engine_dir, no_contract):
@@ -159,7 +177,21 @@ def retail_name(name):
 
 
 def retail_of(funcs, retail, key):
-    return retail.get(retail_name(funcs[key]['name'])) if key in funcs else None
+    """The retail function a native one compiles; a name several retail
+    files use (static functions) is resolved by the decomp's splits.txt."""
+    global RANGES
+    if key not in funcs:
+        return None
+    candidates = retail.get(retail_name(funcs[key]['name']))
+    if not candidates:
+        return None
+    if len(candidates) == 1:
+        return candidates[0]
+    if RANGES is None:
+        RANGES = text_ranges()
+    ranges = RANGES.get(funcs[key]['source'], ())
+    hits = [c for c in candidates if any(a <= c['addr'] < b for a, b in ranges)]
+    return hits[0] if len(hits) == 1 else None
 
 
 def totals(funcs, retail):
@@ -226,7 +258,7 @@ def main():
 
     # Our sqrtf calls stand for sqrtf__Ff calls too (an out-of-line copy of
     # the inline sqrtf in the retail program).
-    sqrtf_ff = retail['sqrtf__Ff']['addr'] if 'sqrtf__Ff' in retail else None
+    sqrtf_ff = retail['sqrtf__Ff'][0]['addr'] if 'sqrtf__Ff' in retail else None
     rows, single_ok, double_ok, compared, fused = [], 0, 0, 0, 0
     for key, (t32, t64, sq) in tot.items():
         r = retail_of(funcs, retail, key)
