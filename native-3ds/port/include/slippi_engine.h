@@ -43,5 +43,9 @@ int mp_slippi_online_pad_renew(struct PADStatus* stat);
 void mp_slippi_online_frame_begin(void);
 void mp_slippi_tick_without_draw(void);
 void mp_slippi_online_match_exit(void);
+void mp_slippi_record_online_begin(void);
+void mp_slippi_record_online_frame(int engine_frame);
+void mp_slippi_record_online_inputs(const unsigned char* port0, const unsigned char* port1, unsigned checksum);
+void mp_slippi_record_online_end(void);
 
 #endif

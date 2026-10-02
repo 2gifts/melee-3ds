@@ -73,7 +73,7 @@ def parse(path):
                 action=struct.unpack('>H', p[10:12])[0],
                 x=_fbits(p, 0xC), y=_fbits(p, 0x10), facing=_fbits(p, 0x14),
                 lstick=(p[0x18:0x1C], p[0x1C:0x20]), cstick=(p[0x20:0x24], p[0x24:0x28]),
-                trigger=p[0x28:0x2C], buttons=p[0x2C:0x30],
+                trigger=p[0x28:0x2C], buttons=p[0x2C:0x30], phys=p[0x30:0x32],
                 raw=(p[0x3A] if len(p) > 0x3A else 0,
                      p[0x3F] if len(p) > 0x3F else 0,
                      p[0x40] if len(p) > 0x40 else 0,

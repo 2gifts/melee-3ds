@@ -345,6 +345,12 @@ static void exchange_pads(int frame)
     memcpy(on.delay_buffer[on.delay_index], on.last_local, PAD_SIZE);
     on.delay_index = (u8) ((on.delay_index + 1) % on.delay);
     wire_to_pad(&stat[on.remote_index], remote);
+    {
+        u8 w0[PAD_SIZE], w1[PAD_SIZE];
+        pad_to_wire(w0, &stat[0]);
+        pad_to_wire(w1, &stat[1]);
+        mp_slippi_record_online_inputs(w0, w1, on.tx_checksum);
+    }
     on.finalized = frame;
     on.frames++;
     if (frame % 600 == 0) {
@@ -364,6 +370,7 @@ void mp_slippi_online_frame_begin(void)
         return;
     }
     frame = global_frame();
+    mp_slippi_record_online_frame(frame);
     exchange_pads(frame);
     if (on.disconnected && !on.disconnect_shown && !on.game_over) {
         on.disconnect_shown = 1;
@@ -493,11 +500,23 @@ int mp_slippi_online_wait_match(void)
             last_status = status;
             logf_("Slippi online: status %d\n", status, 0, 0);
             if (status == 4 || status == 5) {
+                /* Lost the opponent (or matchmaking failed): look again
+                 * rather than falling through to the debug VS match. */
                 mp_platform_log("Slippi online: ");
                 mp_platform_log(mp_platform_slippi_net_error());
-                mp_platform_log("\n");
-                on.configured = -1;
-                return 0;
+                mp_platform_log("; searching again\n");
+                mp_platform_slippi_net_stop();
+                for (int i = 0; i < 2000; i++) {
+                    mp_platform_idle();
+                }
+                on.selections_sent = 0;
+                if (mp_platform_slippi_net_start(on.opponent) < 0) {
+                    mp_platform_log("Slippi online: could not restart: ");
+                    mp_platform_log(mp_platform_slippi_net_error());
+                    mp_platform_log("\n");
+                }
+                last_status = -1;
+                continue;
             }
         }
         if (status == 3 && !on.selections_sent) {
@@ -574,6 +593,7 @@ void mp_slippi_online_start_melee(StartMeleeData* data)
     gobj = GObj_Create(4, 7, 0);
     HSD_GObj_SetupProc(gobj, sync_rng_proc, 0);
     on.active = 1;
+    mp_slippi_record_online_begin();
     logf_("Slippi online: match starts, local port %d, delay %d, rng offset %08X\n", on.local_index + 1,
           on.delay, (int) on.rng_offset);
 }
@@ -583,6 +603,7 @@ void mp_slippi_online_match_exit(void)
     if (!on.active) {
         return;
     }
+    mp_slippi_record_online_end();
     logf_("Slippi online: match exit after %d frames, %d waits for the opponent, desync %d\n", (int) on.frames,
           (int) on.waits, on.desync_shown);
     logf_("Slippi online: waited %d ms in total, longest %d ms\n", (int) on.wait_ms, (int) on.longest_wait_ms, 0);

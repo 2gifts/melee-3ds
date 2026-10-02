@@ -38,6 +38,7 @@ void mp_platform_log(const char* text);
 
 #define REPLAY_PATH "sdmc:/3ds/melee/slippi/replay.bin"
 #define OUT_PATH "sdmc:/3ds/melee/slippi/replay-out.bin"
+#define ONLINE_OUT_PATH "sdmc:/3ds/melee/slippi/online-out.bin"
 #define FIRST_FRAME (-123)
 #define ENTRY_SIZE 32
 #define HEADER_SIZE 0x14C
@@ -57,6 +58,7 @@ static int finished;
 static u8 out_buf[16 * 1024];
 static unsigned out_len;
 static int out_started;
+static int online_rec;        /* recording an online match (no injection) */
 
 static u32 be32(const u8* p) { return (u32) p[0] << 24 | (u32) p[1] << 16 | (u32) p[2] << 8 | p[3]; }
 static float bef(const u8* p) { u32 v = be32(p); float f; memcpy(&f, &v, 4); return f; }
@@ -146,7 +148,7 @@ static void out_flush(void)
     if (out_len == 0) {
         return;
     }
-    mp_platform_slippi_file_write(OUT_PATH, out_buf, out_len, out_started);
+    mp_platform_slippi_file_write(online_rec ? ONLINE_OUT_PATH : OUT_PATH, out_buf, out_len, out_started);
     out_started = 1;
     out_len = 0;
 }
@@ -205,6 +207,57 @@ static void out_end(void)
     put32(b + 4, (u32) frame_index);
     out_len += 40;
     out_flush();
+}
+
+/* ---- the 3DS's own record of an online match ----
+ * Same records as playback, with frame = unk_8 - 123 (the replay frame index of
+ * the PC's .slp), plus 'I' records: the two wire pads each engine body used.
+ * tools/slippi/online_compare.py lines it up with the PC's replay. */
+void mp_slippi_record_online_begin(void)
+{
+    online_rec = 1;
+    out_len = 0;
+    out_started = 0;
+    frame_index = FIRST_FRAME;
+}
+
+void mp_slippi_record_online_frame(int engine_frame)
+{
+    if (!online_rec) {
+        return;
+    }
+    frame_index = engine_frame + FIRST_FRAME;
+    if (engine_frame % 600 == 0) {
+        out_flush();
+    }
+}
+
+void mp_slippi_record_online_inputs(const unsigned char* port0, const unsigned char* port1, unsigned checksum)
+{
+    u8* b;
+    if (!online_rec) {
+        return;
+    }
+    if (out_len + 40 > sizeof out_buf) {
+        out_flush();
+    }
+    b = out_buf + out_len;
+    memset(b, 0, 40);
+    b[0] = 'I';
+    put32(b + 4, (u32) frame_index);
+    put32(b + 8, checksum);
+    memcpy(b + 16, port0, 8);
+    memcpy(b + 24, port1, 8);
+    out_len += 40;
+}
+
+void mp_slippi_record_online_end(void)
+{
+    if (!online_rec) {
+        return;
+    }
+    out_end();
+    online_rec = 0;
 }
 
 /* ---- boot (Boot to Playback Scene, 801a45a0) ---- */
@@ -323,6 +376,12 @@ int mp_slippi_replay_terminated(void)
 
 void mp_slippi_replay_input(Fighter* fp)
 {
+    if (online_rec) {
+        if (!fp->x221F_b3) {
+            out_record('P', fp);
+        }
+        return;
+    }
     const u8* e;
     int follower, qread;
     PADStatus* pad;
@@ -376,6 +435,12 @@ void mp_slippi_replay_input(Fighter* fp)
 /* SendGamePostFrame's point: after the camera callback. */
 void mp_slippi_replay_post_frame(Fighter* fp)
 {
+    if (online_rec) {
+        if (!fp->x221F_b3) {
+            out_record('O', fp);
+        }
+        return;
+    }
     if (!mp_slippi_replay_on() || terminated || fp->x221F_b3) {
         return;
     }
