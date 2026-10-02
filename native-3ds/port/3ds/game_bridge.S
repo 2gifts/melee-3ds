@@ -1,3 +1,4 @@
+#include "../include/mp_fpscr.h"
 .syntax unified
 .arm
 .text
@@ -13,16 +14,23 @@
     pop {r4,pc}
 .size \name,.-\name
 .endm
+/* Native code entering the engine runs it under the engine's FPSCR
+ * (port/include/mp_fpscr.h) and gets its own back afterwards. */
 .macro ENGINEBRIDGE name,target
 .section .text.\name,"ax",%progbits
 .global \name
 .type \name,%function
 \name:
     push {r4,lr}
+    vmrs r4,fpscr
+    ldr r12,=MP_ENGINE_FPSCR
+    vmsr fpscr,r12
     setend be
     bl \target
     setend le
+    vmsr fpscr,r4
     pop {r4,pc}
+.ltorg
 .size \name,.-\name
 .endm
 .section .bss.mp_engine_stack,"aw",%nobits
@@ -34,14 +42,18 @@ _stack_addr:
 .global mp_game_boot
 .type mp_game_boot,%function
 mp_game_boot:
-    push {r4,lr}
+    push {r4,r5,r6,lr}
     mov r4,sp
+    vmrs r5,fpscr
+    ldr r12,=MP_ENGINE_FPSCR
+    vmsr fpscr,r12
     ldr sp,=_stack_addr
     setend be
     bl mp_engine_main
     setend le
+    vmsr fpscr,r5
     mov sp,r4
-    pop {r4,pc}
+    pop {r4,r5,r6,pc}
 .size mp_game_boot,.-mp_game_boot
 ENGINEBRIDGE mp_game_load,mp_scene_load
 ENGINEBRIDGE mp_game_draw,mp_scene_draw
@@ -61,6 +73,7 @@ ENGINEBRIDGE mp_game_bottom_font,mp_bottom_font
 ENGINEBRIDGE mp_game_memory_check,mp_memory_compare_self_test
 ENGINEBRIDGE mp_game_rotation_check,mp_rotation_self_test
 ENGINEBRIDGE mp_game_ppc_math_check,mp_ppc_math_self_test
+ENGINEBRIDGE mp_game_fp_exact_check,mp_fp_exact_self_test
 #endif
 SDKBRIDGE mp_platform_submit,mp_native_submit
 SDKBRIDGE mp_platform_alloc,mp_native_alloc
@@ -116,20 +129,12 @@ SDKBRIDGE mp_be_fmod,fmod
 SDKBRIDGE mp_be_exp,exp
 SDKBRIDGE mp_be_log,log
 SDKBRIDGE mp_be_log10,log10
-SDKBRIDGE mp_be_logf,logf
-SDKBRIDGE mp_be_sinf,sinf
-SDKBRIDGE mp_be_cosf,cosf
-SDKBRIDGE mp_be_tanf,tanf
-SDKBRIDGE mp_be_asinf,asinf
-SDKBRIDGE mp_be_acosf,acosf
-SDKBRIDGE mp_be_atanf,atanf
-SDKBRIDGE mp_be_atan2f,atan2f
-SDKBRIDGE mp_be_sqrtf,sqrtf
+/* sinf cosf tanf asinf acosf atanf atan2f logf sqrtf fmodf: the console's
+ * own implementations are compiled into the engine (docs/slippi/determinism.md). */
 
 SDKBRIDGE mp_be_floorf,floorf
 SDKBRIDGE mp_be_ceilf,ceilf
 SDKBRIDGE mp_be_fabsf,fabsf
-SDKBRIDGE mp_be_fmodf,fmodf
 SDKBRIDGE mp_be___aeabi_idiv,__aeabi_idiv
 SDKBRIDGE mp_be___aeabi_uidiv,__aeabi_uidiv
 SDKBRIDGE mp_be___aeabi_idivmod,__aeabi_idivmod
@@ -168,6 +173,8 @@ INTEGER64_BRIDGE mp_be___aeabi_d2ulz,__aeabi_d2ulz,1,1
 INTEGER64_BRIDGE mp_be___aeabi_d2lz,__aeabi_d2lz,1,1
 INTEGER64_BRIDGE mp_be___aeabi_l2f,__aeabi_l2f,1,0
 INTEGER64_BRIDGE mp_be___aeabi_ul2f,__aeabi_ul2f,1,0
+INTEGER64_BRIDGE mp_be___aeabi_l2d,__aeabi_l2d,1,1
+INTEGER64_BRIDGE mp_be___aeabi_ul2d,__aeabi_ul2d,1,1
 INTEGER64_BRIDGE mp_be___aeabi_ldivmod,__aeabi_ldivmod,2,2
 INTEGER64_BRIDGE mp_be___aeabi_uldivmod,__aeabi_uldivmod,2,2
 .section .text.mp_be_context_swap,"ax",%progbits

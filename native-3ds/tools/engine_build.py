@@ -16,6 +16,14 @@ LIBC = ('memcpy memset memmove memcmp memchr strlen strcmp strncmp strcpy strncp
         'malloc free calloc realloc exit abort strtoul').split()
 INLINE_MATH = ('fabs','fabsf','sqrt','sqrtf')
 LIBC = tuple(n for n in LIBC if n not in INLINE_MATH)
+# Slippi determinism (docs/slippi/determinism.md). The console's single
+# precision maths library is compiled into the engine (mp_be_ names, no
+# newlib bridge): MSL trigf.c/math.c/math_1.c/math_data.c/float.c, Melee's own
+# lbtrigf.c (atan2f/acosf/asinf/atanf) and lb_00CE.c (expf/powf), and
+# port/engine/fp_exact.c (sqrtf, fmodf). Decomp sources take the MSL sqrtf;
+# port-only code (renderer emulation) keeps the VFP square root.
+MSL_SOURCES = ('math.c','math_1.c','math_data.c','trigf.c','float.c')
+DECOMP_SQRT = ('-Usqrtf','-Dsqrtf=mp_be_sqrtf')
 
 
 def compile_engine(jobs=6,sanitize=False,output_directory=None,clamped_shade=False,lto=False,lto_scope='all',material_program=False,feasibility=False,feasibility_console=False,render_rework=False):
@@ -56,20 +64,29 @@ def compile_engine(jobs=6,sanitize=False,output_directory=None,clamped_shade=Fal
     sources = sorted((UPSTREAM/'src/melee').rglob('*.c'))
     sources += [p for p in sorted((UPSTREAM/'src/sysdolphin').rglob('*.c')) if p.name != 'debug.c']
     sources.append(UPSTREAM/'extern/dolphin/src/dolphin/pad/Padclamp.c')
+    sources += [UPSTREAM/'src/MSL'/name for name in MSL_SOURCES]
     sources += sorted((ROOT/'port/engine').glob('*.c'))
     # Slippi online experiment: engine-side (big-endian) sources.
     sources += sorted((ROOT/'port/engine/slippi').glob('*.c'))
     from engine_math import generate
-    sources.append(generate())
+    dolphin_math=generate()
+    sources.append(dolphin_math)
+    # Console-compiled C (decomp, MSL, the SDK's C matrix routines) gets
+    # GameCube contraction; port code and the paired-single replacements
+    # (port/engine/ps_math.c) keep -ffp-contract=off.
+    def contracted(src):
+        return src.is_relative_to(UPSTREAM) or src==dolphin_math
+    import fp_contract
+    from slippi.fp_vectors import write_header
+    write_header(ROOT/'build/compat/fp_exact_vectors.h')
+    no_contract=fp_contract.load_no_contract()
+    contract_hash=hashlib.sha256((ROOT/'tools/fp_contract.py').read_bytes()+
+        json.dumps({k:sorted(v) for k,v in sorted(no_contract.items())}).encode()).digest()
+    fp_header=ROOT/'port/include/mp_fp.h'
+    from slippi_edits.determinism import JOBJ_FUSED
     pending=ROOT/'build/generated/gx_pending.c'
     if pending.exists(): sources.append(pending)
     sources = [p for p in sources if p.name != 'be_probe.c']
-    if lto:
-        # In the normal archive this member is never extracted: game_bridge.S
-        # already supplies all three public functions through native newlib.
-        # Exclude it BEFORE LTO, so the optimizer cannot import different math
-        # implementations into callers even if duplicate definitions were weak.
-        sources.remove(UPSTREAM/'src/melee/lb/lbtrigf.c')
     headers = b''.join(p.read_bytes() for base in ('port/include','port/engine','build/compat')
                       for p in sorted((ROOT/base).rglob('*.h')))
     # The companion screen's wire schema is shared with the native SDK side.
@@ -90,23 +107,54 @@ def compile_engine(jobs=6,sanitize=False,output_directory=None,clamped_shade=Fal
         if src.is_relative_to(UPSTREAM):
             for name in ('memcpy','memset','memcmp'):
                 memory_flags+=['-U'+name,'-D'+name+'=__builtin_'+name]
+        contract=contracted(src)
+        if contract:
+            memory_flags+=[*DECOMP_SQRT,'-include',str(fp_header)]
+            # HSD_JObjAdd*: one expression with the caller's product, where
+            # the console's inlined copies fuse it (port/include/mp_jobj_fused.h;
+            # the files are chosen by the census, determinism.JOBJ_FUSED).
+            if any(src.as_posix().endswith('/'+k) for k in JOBJ_FUSED):
+                memory_flags+=['-include',str(ROOT/'port/include/mp_jobj_fused.h')]
+        if src.parent==UPSTREAM/'src/MSL':
+            # MSL's math.h clashes with newlib's; take what MSL needs from a
+            # prefix, and MSL headers only for "quoted" includes.
+            memory_flags+=['-include',str(ROOT/'port/include/mp_msl_math.h')]
         rel = src.relative_to(ROOT).as_posix()
         selected_lto = lto and (lto_scope=='all' or not src.is_relative_to(UPSTREAM/'src/melee'))
         compile_flags = [*flags,*(['-flto=thin'] if selected_lto else [])]
         basehash = hashlib.sha256(json.dumps(compile_flags).encode()+headers+encoding).digest()
         stem = rel.replace('/','_').replace('.c','')
         raw = out/(stem+('.bc' if selected_lto else '.raw.o')); obj = out/(stem+'.o'); signature=out/(stem+'.sha256')
-        digest = hashlib.sha256(basehash+json.dumps(memory_flags).encode()+selected.read_bytes()).hexdigest()
+        digest = hashlib.sha256(basehash+json.dumps(memory_flags).encode()+selected.read_bytes()+
+                                (contract_hash if contract else b'')).hexdigest()
         if not raw.exists() or not signature.exists() or signature.read_text()!=digest:
             # Retail's sjiswrap gives the font engine two-byte glyphs. Clang
             # otherwise emits UTF-8 (including full-width English names).
             pp=out/(stem+'.i')
-            p=subprocess.run([*compile_flags,*memory_flags,'-g0','-I'+str(src.parent),'-Wno-everything','-E',str(selected),'-o',str(pp)],
+            p=subprocess.run([*compile_flags,*memory_flags,'-g0',('-iquote' if src.parent==UPSTREAM/'src/MSL' else '-I')+str(src.parent),'-Wno-everything','-E',str(selected),'-o',str(pp)],
                              capture_output=True,text=True,errors='replace')
             if p.returncode:return {'source':rel,'error':p.stderr}
             pp.write_text(shift_jis_literals(pp.read_text(encoding='utf-8')),encoding='utf-8')
-            p = subprocess.run([*compile_flags,*memory_flags,'-g0','-Wno-everything','-c',str(pp),'-o',str(raw)],
-                               capture_output=True,text=True,errors='replace')
+            if contract:
+                # Front-end IR with clang's per-expression fusions marked,
+                # lowered to GameCube rounding (tools/fp_contract.py) before
+                # any optimization or inlining, then optimized and compiled.
+                on=[f if f!='-ffp-contract=off' else '-ffp-contract=on' for f in compile_flags]
+                ll=out/(stem+'.ll')
+                p=subprocess.run([*on,*memory_flags,'-g0','-Wno-everything','-S','-emit-llvm','-Xclang','-disable-llvm-passes',
+                                  str(pp),'-o',str(ll)],capture_output=True,text=True,errors='replace')
+                if p.returncode: return {'source':rel,'error':p.stderr}
+                try:
+                    text,stats=fp_contract.rewrite(ll.read_text(encoding='utf-8'),no_contract,module=stem)
+                except ValueError as e:
+                    return {'source':rel,'error':str(e)}
+                lowered=out/(stem+'.gc.ll');lowered.write_text(text,encoding='utf-8')
+                (out/(stem+'.fp.json')).write_text(json.dumps(stats))
+                p = subprocess.run([*compile_flags,'-g0','-Wno-everything','-c',str(lowered),'-o',str(raw)],
+                                   capture_output=True,text=True,errors='replace')
+            else:
+                p = subprocess.run([*compile_flags,*memory_flags,'-g0','-Wno-everything','-c',str(pp),'-o',str(raw)],
+                                   capture_output=True,text=True,errors='replace')
             if p.returncode: return {'source':rel,'error':p.stderr}
             signature.write_text(digest)
         if selected_lto:return {'source':rel,'object':str(raw),'format':'LLVM bitcode'}

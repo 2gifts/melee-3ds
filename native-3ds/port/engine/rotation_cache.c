@@ -2,7 +2,8 @@
 #include <dolphin/types.h>
 #include "native.h"
 
-/* Repeated joint angles use the exact existing libm results. No angle
+/* Repeated joint angles use the exact existing sinf/cosf results (the
+ * console's MSL implementations since the Slippi determinism work). No angle
  * quantization, lookup-table interpolation or animation-rate reduction. */
 typedef union{float f;u32 u;} FloatBits;
 typedef struct{u32 key,mode,valid;float sine,cosine;} Rotation;
@@ -18,9 +19,9 @@ void mp_rotation_sincos(float angle,float*sine,float*cosine){
     if(!mp_rotation_cache||(key.u&0x7f800000)==0x7f800000){
         *sine=sinf(angle);*cosine=cosf(angle);return;
     }
-    if(!(key.u&0x7fffffff)){
-        *sine=angle;*cosine=1.f;++mp_rotation_zeros;
-    }else if(r->valid&&r->key==key.u&&r->mode==mode){
+    /* No zero shortcut: the console's MSL sinf(-0.0f) is +0.0f (Slippi
+     * determinism), so zeros go through the cache like any other angle. */
+    if(r->valid&&r->key==key.u&&r->mode==mode){
         *sine=r->sine;*cosine=r->cosine;++mp_rotation_hits;
     }else{
         *sine=sinf(angle);*cosine=cosf(angle);
