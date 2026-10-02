@@ -2,7 +2,8 @@
 other overlays, see engine_overlays.adapt).
 
 Same edit format as gameplay_mods: {'path/suffix.c': [(old, new, count)]}.
-Edits are collected from the modules in tools/slippi_edits/ so separate
+Edits are collected from the modules in tools/slippi_edits/ (in name order;
+base_replay.py first, other modules may anchor on its hooks) so separate
 areas (determinism, replay playback, online play) stay in separate files.
 """
 import importlib

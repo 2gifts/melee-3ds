@@ -10,8 +10,11 @@ u64 mp_native_idle_ticks; /* Engine thread waiting for retrace/alarms (thread lo
  * so report its error instead of waiting forever. */
 void mp_native_idle(void){extern void mp_native_gx_check(void);mp_native_gx_check();++mp_native_idle_count;u64 start=svcGetSystemTick();svcSleepThread(1000000);mp_native_idle_ticks+=svcGetSystemTick()-start;}
 extern unsigned mp_native_frame_number(void);
+/* Slippi replay/online runs turn the smoke build's scripted input off. */
+volatile unsigned mp_slippi_no_scripts;
 static unsigned scripted_keys(void){
 #ifdef MP_SMOKE_TEST
+    if(mp_slippi_no_scripts)return 0;
     /* Repeat a short A press to dismiss the original no-memory-card prompt. */
     unsigned f=mp_native_frame_number();if(f>90&&f<485&&f%120<5)return KEY_A|(f>=300?KEY_START:0);
     if(f>=600&&f<725&&f%60<5)return KEY_DDOWN;
@@ -31,7 +34,7 @@ static u32 test_sequence,test_until;
 static void test_pad(u32*buttons,circlePosition*stick,circlePosition*sub){
     u32 f=mp_native_frame_number();
     if(mp_test_control.sequence){if(test_sequence!=mp_test_control.sequence){test_sequence=mp_test_control.sequence;test_until=f+mp_test_control.frames;}*buttons=f<test_until?mp_test_control.buttons:0;stick->dx=f<test_until?mp_test_control.x*156/80:0;stick->dy=f<test_until?mp_test_control.y*156/80:0;sub->dx=f<test_until?mp_test_control.cx*156/80:0;sub->dy=f<test_until?mp_test_control.cy*156/80:0;}
-    else {
+    else if(!mp_slippi_no_scripts){
         if(f>=850&&f<885){stick->dx=25*156/80;stick->dy=156;}
         if(f>=900&&f<908)stick->dx=-156;
         if(f>=930&&f<935)stick->dy=-117;

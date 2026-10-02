@@ -53,8 +53,11 @@ int mp_native_slippi_file_write(const char* path, const void* data, unsigned siz
 extern volatile unsigned mp_test_frame_limit;
 #endif
 
+extern volatile unsigned mp_slippi_no_scripts;
+
 void mp_native_slippi_unlimited(void)
 {
+    mp_slippi_no_scripts = 1;
 #ifdef MP_SMOKE_TEST
     mp_test_frame_limit = 0;
 #endif

@@ -29,4 +29,17 @@ void mp_slippi_replay_post_frame(struct Fighter* fp);
 void mp_slippi_replay_match_exit(void);
 int mp_slippi_replay_frame_index(void);
 
+/* ---- online play (port/engine/slippi/online.c) ---- */
+struct PADStatus;
+int mp_slippi_online_configured(void);
+int mp_slippi_online_active(void);
+void mp_slippi_online_boot_mode(unsigned char* mode);
+int mp_slippi_online_wait_match(void);
+const unsigned char* mp_slippi_online_pending_block(void);
+void mp_slippi_online_start_melee(struct StartMeleeData* data);
+int mp_slippi_online_pad_renew(struct PADStatus* stat);
+void mp_slippi_online_frame_begin(void);
+void mp_slippi_tick_without_draw(void);
+void mp_slippi_online_match_exit(void);
+
 #endif

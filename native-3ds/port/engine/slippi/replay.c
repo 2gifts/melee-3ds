@@ -223,10 +223,13 @@ void mp_slippi_replay_prepare_scene(void)
     u64 mask = 0;
     int i;
 
-    if (!mp_slippi_replay_on()) {
+    if (mp_slippi_replay_on()) {
+        info = blob + 8;
+    } else if (mp_slippi_online_wait_match()) {
+        info = mp_slippi_online_pending_block();
+    } else {
         return;
     }
-    info = blob + 8;
     scene = lbDvd_GetPreloadCacheScene();
     for (i = 0; i < 4; i++) {
         const u8* p = info + 0x60 + 0x24 * i;
@@ -290,10 +293,18 @@ void mp_slippi_replay_scene_think(int match_result)
     if (!mp_slippi_replay_on() || finished) {
         return;
     }
+    if (match_result != 0) {
+        /* GAME! (or a no contest): the results screen may wait for a button. */
+        mp_slippi_replay_match_exit();
+        return;
+    }
     if (gm_801A4BA8() == 0) {
         frame_index = FIRST_FRAME;
     } else {
         frame_index++;
+    }
+    if (frame_index % 600 == 0) {
+        out_flush();   /* partial results survive a crash */
     }
     if (match_result == 0 && frame_record(frame_index) == NULL && !terminated) {
         terminated = 1;
