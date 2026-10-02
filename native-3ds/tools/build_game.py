@@ -70,7 +70,7 @@ def main():
     sdk=ROOT/'.toolchain/devkitpro';arm=sdk/'devkitARM'
     arch=['--no-default-config','--target=arm-none-eabi','-mcpu=mpcore',
           '-mfpu=vfp','-mfloat-abi=hard','-mtp=soft']
-    includes=[*prepare(),'-I'+str(sdk/'libctru/include'),'-isystem',str(arm/'arm-none-eabi/include'),'-I'+str(ROOT/'port/3ds/slippi')]
+    includes=[*prepare(),'-I'+str(sdk/'libctru/include'),'-isystem',str(arm/'arm-none-eabi/include'),'-I'+str(ROOT/'port/3ds/slippi'),'-I'+str(ROOT/'port/3ds/slippi/enet/include')]
     shader=out/'vertex.shbin'
     shader_dir=args.shader_dir or ROOT/'port/3ds'
     if not shader_dir.is_absolute():shader_dir=ROOT/shader_dir
@@ -141,6 +141,12 @@ def main():
         obj=out/(src.stem+'.o')
         run([cc,*arch,*common_flags(),'-fshort-enums','-D__3DS__',
              *(['-DMP_SMOKE_TEST'] if args.smoke else []),*(['-DMP_AFFINE_IDENTITY_SHADER'] if args.identity_affine else []),*(['-DMP_UNLIT_AFFINE_SHADER'] if args.unlit_affine else []),*(['-DMP_BANNER_CAPTURE'] if args.banner_capture else []),*(['-DMP_AUDIO_HLE_TEST'] if args.audio_hle else []),*(['-DMP_BOOTMODE'] if args.boot else []),*(['-DMP_PROFILE_FRESH'] if args.profile=='fresh' else []),*includes,*(['-I'+str(sdk/'portlibs/3ds/include')] if src.name=='jpeg_still.c' else []),'-c',src,'-o',obj])
+        objects.append(obj)
+    # Slippi experiment: vendored ENet (port/3ds/slippi/enet, MIT); prefixed
+    # object names keep its host.c/list.c/... apart from port sources.
+    for src in sorted((ROOT/'port/3ds/slippi/enet').glob('*.c')):
+        obj=out/('enet_'+src.stem+'.o')
+        run([cc,*arch,*common_flags(),'-w','-fshort-enums','-D__3DS__',*includes,'-c',src,'-o',obj])
         objects.append(obj)
     libs=arm/'arm-none-eabi/lib/armv6k/fpu'
     gcc=sorted((arm/'lib/gcc/arm-none-eabi').iterdir())[-1]/'armv6k/fpu'

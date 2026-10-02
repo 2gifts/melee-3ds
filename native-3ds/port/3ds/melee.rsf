@@ -113,6 +113,8 @@ AccessControlInfo:
    - ir:rst
    - ptm:u
    - ptm:sysm
+   - soc:U
+   - ac:u
 SystemControlInfo:
   SaveDataSize: 0KB
   RemasterVersion: 0
@@ -130,4 +132,6 @@ SystemControlInfo:
     mcu: 0x0004013000001f02
     pdn: 0x0004013000002102
     ptm: 0x0004013000002202
+    ac: 0x0004013000002402
+    socket: 0x0004013000002e02
     spi: 0x0004013000002302

@@ -24,7 +24,7 @@ into the main port.
 | Replay playback + per-frame state dump (determinism oracle) | `port/engine/slippi/replay.c`, `tools/slippi_edits/replay.py`, `tools/slippi/` | in progress |
 | Bit-exact maths (contraction, sqrtf, trig, PSMTX, FPSCR) | `tools/slippi_edits/determinism.py`, IR pass in `engine_build.py` | in progress |
 | Slippi online gameplay codes (RNG reseed, UCF parity, zero-init, ...) | `tools/slippi_edits/online_rules.py`, `port/engine/slippi/` | todo |
-| Network: soc:U, ENet, matchmaking, Slippi P2P protocol | `port/3ds/slippi/` | in progress |
+| Network: soc:U, ENet, matchmaking, Slippi P2P protocol | `port/3ds/slippi/`, `docs/slippi/network.md` | done; tested vs fake MM/peer (PC, Azahar) |
 | Online frame driver (lockstep pads, delay, checksum, match start) | `port/engine/slippi/online.c` + edits | todo |
 | Minimal UI (connect code via swkbd, character pick, status) | bottom screen | todo |
 
