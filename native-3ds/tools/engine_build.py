@@ -57,6 +57,8 @@ def compile_engine(jobs=6,sanitize=False,output_directory=None,clamped_shade=Fal
     sources += [p for p in sorted((UPSTREAM/'src/sysdolphin').rglob('*.c')) if p.name != 'debug.c']
     sources.append(UPSTREAM/'extern/dolphin/src/dolphin/pad/Padclamp.c')
     sources += sorted((ROOT/'port/engine').glob('*.c'))
+    # Slippi online experiment: engine-side (big-endian) sources.
+    sources += sorted((ROOT/'port/engine/slippi').glob('*.c'))
     from engine_math import generate
     sources.append(generate())
     pending=ROOT/'build/generated/gx_pending.c'

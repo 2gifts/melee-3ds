@@ -70,7 +70,7 @@ def main():
     sdk=ROOT/'.toolchain/devkitpro';arm=sdk/'devkitARM'
     arch=['--no-default-config','--target=arm-none-eabi','-mcpu=mpcore',
           '-mfpu=vfp','-mfloat-abi=hard','-mtp=soft']
-    includes=[*prepare(),'-I'+str(sdk/'libctru/include'),'-isystem',str(arm/'arm-none-eabi/include')]
+    includes=[*prepare(),'-I'+str(sdk/'libctru/include'),'-isystem',str(arm/'arm-none-eabi/include'),'-I'+str(ROOT/'port/3ds/slippi')]
     shader=out/'vertex.shbin'
     shader_dir=args.shader_dir or ROOT/'port/3ds'
     if not shader_dir.is_absolute():shader_dir=ROOT/shader_dir
@@ -137,7 +137,7 @@ def main():
         from async_renderqueue import generate
         extra.append(generate(out))
         includes+=['-I'+str(ROOT/'port/3ds'),'-DMP_ASYNC_PRESENTATION']
-    for src in (ROOT/'port/3ds/game.c',ROOT/'port/3ds/bottom.c',ROOT/'port/3ds/bottom_draw.c',ROOT/'port/3ds/renderer.c',ROOT/'port/3ds/early_queue.c',ROOT/'port/3ds/gx_thread.c',ROOT/'port/3ds/linear_lock.c',ROOT/'port/3ds/gpu_busy.c',ROOT/'port/3ds/citro3d_fix.c',ROOT/'port/3ds/uniform_dispatch.c',ROOT/'port/3ds/services.c',ROOT/'port/3ds/cpu_speed.c',ROOT/'port/3ds/file_io.c',ROOT/'port/3ds/audio.c',ROOT/'port/3ds/command_cache.c',ROOT/'port/3ds/log_io.c',ROOT/'port/3ds/jpeg_still.c',ROOT/'port/3ds/card_storage.c',ROOT/'port/3ds/settings.c',ROOT/'port/3ds/controls.c',ROOT/'port/3ds/game_bridge.S',shader_c,*([ROOT/'tests/stereo_bounds_reference.c'] if args.smoke else []),*extra):
+    for src in (ROOT/'port/3ds/game.c',ROOT/'port/3ds/bottom.c',ROOT/'port/3ds/bottom_draw.c',ROOT/'port/3ds/renderer.c',ROOT/'port/3ds/early_queue.c',ROOT/'port/3ds/gx_thread.c',ROOT/'port/3ds/linear_lock.c',ROOT/'port/3ds/gpu_busy.c',ROOT/'port/3ds/citro3d_fix.c',ROOT/'port/3ds/uniform_dispatch.c',ROOT/'port/3ds/services.c',ROOT/'port/3ds/cpu_speed.c',ROOT/'port/3ds/file_io.c',ROOT/'port/3ds/audio.c',ROOT/'port/3ds/command_cache.c',ROOT/'port/3ds/log_io.c',ROOT/'port/3ds/jpeg_still.c',ROOT/'port/3ds/card_storage.c',ROOT/'port/3ds/settings.c',ROOT/'port/3ds/controls.c',*sorted((ROOT/'port/3ds/slippi').glob('*.c')),ROOT/'port/3ds/game_bridge.S',shader_c,*([ROOT/'tests/stereo_bounds_reference.c'] if args.smoke else []),*extra):
         obj=out/(src.stem+'.o')
         run([cc,*arch,*common_flags(),'-fshort-enums','-D__3DS__',
              *(['-DMP_SMOKE_TEST'] if args.smoke else []),*(['-DMP_AFFINE_IDENTITY_SHADER'] if args.identity_affine else []),*(['-DMP_UNLIT_AFFINE_SHADER'] if args.unlit_affine else []),*(['-DMP_BANNER_CAPTURE'] if args.banner_capture else []),*(['-DMP_AUDIO_HLE_TEST'] if args.audio_hle else []),*(['-DMP_BOOTMODE'] if args.boot else []),*(['-DMP_PROFILE_FRESH'] if args.profile=='fresh' else []),*includes,*(['-I'+str(sdk/'portlibs/3ds/include')] if src.name=='jpeg_still.c' else []),'-c',src,'-o',obj])

@@ -6,8 +6,8 @@ def adapt(source):
     # gameplay mods both builds ship (gameplay_mods.py), then 3DS
     # presentation edits (presentation_mods.py).
     result=_adapt(source)
-    import layout_fixes,gameplay_mods,presentation_mods
-    edits=layout_fixes.edits_for(source)+gameplay_mods.edits_for(source)+presentation_mods.edits_for(source)
+    import layout_fixes,gameplay_mods,presentation_mods,slippi_mods
+    edits=layout_fixes.edits_for(source)+gameplay_mods.edits_for(source)+presentation_mods.edits_for(source)+slippi_mods.edits_for(source)
     if not edits:return result
     text=result.read_text(encoding='utf-8')
     for old,new,count in edits:
