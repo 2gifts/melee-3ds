@@ -93,3 +93,34 @@ Sources:
 5. Chat (CSS and bottom), settings page, sounds.
 6. Menu art patches (VCDIFF tool) and the Online submenu.
 7. Hardware passes and edge cases (from the network test list).
+
+## Status (2026-10-03)
+
+**Done, tested in Azahar against the fake peer** (`tools/slippi/ui/ui_test.py`):
+- Normal boot. 1P shows Online Play, which opens Slippi's Online submenu (only Direct is available) and then the online CSS.
+- Online CSS:
+  - Slippi's top-screen text: status lines with spinners, User / Connect Code, Playing:, hints, errors.
+  - START opens the code keyboard. Confirm locks in and searches; the first stage is random.
+  - Z cancels or clears an error; hold Z to disconnect.
+  - Locked in, the fighter cannot be changed or recoloured.
+- Code keyboard on the bottom screen: recent codes (L/R), suggestion (X), B to erase. History lives in `direct-codes.txt`, seeded from config.ini's `opponent=`.
+- After a game: winner START locks in; loser START goes to the SSS. Z on the SSS (or the bottom page) toggles frozen Stadium.
+- Quick chat:
+  - D-pad page, then direction.
+  - Each side's message set, shown as `name: message` on the top CSS.
+  - The bottom QUICK CHAT page.
+- Bottom pages:
+  - online CSS companion;
+  - keyboard;
+  - chat;
+  - SSS;
+  - settings (delay 1-9, chat on/off, clear codes);
+  - match cards with display names and ping.
+- Menu art: `tools/slippi/slippi_files.py` writes Slippi's patched menu files, made from the player's own disc, to `sdmc:/3ds/melee/slippi/files/`.
+
+**Not done yet:**
+- VS splash before game 1 (names; the announcer calls the opponent).
+- In-game names above percents and "Delay: Nf".
+- The in-game "DISCONNECTED" / "DESYNC DETECTED" texts.
+- Zelda/Sheik selector.
+- The CSS's EVENT MATCH title, which Slippi replaces with its mode art.
