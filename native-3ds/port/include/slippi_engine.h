@@ -70,6 +70,9 @@ int mp_slippi_css_online(void);
 int mp_slippi_css_frame(int ready, struct PlayerInitData* local, struct PlayerInitData* remote,
                         unsigned trigger, unsigned held);
 int mp_slippi_sss_alt_mode(void);
+/* Slippi's patched menu files are installed (Online submenu, descriptions). */
+int mp_platform_slippi_menu_files(void);
+void mp_slippi_menu_prepare(void);
 void mp_slippi_sss_toggle_alt(void);
 
 #endif

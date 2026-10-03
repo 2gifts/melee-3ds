@@ -227,6 +227,7 @@ SDKBRIDGE mp_platform_slippi_ui_event,slippi_ui_event
 SDKBRIDGE mp_platform_slippi_ui_remote,slippi_ui_remote
 SDKBRIDGE mp_platform_slippi_ui_text,slippi_ui_text
 SDKBRIDGE mp_platform_slippi_ui_alt,slippi_ui_alt
+SDKBRIDGE mp_platform_slippi_menu_files,mp_native_slippi_menu_files
 /* Six arguments: the fifth and sixth arrive on the caller's stack as
  * big-endian words. Load them while still big-endian, then store them
  * little-endian where the native callee expects its stack arguments. */

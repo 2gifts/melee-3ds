@@ -75,8 +75,8 @@ volatile unsigned mp_file_trace;
  * files keep their disc names. The flat layout still works. */
 enum {INDEX_BUCKETS=4096};
 typedef struct IndexEntry {struct IndexEntry *next;const char *path;unsigned size;char name[];} IndexEntry;
-static IndexEntry *disc_index[INDEX_BUCKETS],*visual_index[INDEX_BUCKETS];
-static unsigned disc_index_count,visual_index_count,disc_foldered,disc_duplicates;
+static IndexEntry *disc_index[INDEX_BUCKETS],*visual_index[INDEX_BUCKETS],*slippi_index[INDEX_BUCKETS];
+static unsigned disc_index_count,visual_index_count,slippi_index_count,disc_foldered,disc_duplicates;
 static unsigned index_hash(const char *name){unsigned h=2166136261u;while(*name)h=(h^(unsigned char)*name++)*16777619u;return h&(INDEX_BUCKETS-1);}
 static const IndexEntry *index_find(IndexEntry *const *table,const char *name){
     for(const IndexEntry *e=table[index_hash(name)];e;e=e->next)if(!strcmp(e->name,name))return e;
@@ -135,9 +135,12 @@ static void index_files(void){
     disc_index_count=index_directory(sdmc,disc_index,"/3ds/melee/files/","","",0);
     unsigned foldered=disc_foldered,duplicates=disc_duplicates;
     visual_index_count=index_directory(sdmc,visual_index,"/3ds/melee/visuals/","","",0);
+    /* Slippi fork: Slippi's patched menu files (tools/slippi/slippi_files.py
+     * applies Slippi Dolphin's VCDIFF patches to this disc's own files). */
+    slippi_index_count=index_directory(sdmc,slippi_index,"/3ds/melee/slippi/files/","","",0);
     FSUSER_CloseArchive(sdmc);
-    char text[256];snprintf(text,sizeof(text),"Disc index: %u files (%u in folders%s), %u visual files; %u ms\n",disc_index_count,foldered,
-        duplicates?"; old flat copies also present, delete them for faster loading":"",visual_index_count,(unsigned)((svcGetSystemTick()-start)/(SYSCLOCK_ARM11/1000)));
+    char text[256];snprintf(text,sizeof(text),"Disc index: %u files (%u in folders%s), %u visual files, %u Slippi files; %u ms\n",disc_index_count,foldered,
+        duplicates?"; old flat copies also present, delete them for faster loading":"",visual_index_count,slippi_index_count,(unsigned)((svcGetSystemTick()-start)/(SYSCLOCK_ARM11/1000)));
     extern void mp_native_log(const char*);mp_native_log(text);
 }
 /* Slippi boot prefetch: the index must exist before files are looked up,
@@ -145,6 +148,12 @@ static void index_files(void){
 void mp_native_files_index(void){index_files();}
 #else
 void mp_native_files_index(void){}
+#endif
+/* Slippi's patched menu files (MnMaAll + SdMenu) are on the SD card. */
+#ifdef __3DS__
+int mp_native_slippi_menu_files(void){return slippi_index_count&&index_find(slippi_index,"MnMaAll.usd")&&index_find(slippi_index,"SdMenu.usd");}
+#else
+int mp_native_slippi_menu_files(void){return 0;}
 #endif
 /* Disc files found at startup (a complete US v1.02 extraction has 1209). */
 unsigned mp_native_disc_file_count(void){return disc_index_count;}
@@ -173,6 +182,13 @@ int mp_native_file_id(const char *name){
     mp_native_missing_file[0]=0;
     for(unsigned i=0;i<file_count;++i)if(!strcmp(name,files[i].name))return i;
     if(file_count==MAX_FILES)return -1;
+    {const IndexEntry *s=slippi_index_count?index_find(slippi_index,name):NULL;
+     int written=s?snprintf(path,sizeof(path),"sdmc:/3ds/melee/slippi/files/%s",name):-1;
+     if(s&&written>0&&(size_t)written<sizeof(path)){
+        char *copy=strdup(name);if(!copy)return -1;
+        char *resolved=strdup(path);if(!resolved){free(copy);return -1;}
+        unsigned id=file_count;files[id].name=copy;files[id].path=resolved;files[id].size=s->size;
+        __atomic_store_n(&file_count,id+1,__ATOMIC_RELEASE);return id;}}
     /* A name missing from the index (for example, different letter case on
      * the FAT volume) takes the original open-based path below. */
     const IndexEntry *e=disc_index_count?index_find(disc_index,name):NULL;

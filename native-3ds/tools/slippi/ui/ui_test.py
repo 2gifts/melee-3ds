@@ -88,6 +88,7 @@ def main():
     ap.add_argument('--match-seconds', type=float, default=40)
     ap.add_argument('--pick-kind', type=int, default=None, help='SSS: stage kind to pick (default: printed list, first)')
     ap.add_argument('--frozen', action='store_true', help='SSS: press Z (frozen Stadium) before picking')
+    ap.add_argument('--vanilla-menus', action='store_true', help='without the Slippi menu files')
     ap.add_argument('--games', type=int, default=1, help='2: the 3DS quits game 1 (LRAS), picks the stage, plays game 2')
     ap.add_argument('--mm-port', type=int, default=43113)
     ap.add_argument('--code-encoding', default='fullwidth')
@@ -102,6 +103,13 @@ def main():
     extra = ['prefetch=0']
     write_profile(sd / 'slippi', 'a', USERS['b']['connectCode'], args, 2, extra)
     (sd / 'slippi' / 'direct-codes.txt').unlink(missing_ok=True)
+    # Slippi's menu files, made from this disc (tools/slippi/slippi_files.py).
+    files = sd / 'slippi' / 'files'
+    if files.exists():
+        shutil.rmtree(files)
+    if not args.vanilla_menus:
+        subprocess.run([sys.executable, str(HERE.parent / 'slippi_files.py'), str(emu.MASTER / 'user/sdmc/3ds/melee/files'),
+                        str(files)], check=True, capture_output=True)
     (sd / 'game.log').unlink(missing_ok=True)
     if not args.no_peer:
         procs['mm'] = start([TOOLS / '../build/slippi-tools/slippi_fake_mm.exe', '--port', args.mm_port],
@@ -175,6 +183,11 @@ def main():
             select.act(frames=12)
         capture('menu-1p')
         select.act(0x100, 2)
+        if not args.vanilla_menus:
+            # Slippi's Online submenu, Direct hovered.
+            select.act(frames=40)
+            capture('menu-online')
+            select.act(0x100, 2)
         wait_scene(8, 8)
         select.act(frames=60)
         capture('css-idle')
