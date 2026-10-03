@@ -42,7 +42,8 @@ def _junction(link, target):
     subprocess.run(['cmd', '/c', 'mklink', '/J', str(link), str(target)], check=True, capture_output=True)
 
 
-def prepare(name, gdb_port=24800):
+def prepare(name, gdb_port=24800, graphics=None):
+    """graphics: None keeps the master's backend, 'opengl' or 'vulkan'."""
     home = BASE / name
     if not (home / 'azahar.exe').exists():
         home.mkdir(parents=True, exist_ok=True)
@@ -70,6 +71,10 @@ def prepare(name, gdb_port=24800):
             line = r'gdbstub_port\default=false'
         elif line.startswith('use_gdbstub='):
             line = 'use_gdbstub=true'
+        elif graphics and line.startswith('graphics_api='):
+            line = 'graphics_api=' + ('1' if graphics == 'opengl' else '2')
+        elif graphics and line.startswith(r'graphics_api\default='):
+            line = r'graphics_api\default=false'
         lines.append(line)
     config.write_text('\n'.join(lines) + '\n', encoding='utf-8')
     return home

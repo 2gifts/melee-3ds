@@ -63,6 +63,7 @@ static struct {
     int configured;           /* 0 unknown, 1 online, -1 offline */
     char opponent[24];
     int character, color, stage, stage_select, delay_setting, record;
+    int test_inputs, test_end_frame;   /* automated tests (config.ini) */
     int started;              /* matchmaking started */
     int selections_sent;
     int pending;              /* match negotiated, waiting for its scene */
@@ -81,8 +82,8 @@ static struct {
     DesyncLocal desync_local[DESYNC_ENTRIES];
     int disconnected, disconnect_shown, desync_shown, game_over, game_end_frame;
     unsigned skips, skip_run, frames, waits, wait_ms, longest_wait_ms, no_sample_bodies;
-    int advance_left, advance_gap, advancing;
-    unsigned advances;
+    int advance_left, advance_gap, advancing, drop_samples, last_drop_frame;
+    unsigned advances, dropped;
 } on;
 
 static void logf_(const char* fmt, int a, int b, int c)
@@ -160,6 +161,10 @@ static void load_config(void)
             on.stage = parse_int(line + 6, on.stage);
         } else if (strncmp(line, "stage_select=", 13) == 0) {
             on.stage_select = parse_int(line + 13, on.stage_select);
+        } else if (strncmp(line, "test_inputs=", 12) == 0) {
+            on.test_inputs = parse_int(line + 12, 0);
+        } else if (strncmp(line, "test_end_frame=", 15) == 0) {
+            on.test_end_frame = parse_int(line + 15, 0);
         } else if (strncmp(line, "record=", 7) == 0) {
             on.record = parse_int(line + 7, 0);
         } else if (strncmp(line, "delay=", 6) == 0) {
@@ -277,13 +282,55 @@ static int hooks_on(void)
  * top of the body, on the queue entry the body is about to read, and the body
  * waits until the remote pad for its frame has arrived. */
 
+/* Right after PADRead: nonzero drops the sample, so the engine runs one
+ * frame fewer this period. Used by the time sync (mp_slippi_online_frame_end)
+ * when this 3DS runs ahead of the opponent: its pad timer is exactly 60 Hz,
+ * Dolphin's frames are 59.94 Hz, and a peer that drifts ahead makes the PC
+ * believe it is behind (rollbacks, speed-ups and Dolphin's "poor match
+ * performance" banner). Dolphin drops samples the same way (skip frames). */
 int mp_slippi_online_pad_renew(PADStatus* stat)
 {
     (void) stat;
-    return 0;
+    if (!hooks_on() || on.drop_samples <= 0) {
+        return 0;
+    }
+    on.drop_samples--;
+    on.dropped++;
+    return 1;
 }
 
 void mp_platform_idle(void);
+
+/* Automated tests (test_inputs=SEED): a deterministic pad per frame in place
+ * of the 3DS controls, held a few frames like a person would, never Start;
+ * test_end_frame=N pauses at N and ends the match with L+R+A+Start. */
+static void test_pad(PADStatus* pad, int frame)
+{
+    u32 x = (u32) (frame / 6) * 2654435761u ^ (u32) on.test_inputs * 40503u;
+    static const u16 buttons[] = {0, 0, 0, 0x0100, 0x0200, 0x0400, 0x0040, 0x0100, 0x0020, 0};
+    x ^= x >> 15;
+    x *= 2246822519u;
+    x ^= x >> 13;
+    memset(pad, 0, sizeof *pad);
+    pad->stickX = (s8) ((int) ((x >> 3) % 161) - 80);
+    pad->stickY = (s8) ((int) ((x >> 11) % 161) - 80);
+    if ((x >> 20) % 5 == 0) {
+        pad->substickX = (s8) ((int) ((x >> 23) % 161) - 80);
+    }
+    pad->button = buttons[(x >> 27) % 10];
+    if (pad->button & 0x0040) {
+        pad->triggerLeft = 140;
+    }
+    if (on.test_end_frame > 0 && frame >= on.test_end_frame) {
+        memset(pad, 0, sizeof *pad);
+        if (frame < on.test_end_frame + 3) {
+            pad->button = 0x1000;                        /* Start: pause */
+        } else if (frame > on.test_end_frame + 20) {
+            pad->button = 0x1000 | 0x0040 | 0x0020 | 0x0100;   /* L+R+A+Start */
+            pad->triggerLeft = pad->triggerRight = 200;
+        }
+    }
+}
 
 static void exchange_pads(int frame)
 {
@@ -308,6 +355,9 @@ static void exchange_pads(int frame)
         memset(stat, 0, 4 * sizeof *stat);
     }
     source = &stat[0];   /* the 3DS controls are port 1's pad */
+    if (on.test_inputs && frame >= START_SYNC_FRAME - on.delay) {
+        test_pad(source, frame);
+    }
     clamp_stick_at_rest(source);
     if (source->err == -3) {
         wire_to_pad(source, on.last_local);
@@ -331,6 +381,9 @@ static void exchange_pads(int frame)
         }
         if (waited++ == 0) {
             on.waits++;
+        }
+        if ((waited & 15) == 0) {
+            mp_platform_slippi_wait_poll();
         }
         mp_platform_idle();   /* about 1 ms */
     }
@@ -453,9 +506,32 @@ void mp_slippi_online_frame_end(void)
         return;
     }
     frame = global_frame();
+    /* Running ahead: Dolphin halts up to 5 frames when more than 10 ms ahead
+     * on the first 120 frames, then only slows its clock, by up to 0.5 % when
+     * more than 8 ms ahead. The 3DS drops pad samples instead: whole frames
+     * early on, then at most one frame per 180 (about 0.55 %). The offset is
+     * noisy (both 3DS peers of a test pair read about +12 ms), so later drops
+     * stay rare. */
+    if (frame % 30 == 0 && on.drop_samples == 0 && !on.advancing) {
+        int offset = mp_platform_slippi_net_time_offset_us();
+        int n = 0;
+        if (frame <= 120 && offset > 10000) {
+            n = (offset - 10000) / 16683 + 1;
+            n = n > 5 ? 5 : n;
+        } else if (frame > 120 && offset > 8000 && frame - on.last_drop_frame >= 180) {
+            n = 1;
+        }
+        if (n > 0) {
+            on.drop_samples = n;
+            on.last_drop_frame = frame;
+            if (on.dropped < 20 || frame % 600 == 0) {
+                logf_("Slippi online: %d us ahead at frame %d; dropping %d frames\n", offset, frame, n);
+            }
+        }
+    }
     /* As Dolphin: no advancing before frame 120; the PC's own start-up
      * stalls line the two games up first. */
-    if (frame > 120 && frame % 30 == 0 && !on.advancing) {
+    if (frame > 120 && frame % 30 == 0 && !on.advancing && on.drop_samples == 0) {
         int offset = mp_platform_slippi_net_time_offset_us();
         if (offset < -(16683 + 10000)) {
             int n = -offset / 16683;
@@ -537,12 +613,19 @@ int mp_slippi_online_wait_match(void)
             return 0;
         }
     } else {
-        mp_platform_slippi_net_new_game();
+        /* The next game. No reset here: the network layer already reset at
+         * the last game's frame 1 (Dolphin's StartSlippiGame), and the
+         * opponent's selections for this game may have arrived during the
+         * results screen; clearing them would wait forever. */
         on.selections_sent = 0;
     }
     for (;;) {
         int status;
         mp_platform_slippi_net_poll();
+        if ((polls & 15) == 0) {
+            mp_platform_slippi_wait_poll();
+            mp_platform_idle();
+        }
         status = mp_platform_slippi_net_status();
         if (status != last_status) {
             last_status = status;
@@ -578,7 +661,7 @@ int mp_slippi_online_wait_match(void)
             logf_("Slippi online: match ready, stage %d\n", (on.block[0xE] << 8) | on.block[0xF], 0, 0);
             return 1;
         }
-        if (++polls % 600000 == 0) {
+        if (++polls % 160000 == 0) {
             logf_("Slippi online: still waiting (status %d)\n", status, 0, 0);
         }
     }
@@ -636,8 +719,8 @@ void mp_slippi_online_start_melee(StartMeleeData* data)
     on.desync_write_idx = 0;
     on.disconnected = on.disconnect_shown = on.desync_shown = on.game_over = on.game_end_frame = 0;
     on.skips = on.skip_run = on.frames = on.waits = on.wait_ms = on.longest_wait_ms = on.no_sample_bodies = 0;
-    on.advance_left = on.advance_gap = on.advancing = 0;
-    on.advances = 0;
+    on.advance_left = on.advance_gap = on.advancing = on.drop_samples = on.last_drop_frame = 0;
+    on.advances = on.dropped = 0;
     *seed_ptr = on.rng_offset;
     /* No transformation from a held A. */
     for (i = 0; i < 4; i++) {
@@ -663,7 +746,8 @@ void mp_slippi_online_match_exit(void)
     logf_("Slippi online: match exit after %d frames, %d waits for the opponent, desync %d\n", (int) on.frames,
           (int) on.waits, on.desync_shown);
     logf_("Slippi online: waited %d ms in total, longest %d ms\n", (int) on.wait_ms, (int) on.longest_wait_ms, 0);
-    logf_("Slippi online: %d extra frames run to catch up\n", (int) on.advances, 0, 0);
+    logf_("Slippi online: %d extra frames run to catch up, %d dropped to wait for the opponent\n",
+          (int) on.advances, (int) on.dropped, 0);
     on.active = 0;
 }
 

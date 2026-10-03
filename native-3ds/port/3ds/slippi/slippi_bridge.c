@@ -241,20 +241,31 @@ int slippi_net_send_inputs(int frame, int delay, int finalized_frame, unsigned c
     sp_lock();
     if (g->status != SLIPPI_STATUS_CONNECTED) { sp_unlock(); return 3; }
     /* Dolphin runs StartSlippiGame on every frame-1 call; nothing is queued yet then. */
-    if (frame == 1 && g->last_queued_frame == 0) {
+    /* A new game: frame 1 again (the first call queues frames 1..1+delay,
+     * so retries of frame 1 see last_queued_frame == 1 + delay). The old
+     * test, last_queued_frame == 0, only held for the first game. */
+    if (frame == 1 && g->last_queued_frame != 1 + delay) {
         slippi_start_game_locked();
         stall_frames = frames_to_skip = is_currently_skipping = 0;
     }
+    /* Our pad for this frame goes out before we wait for the opponent's,
+     * once per frame (retries of the same frame only re-send). Waiting first
+     * deadlocks two lockstep peers (3DS vs 3DS); Dolphin never waits. */
+    int cf = g->cfg.send_checksum ? finalized_frame : 0;
+    unsigned ck = g->cfg.send_checksum ? checksum : 0;
+    int queued = 0;
+    if (frame + delay > g->last_queued_frame) {
+        slippi_send_pad_locked(frame + delay, local_pad12, cf, ck);
+        queued = 1;
+    }
     int disconnect;
     if (should_skip(frame, &disconnect)) {
-        if (!disconnect) slippi_p2p_send_pads();   /* SendSlippiPad(nullptr) */
+        /* Retries arrive about every millisecond while the engine waits; the
+         * network thread re-sends un-acked pads every 16.7 ms (auto_resend). */
         sp_unlock();
         return disconnect ? 3 : 2;
     }
-    int cf = g->cfg.send_checksum ? finalized_frame : 0;
-    unsigned ck = g->cfg.send_checksum ? checksum : 0;
-    if (frame + delay > g->last_queued_frame) slippi_send_pad_locked(frame + delay, local_pad12, cf, ck);
-    else slippi_p2p_send_pads();
+    if (!queued) slippi_p2p_send_pads();
     if (remote_pad12_out) {
         slippi_remote_pad_locked(frame, remote_pad12_out);
         memset(remote_pad12_out + 8, 0, 4);

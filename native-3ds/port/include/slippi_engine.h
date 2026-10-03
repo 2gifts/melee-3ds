@@ -16,6 +16,8 @@ int mp_platform_slippi_file_write(const char* path, const void* data, unsigned s
 void mp_platform_slippi_unlimited(void);
 /* Boot menu result: 0 not shown, 1 play online, 2 play offline. */
 int mp_platform_slippi_session(void);
+/* While waiting without drawing: HOME, power, SELECT (quit). */
+void mp_platform_slippi_wait_poll(void);
 
 /* ---- replay playback (port/engine/slippi/replay.c) ---- */
 struct Fighter;

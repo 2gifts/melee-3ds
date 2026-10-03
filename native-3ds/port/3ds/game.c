@@ -70,6 +70,18 @@ volatile unsigned mp_test_stall;
 volatile unsigned mp_test_suspend,mp_test_suspends; /* HOME Menu suspend stand-in (1 with drain, 2 without) */
 #endif
 unsigned mp_native_frame_number(void){return engine_frames;}
+/* Slippi experiment: called while the engine waits for the opponent
+ * (matchmaking, the next game, or a late remote pad), when no frame is drawn.
+ * Keeps HOME, the power button and SELECT (quit) working, as frame_main does. */
+void mp_native_log(const char*);
+void mp_native_slippi_wait_poll(void){
+    hidScanInput();
+    unsigned held=hidKeysHeld();
+    if(!aptMainLoop()||((hidKeysDown()&KEY_SELECT)&&!(held&(KEY_ZL|KEY_ZR)))){
+        extern void mp_game_card_flush(void);mp_game_card_flush();
+        mp_native_log("Slippi: quit while waiting for the opponent\n");
+        exit_requested=1;longjmp(failure_return,1);}
+}
 void mp_native_log(const char*);
 #include "frame_rate.h"
 static void flush_log(void);

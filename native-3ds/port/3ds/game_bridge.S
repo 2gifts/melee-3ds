@@ -118,6 +118,7 @@ SDKBRIDGE mp_platform_slippi_file_size,mp_native_slippi_file_size
 SDKBRIDGE mp_platform_slippi_file_write,mp_native_slippi_file_write
 SDKBRIDGE mp_platform_slippi_unlimited,mp_native_slippi_unlimited
 SDKBRIDGE mp_platform_slippi_session,mp_native_slippi_session
+SDKBRIDGE mp_platform_slippi_wait_poll,mp_native_slippi_wait_poll
 SDKBRIDGE mp_be_sin,sin
 SDKBRIDGE mp_be_cos,cos
 SDKBRIDGE mp_be_tan,tan
