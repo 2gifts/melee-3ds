@@ -423,6 +423,123 @@ void mp_bottom_notice(uint16_t* pixels,const char* title,const char* lead,const 
     fit(17,96,line1,14,286,ink);fit(17,122,line2,12,286,muted);fit(17,140,line3,12,286,muted);
     rect(0,190,320,50,RGB(10,18,29));rect(0,190,320,1,RGB(80,98,111));fit(17,207,hint,14,286,gold);
 }
+/* ---- Slippi Direct (port/3ds/slippi/slippi_ui.c) ----
+ * The online CSS companion: who you are, who you play, Slippi's three status
+ * lines and the actions; and the connect-code keyboard. Same idiom as the
+ * pages above: header, cards with an accent bar, pills, ink/muted/gold. */
+#include "slippi/slippi_ui.h"
+static const uint16_t slippi_wait=RGB(60,188,255),slippi_done=RGB(51,255,47),slippi_red=RGB(255,86,86);
+/* Key rectangles: 10-column grid (rows 0-3) and the action row. */
+const short slippi_ui_key_rects[SLIPPI_KEYS][4]={
+#define K(c,r) {(short)(5+(c)*31),(short)(76+(r)*27),29,24}
+    K(0,0),K(1,0),K(2,0),K(3,0),K(4,0),K(5,0),K(6,0),K(7,0),K(8,0),K(9,0),
+    K(0,1),K(1,1),K(2,1),K(3,1),K(4,1),K(5,1),K(6,1),K(7,1),K(8,1),K(9,1),
+    K(0,2),K(1,2),K(2,2),K(3,2),K(4,2),K(5,2),K(6,2),K(7,2),K(8,2),K(9,2),
+    K(0,3),K(1,3),K(2,3),K(3,3),K(4,3),K(5,3),K(6,3),
+#undef K
+    {222,157,91,24},{5,185,74,25},{83,185,74,25},{161,185,74,25},{239,185,74,25}};
+enum{SL_ACTION_X=8,SL_ACTION_Y=187,SL_ACTION_W=190,SL_ACTION_H=23,SL_SIDE_X=204,SL_SIDE_W=108};
+static int slippi_online_page(const MPBottomState* s){
+    const SlippiUiView* v=slippi_ui_view();
+    return s->scene==8&&s->mode==8&&(v->page==SLIPPI_PAGE_CSS||v->page==SLIPPI_PAGE_CODE);
+}
+static void status_line(int y,int done,const char* s,int spinner){
+    text(17,y,done?"-":spinner?"x":"+",12,done?slippi_done:slippi_wait);fit(33,y,s,12,270,ink);
+}
+/* The primary action for the current state, as Slippi's status line 2 / hints. */
+static const char* slippi_action(const SlippiUiView* v,int* enabled){
+    *enabled=1;
+    switch(v->phase){
+    case SLIPPI_PHASE_IDLE:*enabled=v->ready;return "ENTER CODE";
+    case SLIPPI_PHASE_SEARCH:return "CANCEL";
+    case SLIPPI_PHASE_ERROR:return "CLEAR ERROR";
+    default:if(v->locked){*enabled=0;return "LOCKED IN";}
+        return v->need_stage&&!v->chose_stage?"SELECT STAGE":"LOCK IN";
+    }
+}
+static void slippi_css_page(void){
+    const SlippiUiView* v=slippi_ui_view();char b[64];
+    static const char* sides[]={"OFFLINE","SEARCHING","CONNECTED","ERROR"};
+    header("DIRECT MODE",sides[v->phase&3]);
+    /* You */
+    rect(8,37,304,46,card_color);rect(8,37,3,46,gold);rect(11,37,301,1,RGB(70,85,103));
+    text(19,42,"USER",11,muted);fit(19,56,v->user_name[0]?v->user_name:"NO SLIPPI ACCOUNT",17,180,v->user_name[0]?ink:muted);
+    right(304,42,"CONNECT CODE",11,muted);right(304,58,v->user_code[0]?v->user_code:"-",15,gold);
+    /* Opponent */
+    int connected=v->phase==SLIPPI_PHASE_CONNECTED;
+    rect(8,88,304,46,card_color);rect(8,88,3,46,connected?colors[1]:line_color);rect(11,88,301,1,RGB(70,85,103));
+    text(19,93,connected?"PLAYING":"OPPONENT",11,muted);
+    if(connected){fit(19,107,v->opponent_name[0]?v->opponent_name:v->opponent_code,17,180,ink);
+        right(304,93,v->opponent_code,11,gold);snprintf(b,sizeof(b),"PING %d MS",v->ping_ms);right(304,111,b,12,muted);}
+    else if(v->phase==SLIPPI_PHASE_SEARCH){fit(19,107,v->target,17,180,ink);right(304,111,"WAITING",12,muted);}
+    else fit(19,107,"ENTER THEIR CONNECT CODE",14,280,muted);
+    /* Status lines (LoadCSSText.asm) or the error */
+    if(v->phase==SLIPPI_PHASE_ERROR){
+        text(17,140,"ERROR",12,slippi_red);
+        /* Word-wrap the server's message over three lines. */
+        const char* e=v->error[0]?v->error:"UNKNOWN ERROR";int y=155;
+        while(*e&&y<=185){char line[48];int n=0,last=-1;
+            while(e[n]&&n<46){if(e[n]==' ')last=n;line[n]=e[n];n++;line[n]=0;if(width(line,11)>286)break;}
+            if(e[n]&&last>0)n=last;line[n]=0;fit(17,y,line,11,286,ink);e+=n;while(*e==' ')e++;y+=15;}
+    }else{
+        status_line(140,v->ready,v->ready?"CHARACTER SELECTED":"SELECT YOUR CHARACTER",v->spinner);
+        if(v->locked)status_line(155,1,"LOCKED IN",0);
+        else{const char* what=v->phase==SLIPPI_PHASE_IDLE?"PRESS START TO ENTER CODE":
+                v->need_stage&&!v->chose_stage?"PRESS START TO SELECT STAGE":"PRESS START TO LOCK IN";
+            status_line(155,0,what,v->spinner);}
+        if(v->phase==SLIPPI_PHASE_SEARCH){snprintf(b,sizeof(b),v->net_status==2?"CONNECTING TO %s":"SEARCHING FOR %s",v->target);status_line(170,0,b,v->spinner);}
+        else if(connected)status_line(170,0,"WAITING ON OPPONENT",v->spinner);
+    }
+    /* Actions */
+    int enabled;const char* action=slippi_action(v,&enabled);
+    if(enabled)pill(SL_ACTION_X,SL_ACTION_Y,SL_ACTION_W,SL_ACTION_H,action,13,1);
+    else{rect(SL_ACTION_X,SL_ACTION_Y,SL_ACTION_W,SL_ACTION_H,card_color);center(SL_ACTION_X+SL_ACTION_W/2,SL_ACTION_Y+5,action,13,muted);}
+    if(connected){
+        rect(SL_SIDE_X,SL_ACTION_Y,SL_SIDE_W,SL_ACTION_H,v->hold_z?RGB(90,30,34):dark);
+        if(v->hold_z)rect(SL_SIDE_X,SL_ACTION_Y+SL_ACTION_H-3,SL_SIDE_W*v->hold_z/0x30,3,slippi_red);
+        center(SL_SIDE_X+SL_SIDE_W/2,SL_ACTION_Y+5,"DISCONNECT",13,ink);
+    }else{
+        const char* hint=v->phase==SLIPPI_PHASE_SEARCH?"Z: CANCEL":v->phase==SLIPPI_PHASE_ERROR?"Z: CLEAR":"START: ENTER CODE";
+        center(SL_SIDE_X+SL_SIDE_W/2,SL_ACTION_Y+6,hint,11,muted);
+    }
+}
+static void slippi_code_page(void){
+    const SlippiUiView* v=slippi_ui_view();
+    header("CONNECT CODE","DIRECT");
+    rect(8,35,304,36,card_color);rect(8,35,3,36,gold);rect(11,35,301,1,RGB(70,85,103));
+    int x=19;text(x,42,v->typed,22,ink);x+=width(v->typed,22);
+    size_t n=strlen(v->typed);
+    if(v->suggestion[0]&&strlen(v->suggestion)>n)text(x,42,v->suggestion+n,22,muted);
+    if(n<SLIPPI_CODE_MAX)rect(x+1,64,12,2,v->spinner?gold:card_color);
+    right(306,40,v->suggestion[0]?"X: USE":"",10,gold);right(306,54,"L/R: RECENT",10,muted);
+    for(int i=0;i<SLIPPI_KEYS;++i){
+        const short* r=slippi_ui_key_rects[i];char label[8];const char* s=label;char c=slippi_ui_keys[i];
+        switch(c){case '\b':s="ERASE";break;case '\x1b':s="CANCEL";break;case '<':s="L OLDER";break;case '>':s="R NEWER";break;case '\r':s="OK";break;
+            default:label[0]=c;label[1]=0;}
+        int active=i==v->key,small=c=='\r'||c=='\b'||c=='\x1b'||c=='<'||c=='>';
+        if(c=='\x1b'&&!active){rect(r[0],r[1],r[2],r[3],dark);center(r[0]+r[2]/2,r[1]+(r[3]-12)/2,s,12,muted);}
+        else pill(r[0],r[1],r[2],r[3],s,small?12:15,active);
+    }
+}
+/* A touch on an online page (not the footer); 1 if used. */
+unsigned mp_bottom_online_touch(unsigned x,unsigned y){
+    const SlippiUiView* v=slippi_ui_view();
+    if(y>=214)return 0;
+    if(v->page==SLIPPI_PAGE_CODE){
+        for(int i=0;i<SLIPPI_KEYS;++i){const short* r=slippi_ui_key_rects[i];
+            if(inside(x,y,r[0],r[1],r[2],r[3])){slippi_ui_type(i);return 1;}}
+        if(inside(x,y,8,35,304,36))slippi_ui_use_suggestion();
+        return 1;
+    }
+    if(inside(x,y,SL_ACTION_X,SL_ACTION_Y,SL_ACTION_W,SL_ACTION_H)){
+        if(v->phase==SLIPPI_PHASE_SEARCH||v->phase==SLIPPI_PHASE_ERROR)slippi_ui_cancel();
+        else slippi_ui_press_start();
+        return 1;
+    }
+    if(v->phase==SLIPPI_PHASE_CONNECTED&&inside(x,y,SL_SIDE_X,SL_ACTION_Y,SL_SIDE_W,SL_ACTION_H)){slippi_ui_cancel();return 1;}
+    return 1;
+}
+unsigned mp_bottom_online_active(const MPBottomState* s){return slippi_online_page(s);}
 void mp_bottom_draw(uint16_t* pixels,const MPBottomState* s,unsigned fps,unsigned show_fps,unsigned expanded,unsigned rate,unsigned guide){
     canvas=pixels;background();
     int battle=s->scene==2||s->scene==3||s->scene==4||s->scene==44;
@@ -434,6 +551,8 @@ void mp_bottom_draw(uint16_t* pixels,const MPBottomState* s,unsigned fps,unsigne
         if(count<=2){unsigned row=0;for(unsigned i=0;i<4;++i)if(s->players[i].kind!=3)card(8,38+(row++)*86,304,80,&s->players[i],i,s->scene==4?2:1,s->stock_mode,s->stamina);
             if(!count)center(160,100,"GET READY",28,gold);
         }else for(unsigned i=0;i<4;++i)card(8+(i%2)*156,38+(i/2)*86,148,80,&s->players[i],i,1,s->stock_mode,s->stamina);
+    }else if(slippi_online_page(s)){
+        if(slippi_ui_view()->page==SLIPPI_PAGE_CODE)slippi_code_page();else slippi_css_page();
     }else if(s->scene==8){
         header("SELECT YOUR FIGHTER",mode_title(s->mode));
         for(unsigned i=0;i<4;++i)card(8+(i%2)*156,38+(i/2)*76,148,70,&s->players[i],i,0,0,0);

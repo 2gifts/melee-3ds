@@ -64,6 +64,7 @@ static struct {
     char opponent[24];
     int character, color, stage, stage_select, delay_setting, record;
     int test_inputs, test_end_frame;   /* automated tests (config.ini) */
+    int auto_match;           /* auto_match=1: boot straight into the match (tests) */
     int prefetched_remote;
     int started;              /* matchmaking started */
     int selections_sent;
@@ -168,6 +169,8 @@ static void load_config(void)
             on.test_inputs = parse_int(line + 12, 0);
         } else if (strncmp(line, "test_end_frame=", 15) == 0) {
             on.test_end_frame = parse_int(line + 15, 0);
+        } else if (strncmp(line, "auto_match=", 11) == 0) {
+            on.auto_match = parse_int(line + 11, 0);
         } else if (strncmp(line, "record=", 7) == 0) {
             on.record = parse_int(line + 7, 0);
         } else if (strncmp(line, "delay=", 6) == 0) {
@@ -621,7 +624,7 @@ void mp_slippi_tick_without_draw(void)
 
 void mp_slippi_online_boot_mode(u8* mode)
 {
-    if (mp_slippi_online_configured() && !mp_slippi_replay_on()) {
+    if (mp_slippi_online_configured() && on.auto_match && !mp_slippi_replay_on()) {
         *mode = GM_DEBUG_VS;
     }
 }
@@ -708,6 +711,28 @@ int mp_slippi_online_wait_match(void)
 const unsigned char* mp_slippi_online_pending_block(void)
 {
     return on.pending ? on.block : NULL;
+}
+
+/* The menu flow (online_mode.c): both players locked in on the CSS. */
+int mp_slippi_online_take_match(void)
+{
+    if (mp_platform_slippi_net_status() != 3 || !mp_platform_slippi_net_match_block(on.block)) {
+        return 0;
+    }
+    load_config();
+    on.pending = 1;
+    logf_("Slippi load: %d files (%d KB) in the RAM cache\n", (int) mp_platform_slippi_prefetch_stat(0),
+          (int) mp_platform_slippi_prefetch_stat(1), 0);
+    load_mark("match ready", 1);
+    mp_platform_slippi_load_log(1);
+    on.load_logging = 1;
+    logf_("Slippi online: match ready, stage %d\n", (on.block[0xE] << 8) | on.block[0xF], 0, 0);
+    return 1;
+}
+
+int mp_slippi_online_local_index(void)
+{
+    return on.local_index;
 }
 
 /* ---- InitOnlinePlay (8016E748) ---- */

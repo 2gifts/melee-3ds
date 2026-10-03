@@ -222,6 +222,9 @@ SDKBRIDGE mp_platform_slippi_net_remote_checksum_frame,slippi_net_remote_checksu
 SDKBRIDGE mp_platform_slippi_net_remote_checksum_value,slippi_net_remote_checksum_value
 SDKBRIDGE mp_platform_slippi_net_ping_ms,slippi_net_ping_ms
 SDKBRIDGE mp_platform_slippi_net_time_offset_us,slippi_net_time_offset_us
+SDKBRIDGE mp_platform_slippi_ui_css,slippi_ui_css
+SDKBRIDGE mp_platform_slippi_ui_event,slippi_ui_event
+SDKBRIDGE mp_platform_slippi_ui_remote,slippi_ui_remote
 /* Six arguments: the fifth and sixth arrive on the caller's stack as
  * big-endian words. Load them while still big-endian, then store them
  * little-endian where the native callee expects its stack arguments. */

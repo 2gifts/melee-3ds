@@ -100,7 +100,7 @@ def main():
         home = emu.prepare('pair-' + name, port, graphics='opengl')
         sd = emu.sd(home)
         write_profile(sd / 'slippi', who, opp, args, args.delay,
-                      ['color=0', 'stage_select=1', 'boot_menu=0', 'record=1', *extra])
+                      ['color=0', 'stage_select=1', 'auto_match=1', 'record=1', *extra])
         for f in ('game.log', 'slippi/online-out.bin'):
             (sd / f).unlink(missing_ok=True)
         sides.append(dict(name=name, home=home, sd=sd, port=port, proc=None, exits=0, starts=0, copied=0))

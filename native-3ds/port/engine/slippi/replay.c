@@ -412,16 +412,22 @@ void mp_slippi_replay_boot_mode(u8* mode)
  * match state's own. */
 void mp_slippi_replay_prepare_scene(void)
 {
-    const u8* info;
+    if (mp_slippi_replay_on()) {
+        mp_slippi_prepare_match_files(blob + 8);
+    } else if (mp_slippi_online_wait_match()) {
+        mp_slippi_prepare_match_files(mp_slippi_online_pending_block());
+    }
+}
+
+/* Both fighters and the stage into the preload cache, and their sound banks
+ * (also the online menu flow's CSS exit, online_mode.c). */
+void mp_slippi_prepare_match_files(const unsigned char* info)
+{
     PreloadedGameModeState* scene;
     u64 mask = 0;
     int i;
 
-    if (mp_slippi_replay_on()) {
-        info = blob + 8;
-    } else if (mp_slippi_online_wait_match()) {
-        info = mp_slippi_online_pending_block();
-    } else {
+    if (info == NULL) {
         return;
     }
     scene = lbDvd_GetPreloadCacheScene();

@@ -20,6 +20,9 @@ unsigned mp_bottom_hit(unsigned x, unsigned y);
  * footer, 1 if used; reset whenever the page opens or closes. */
 unsigned mp_bottom_guide_touch(unsigned x, unsigned y);
 void mp_bottom_guide_reset(void);
+/* Slippi Direct pages (online CSS, code keyboard): touch, and whether shown. */
+unsigned mp_bottom_online_touch(unsigned x, unsigned y);
+unsigned mp_bottom_online_active(const MPBottomState* state);
 void mp_native_bottom_init(void);
 void mp_native_bottom_art(void);
 void mp_native_bottom_frame(unsigned fps, unsigned expanded, unsigned rate, unsigned touch, unsigned x, unsigned y);

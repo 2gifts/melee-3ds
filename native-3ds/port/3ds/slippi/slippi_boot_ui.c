@@ -169,15 +169,21 @@ void slippi_boot_menu(void)
         c.stage = key_int(cfg, "stage", c.stage);
         c.delay = key_int(cfg, "delay", c.delay);
         if (key_int(cfg, "selftest", 0)) { free(cfg); return; }
-        if (!key_int(cfg, "boot_menu", 1)) {
-            /* Automated online runs: same read-ahead, no menu. */
+        if (key_int(cfg, "auto_match", 0)) {
+            /* Automated online runs (straight into the match): the read-ahead. */
             if (c.opponent[0] && key_int(cfg, "prefetch", 1)) slippi_prefetch_match(c.character, c.color, c.stage);
+            free(cfg);
+            return;
+        }
+        if (!key_int(cfg, "boot_menu", 0)) {
+            /* 1P -> Online Play replaces this console menu (boot_menu=1 keeps it). */
             free(cfg);
             return;
         }
         prefetch_on = key_int(cfg, "prefetch", 1);
         free(cfg);
     }
+    else return;
     if (c.character < 0 || c.character > 25) c.character = 2;
     if (c.color < 0 || c.color >= costumes[c.character]) c.color = 0;
     if (c.delay < 1 || c.delay > 15) c.delay = 3;

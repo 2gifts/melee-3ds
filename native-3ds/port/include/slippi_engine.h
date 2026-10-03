@@ -60,5 +60,16 @@ void mp_slippi_record_online_begin(void);
 void mp_slippi_record_online_frame(int engine_frame);
 void mp_slippi_record_online_inputs(const unsigned char* port0, const unsigned char* port1, unsigned checksum);
 void mp_slippi_record_online_end(void);
+/* The menu flow (online_mode.c): take the negotiated match block (1 = ready),
+ * this console's port index in it, the files a match needs. */
+int mp_slippi_online_take_match(void);
+int mp_slippi_online_local_index(void);
+void mp_slippi_prepare_match_files(const unsigned char* info);
+struct PlayerInitData;
+int mp_slippi_css_online(void);
+int mp_slippi_css_frame(int ready, struct PlayerInitData* local, struct PlayerInitData* remote,
+                        unsigned trigger, unsigned held);
+int mp_slippi_sss_alt_mode(void);
+void mp_slippi_sss_toggle_alt(void);
 
 #endif

@@ -56,6 +56,8 @@ void mp_native_bottom_frame(unsigned fps,unsigned expanded,unsigned rate,unsigne
 #endif
     /* The open CONTROLS page: tabs, button customization, tap jump. */
     if(touch&&guide&&mp_bottom_guide_touch(x,y)){dirty=1;touch=0;}
+    /* Slippi Direct: the online CSS and the code keyboard, as last drawn. */
+    if(touch&&!guide&&mp_bottom_online_active(&previous)&&mp_bottom_online_touch(x,y)){dirty=1;touch=0;}
     if(touch){switch(mp_bottom_hit(x,y)){
         case MP_BOTTOM_FPS:show_fps^=1;dirty=1;break;
         case MP_BOTTOM_VIEW:mp_native_toggle_display();break;
@@ -87,6 +89,8 @@ void mp_native_bottom_frame(unsigned fps,unsigned expanded,unsigned rate,unsigne
 #ifdef MP_SMOKE_TEST
     mp_bottom_observed=state;mp_bottom_fps_visible=show_fps;mp_bottom_guide_visible=guide;
 #endif
+    {extern unsigned slippi_ui_serial(void);static unsigned online_serial;unsigned serial=slippi_ui_serial();
+     if(serial!=online_serial){online_serial=serial;dirty=1;}}
     unsigned shown=show_fps?fps:0;
     if(shown!=last_fps||expanded!=last_view||rate!=last_rate||
         (guide?state.scene!=previous.scene:memcmp(&state,&previous,sizeof(state))))dirty=1;

@@ -77,4 +77,15 @@ int mp_platform_slippi_net_remote_character(void);
 /* Time offset (Dolphin CalcTimeOffsetUs): positive = we are ahead. */
 int mp_platform_slippi_net_time_offset_us(void);
 
+/* The Direct menu flow (port/3ds/slippi/slippi_ui.c, names without mp_platform_).
+ * ui_css: packed = ready | ckind << 8 | color << 16; trigger/held = the local
+ * port's HSD buttons. Returns flags: 1 locked in, 2 start the match, 4 go to
+ * the SSS; 0x100/0x200/0x400/0x800 = forward/back/error/move sound.
+ * ui_event: 1 CSS entered, 2 left to the menus, 3 stage picked (stage |
+ * alt << 16, -1 = none), 4 game result (1 won), 5 match scene.
+ * ui_remote: the opponent's character | colour << 8 once known, else -1. */
+int mp_platform_slippi_ui_css(int packed, int trigger, int held);
+void mp_platform_slippi_ui_event(int event, int arg);
+int mp_platform_slippi_ui_remote(void);
+
 #endif
