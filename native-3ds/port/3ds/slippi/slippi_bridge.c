@@ -278,6 +278,16 @@ int slippi_net_remote_checksum(int *unused) { (void)unused; return slippi_remote
 int slippi_net_remote_checksum_frame(void) { return slippi_remote_checksum_frame(); }
 unsigned slippi_net_remote_checksum_value(void) { return slippi_remote_checksum(); }
 int slippi_net_ping_ms(void) { return slippi_ping_us() / 1000; }
+/* The opponent's character once they picked one (for prefetching), else -1. */
+int slippi_net_remote_character(void)
+{
+    slippi_state *g = &g_slippi;
+    sp_lock();
+    int c = g->remote_sel.is_character_selected ? (int)g->remote_sel.character_id : -1;
+    sp_unlock();
+    return c;
+}
+
 /* Dolphin's CalcTimeOffsetUs: positive when we are ahead of the opponent. */
 int slippi_net_time_offset_us(void)
 {

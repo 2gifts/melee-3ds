@@ -62,3 +62,58 @@ void mp_native_slippi_unlimited(void)
     mp_test_frame_limit = 0;
 #endif
 }
+
+#ifdef __3DS__
+#include <3ds.h>
+#endif
+extern volatile unsigned mp_file_log_opens;
+extern unsigned mp_file_sd_opens, mp_file_sd_open_ticks, mp_file_sd_bytes;
+
+void mp_native_slippi_load_log(int on)
+{
+    mp_file_log_opens = on ? 1u : 0u;
+}
+
+/* Milliseconds since boot, and the SD totals, for load timing lines. */
+unsigned mp_native_slippi_ms(void)
+{
+#ifdef __3DS__
+    return (unsigned) (svcGetSystemTick() / (SYSCLOCK_ARM11 / 1000));
+#else
+    return 0;
+#endif
+}
+
+unsigned mp_native_slippi_sd_stat(int which)
+{
+    return which == 0 ? mp_file_sd_opens : which == 1 ? mp_file_sd_open_ticks / 1000 : mp_file_sd_bytes;
+}
+
+void mp_native_file_prefetch(int id);
+extern unsigned mp_prefetch_hits;
+
+void mp_native_file_prefetch_pause(int paused);
+
+void mp_native_slippi_prefetch_pause(int paused)
+{
+    mp_native_file_prefetch_pause(paused);
+}
+
+void mp_native_slippi_prefetch(int id)
+{
+    mp_native_file_prefetch(id);
+}
+
+unsigned mp_native_slippi_prefetch_hits(void)
+{
+    return mp_prefetch_hits;
+}
+
+/* 0: files cached, 1: KB cached. */
+extern unsigned mp_prefetch_files;
+unsigned mp_native_prefetch_bytes(void);
+unsigned mp_native_slippi_prefetch_stat(int which)
+{
+    unsigned mp_native_prefetch_queue(int which);
+    return which == 0 ? mp_prefetch_files : which == 1 ? mp_native_prefetch_bytes() / 1024 : mp_native_prefetch_queue(which - 2);
+}

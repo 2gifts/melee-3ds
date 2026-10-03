@@ -109,6 +109,7 @@ static int load(void)
         off += 8 + blob[off + 4] * ENTRY_SIZE;
     }
     mp_platform_slippi_unlimited();
+    mp_platform_slippi_load_log(1);   /* which files a match load opens */
     {
         /* sdmc:/3ds/melee/slippi/dump.txt "FIRST LAST": dump every fighter's
          * whole struct at its post-frame point for those replay frames. */

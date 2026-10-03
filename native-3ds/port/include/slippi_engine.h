@@ -18,6 +18,19 @@ void mp_platform_slippi_unlimited(void);
 int mp_platform_slippi_session(void);
 /* While waiting without drawing: HOME, power, SELECT (quit). */
 void mp_platform_slippi_wait_poll(void);
+/* Match-load diagnostics: log SD opens; a millisecond clock; SD totals
+ * (0 opens, 1 ms spent opening, 2 bytes read). */
+void mp_platform_slippi_load_log(int on);
+unsigned mp_platform_slippi_ms(void);
+unsigned mp_platform_slippi_sd_stat(int which);
+/* Read a disc file (mp_platform_file_id) into the RAM prefetch cache in the
+ * background; later reads of it never touch the SD card. */
+void mp_platform_slippi_prefetch(int id);
+unsigned mp_platform_slippi_prefetch_hits(void);
+/* Hold the background reader while a match loads or runs. */
+void mp_platform_slippi_prefetch_pause(int paused);
+/* 0: files cached so far, 1: KB cached. */
+unsigned mp_platform_slippi_prefetch_stat(int which);
 
 /* ---- replay playback (port/engine/slippi/replay.c) ---- */
 struct Fighter;

@@ -36,6 +36,7 @@ def main():
     ap.add_argument('--mm-port', type=int, default=43113)
     ap.add_argument('--code-encoding', default='fullwidth')
     ap.add_argument('--show', action='store_true')
+    ap.add_argument('--peer-wait', type=float, default=2, help='seconds before the fake PC peer starts (its player picking)')
     args = ap.parse_args()
 
     out = OUT / 'game'
@@ -54,7 +55,7 @@ def main():
     log = sd / 'game.log'
     log.unlink(missing_ok=True)
     proc = emu.launch(home, Path(args.dsx).resolve(), hidden=not args.show)
-    time.sleep(2)   # the 3DS tickets first (the fake MM gives isHost to the first ticket)
+    time.sleep(args.peer_wait)   # the 3DS tickets first (the fake MM gives isHost to the first ticket)
     procs['b'] = start([TOOLS / 'slippi_fake_peer.exe', '--dir', out / 'b', '--frames', args.frames,
                         '--linger', 5], out / 'peer_b.log')
     deadline = time.monotonic() + args.seconds

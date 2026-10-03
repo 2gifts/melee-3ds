@@ -34,6 +34,33 @@ static struct {int id;unsigned char *data;}menu_cache[MENU_FILES];
 static unsigned menu_cache_count,menu_cache_bytes;
 unsigned mp_file_cache_hits,mp_file_cache_read_bytes,mp_file_sd_reads,mp_file_sd_bytes;
 unsigned mp_file_sd_opens,mp_file_sd_open_ticks; /* stream opens, microseconds opening */
+/* Slippi experiment: log each stream open (name, size, ms) while a match loads. */
+volatile unsigned mp_file_log_opens;
+unsigned mp_file_log_bytes;
+/* Slippi experiment: files read into RAM ahead of a match by a background
+ * thread (while matchmaking and waiting for the opponent), kept for later
+ * matches. On the console every file open costs 130-250 ms and a match load
+ * opens about 25 files, so a cold load takes several seconds while the PC
+ * peer, which loads in about one, waits at its first frame. */
+enum {PREFETCH_MAX=96,PREFETCH_BUDGET=32*1024*1024,PREFETCH_CHUNK=256*1024};
+static struct {int id;unsigned char *data;} prefetch[PREFETCH_MAX];
+static unsigned prefetch_count,prefetch_bytes;   /* published entries */
+static int prefetch_queue[PREFETCH_MAX];
+static unsigned prefetch_queued,prefetch_taken;
+static volatile unsigned prefetch_paused;   /* a match is loading or running */
+volatile unsigned mp_pf_step,mp_pf_id;
+unsigned mp_prefetch_hits,mp_prefetch_hit_bytes,mp_prefetch_files;
+unsigned mp_native_prefetch_bytes(void);
+#ifdef __3DS__
+static Thread prefetch_thread;
+static LightEvent prefetch_wake;
+static LightLock prefetch_queue_lock;
+#endif
+static const unsigned char *prefetched(int id){
+    unsigned n=__atomic_load_n(&prefetch_count,__ATOMIC_ACQUIRE);
+    for(unsigned i=0;i<n;++i)if(prefetch[i].id==id)return prefetch[i].data;
+    return NULL;
+}
 #ifdef MP_SMOKE_TEST
 volatile unsigned mp_file_trace;
 #endif
@@ -202,8 +229,14 @@ static Reader *open_reader(int id){
 #endif
     FILE *stream=fopen(files[id].path,"rb");
 #ifdef __3DS__
+    unsigned open_us=(unsigned)((svcGetSystemTick()-start)/(SYSCLOCK_ARM11/1000000));
     __atomic_fetch_add(&mp_file_sd_opens,1,__ATOMIC_RELAXED);
-    __atomic_fetch_add(&mp_file_sd_open_ticks,(unsigned)((svcGetSystemTick()-start)/(SYSCLOCK_ARM11/1000000)),__ATOMIC_RELAXED);
+    __atomic_fetch_add(&mp_file_sd_open_ticks,open_us,__ATOMIC_RELAXED);
+    if(mp_file_log_opens){
+        extern void mp_native_log(const char*);char text[160];
+        snprintf(text,sizeof(text),"Load: open %s (%u bytes) %u.%u ms\n",files[id].name,files[id].size,open_us/1000,open_us/100%10);
+        mp_native_log(text);
+    }
 #endif
     if(!stream)return NULL;
     /* Keep a bounded set of open, buffered streams. HPS playback revisits
@@ -221,6 +254,9 @@ static int native_file_read(int id,void *dst,unsigned n,unsigned offset){
         if(real<n)memset((unsigned char*)dst+real,0,n-real);
         __atomic_fetch_add(&mp_file_cache_hits,1,__ATOMIC_RELAXED);__atomic_fetch_add(&mp_file_cache_read_bytes,real,__ATOMIC_RELAXED);return n;
     }
+    {const unsigned char *cached=prefetched(id);
+     if(cached){memcpy(dst,cached+offset,real);if(real<n)memset((unsigned char*)dst+real,0,n-real);
+        __atomic_fetch_add(&mp_prefetch_hits,1,__ATOMIC_RELAXED);__atomic_fetch_add(&mp_prefetch_hit_bytes,real,__ATOMIC_RELAXED);return n;}}
     Reader *r=open_reader(id);if(!r)return -1;
     if(r->position!=offset&&fseek(r->stream,offset,SEEK_SET))return -1;
     r->position=offset;
@@ -266,6 +302,75 @@ int mp_native_file_read(int id,void *dst,unsigned n,unsigned offset){
     mp_log_phase(previous);return result;
 }
 #ifdef __3DS__
+/* Reads queued files through its own stream, never the shared readers or
+ * their lock: the engine busy-waits for its reads at a higher priority, so a
+ * lock held by this low-priority thread would never be released. It pauses
+ * between pieces while a match loads or runs (mp_native_file_prefetch_pause). */
+static void prefetch_worker(void*unused){
+    (void)unused;
+    for(;;){
+        LightEvent_Wait(&prefetch_wake);
+        for(;;){
+            int id=-1;
+            LightLock_Lock(&prefetch_queue_lock);
+            if(prefetch_taken<prefetch_queued)id=prefetch_queue[prefetch_taken++];
+            LightLock_Unlock(&prefetch_queue_lock);
+            if(id<0)break;
+            mp_pf_step=1;mp_pf_id=id;
+            if(prefetched(id))continue;
+            unsigned size=files[id].size;
+            if(!size||prefetch_bytes+size>PREFETCH_BUDGET||__atomic_load_n(&prefetch_count,__ATOMIC_ACQUIRE)>=PREFETCH_MAX)continue;
+            mp_pf_step=2;
+            unsigned char *data=malloc(size);if(!data)continue;
+            mp_pf_step=3;
+            u64 start=svcGetSystemTick();int ok=1;
+            /* The FS service directly: no newlib stdio, so no stdio locks
+             * shared with the other threads. */
+            const char *path=files[id].path;
+            if(!strncmp(path,"sdmc:",5))path+=5;
+            Handle handle;
+            if(R_FAILED(FSUSER_OpenFileDirectly(&handle,ARCHIVE_SDMC,fsMakePath(PATH_EMPTY,""),fsMakePath(PATH_ASCII,path),FS_OPEN_READ,0))){free(data);continue;}
+            mp_pf_step=4;
+            for(unsigned off=0;off<size&&ok;off+=PREFETCH_CHUNK){
+                while(__atomic_load_n(&prefetch_paused,__ATOMIC_ACQUIRE))svcSleepThread(20000000);
+                unsigned n=size-off<PREFETCH_CHUNK?size-off:PREFETCH_CHUNK;u32 got=0;
+                ok=R_SUCCEEDED(FSFILE_Read(handle,&got,off,data+off,n))&&got==n;
+            }
+            mp_pf_step=5;
+            FSFILE_Close(handle);
+            mp_pf_step=6;
+            if(!ok){free(data);continue;}
+            unsigned slot=__atomic_load_n(&prefetch_count,__ATOMIC_ACQUIRE);
+            prefetch[slot].id=id;prefetch[slot].data=data;prefetch_bytes+=size;
+            __atomic_store_n(&prefetch_count,slot+1,__ATOMIC_RELEASE);
+            (void)start;
+            __atomic_fetch_add(&mp_prefetch_files,1,__ATOMIC_RELAXED);
+        }
+    }
+}
+unsigned mp_native_prefetch_bytes(void){return prefetch_bytes;}
+unsigned mp_native_prefetch_queue(int which){return which==0?prefetch_queued:which==1?prefetch_taken:which==2?mp_pf_step:mp_pf_id;}
+void mp_native_file_prefetch_pause(int paused){
+    __atomic_store_n(&prefetch_paused,paused?1u:0u,__ATOMIC_RELEASE);
+    if(!paused&&prefetch_thread)LightEvent_Signal(&prefetch_wake);
+}
+/* Queue a file (by id) for the RAM prefetch cache; repeats are ignored. */
+void mp_native_file_prefetch(int id){
+    if(id<0||(unsigned)id>=__atomic_load_n(&file_count,__ATOMIC_ACQUIRE)||prefetched(id))return;
+    if(!prefetch_thread){
+        LightEvent_Init(&prefetch_wake,RESET_ONESHOT);LightLock_Init(&prefetch_queue_lock);
+        s32 priority=0x30;svcGetThreadPriority(&priority,CUR_THREAD_HANDLE);
+        /* Below the game's threads: it only uses idle time. */
+        prefetch_thread=threadCreate(prefetch_worker,NULL,65536,priority>0x18?priority-1:priority,-2,false);
+        if(!prefetch_thread)return;
+    }
+    LightLock_Lock(&prefetch_queue_lock);
+    int queued=0;
+    for(unsigned i=prefetch_taken;i<prefetch_queued;++i)if(prefetch_queue[i]==id)queued=1;
+    if(!queued&&prefetch_queued<PREFETCH_MAX)prefetch_queue[prefetch_queued++]=id;
+    LightLock_Unlock(&prefetch_queue_lock);
+    LightEvent_Signal(&prefetch_wake);
+}
 static void file_worker(void*unused){
     (void)unused;
     for(;;){
