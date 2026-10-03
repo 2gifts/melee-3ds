@@ -267,3 +267,11 @@ int slippi_net_remote_checksum(int *unused) { (void)unused; return slippi_remote
 int slippi_net_remote_checksum_frame(void) { return slippi_remote_checksum_frame(); }
 unsigned slippi_net_remote_checksum_value(void) { return slippi_remote_checksum(); }
 int slippi_net_ping_ms(void) { return slippi_ping_us() / 1000; }
+/* Dolphin's CalcTimeOffsetUs: positive when we are ahead of the opponent. */
+int slippi_net_time_offset_us(void)
+{
+    sp_lock();
+    int v = slippi_p2p_time_offset();
+    sp_unlock();
+    return v;
+}

@@ -72,5 +72,7 @@ int mp_platform_slippi_net_remote_checksum(int *unused_must_be_null);
 int mp_platform_slippi_net_remote_checksum_frame(void);
 unsigned mp_platform_slippi_net_remote_checksum_value(void);
 int mp_platform_slippi_net_ping_ms(void);
+/* Time offset (Dolphin CalcTimeOffsetUs): positive = we are ahead. */
+int mp_platform_slippi_net_time_offset_us(void);
 
 #endif

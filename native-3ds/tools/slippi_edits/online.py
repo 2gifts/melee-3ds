@@ -40,6 +40,7 @@ FIXES = {
         # than it simulates): its gameplay-visible side effects.
         ('            if (temp_r25->unk_C != 0) {\n                break;\n            }\n',
          '            if (temp_r25->unk_C != 0) {\n                break;\n            }\n'
+         '            mp_slippi_online_frame_end();\n'
          '            if (i + 1 < pad_queue_count) {\n'
          '                mp_slippi_tick_without_draw();\n'
          '            }\n', 1),

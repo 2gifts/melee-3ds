@@ -55,11 +55,16 @@ static int frame_index = FIRST_FRAME;
 static int terminated;
 static int finished;
 
-/* Flushed every 10 records. On Azahar, a run whose flushes were 16 or
- * 64 KiB stopped advancing after several hundred frames (no end marker,
- * the run timed out); with small writes every replay plays to its end. */
-static u8 out_buf[400];
+/* Replay runs write in 64 KiB pieces. (Long runs that once stalled on Azahar
+ * were paused by the smoke build's scripted Start press, since disabled.)
+ * An online recording (config record=1) stays in a RAM buffer until the
+ * match ends: on the console every SD write reopens the file, which costs
+ * about a quarter of a second. */
+static u8 replay_buf[64 * 1024];
+static u8* out_buf = replay_buf;
+static unsigned out_cap = sizeof replay_buf;
 static unsigned out_len;
+static int out_full;
 static int out_started;
 static int online_rec;        /* recording an online match (no injection) */
 
@@ -202,7 +207,11 @@ static void putf(u8* b, float f)
 static void out_record(u8 type, Fighter* fp)
 {
     u8* b;
-    if (out_len + 40 > sizeof out_buf) {
+    if (out_len + 40 > out_cap) {
+        if (online_rec) {
+            out_full = 1;
+            return;
+        }
         out_flush();
     }
     b = out_buf + out_len;
@@ -227,8 +236,13 @@ static void out_record(u8 type, Fighter* fp)
 static void out_end(void)
 {
     u8* b;
-    if (out_len + 40 > sizeof out_buf) {
-        out_flush();
+    if (out_len + 40 > out_cap) {
+        if (online_rec) {
+            out_full = 1;
+            out_len = out_cap - 40;   /* the end marker replaces the last record */
+        } else {
+            out_flush();
+        }
     }
     b = out_buf + out_len;
     memset(b, 0, 40);
@@ -293,7 +307,11 @@ void mp_slippi_replay_body_begin(void)
 static void out_inputs(Fighter* fp)
 {
     u8* b;
-    if (out_len + 40 > sizeof out_buf) {
+    if (out_len + 40 > out_cap) {
+        if (online_rec) {
+            out_full = 1;
+            return;
+        }
         out_flush();
     }
     b = out_buf + out_len;
@@ -314,10 +332,23 @@ static void out_inputs(Fighter* fp)
  * Same records as playback, with frame = unk_8 - 123 (the replay frame index of
  * the PC's .slp), plus 'I' records: the two wire pads each engine body used.
  * tools/slippi/online_compare.py lines it up with the PC's replay. */
+#define ONLINE_RECORD_BYTES (4u << 20)   /* ~5 records/frame: about 6 minutes */
+
 void mp_slippi_record_online_begin(void)
 {
+    static u8* online_buf;
+    if (online_buf == NULL) {
+        online_buf = mp_platform_alloc(ONLINE_RECORD_BYTES);
+    }
+    if (online_buf == NULL) {
+        mp_platform_log("Slippi online: no memory for the match record\n");
+        return;
+    }
+    out_buf = online_buf;
+    out_cap = ONLINE_RECORD_BYTES;
     online_rec = 1;
     out_len = 0;
+    out_full = 0;
     out_started = 0;
     frame_index = FIRST_FRAME;
 }
@@ -328,9 +359,6 @@ void mp_slippi_record_online_frame(int engine_frame)
         return;
     }
     frame_index = engine_frame + FIRST_FRAME;
-    if (engine_frame % 600 == 0) {
-        out_flush();
-    }
 }
 
 void mp_slippi_record_online_inputs(const unsigned char* port0, const unsigned char* port1, unsigned checksum)
@@ -339,7 +367,11 @@ void mp_slippi_record_online_inputs(const unsigned char* port0, const unsigned c
     if (!online_rec) {
         return;
     }
-    if (out_len + 40 > sizeof out_buf) {
+    if (out_len + 40 > out_cap) {
+        if (online_rec) {
+            out_full = 1;
+            return;
+        }
         out_flush();
     }
     b = out_buf + out_len;
@@ -359,6 +391,11 @@ void mp_slippi_record_online_end(void)
     }
     out_end();
     online_rec = 0;
+    out_buf = replay_buf;
+    out_cap = sizeof replay_buf;
+    if (out_full) {
+        mp_platform_log("Slippi online: the match record filled up; it holds the first part\n");
+    }
 }
 
 /* ---- boot (Boot to Playback Scene, 801a45a0) ---- */

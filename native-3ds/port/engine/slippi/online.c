@@ -62,7 +62,7 @@ typedef struct {
 static struct {
     int configured;           /* 0 unknown, 1 online, -1 offline */
     char opponent[24];
-    int character, color, stage, stage_select, delay_setting;
+    int character, color, stage, stage_select, delay_setting, record;
     int started;              /* matchmaking started */
     int selections_sent;
     int pending;              /* match negotiated, waiting for its scene */
@@ -81,6 +81,8 @@ static struct {
     DesyncLocal desync_local[DESYNC_ENTRIES];
     int disconnected, disconnect_shown, desync_shown, game_over, game_end_frame;
     unsigned skips, skip_run, frames, waits, wait_ms, longest_wait_ms, no_sample_bodies;
+    int advance_left, advance_gap, advancing;
+    unsigned advances;
 } on;
 
 static void logf_(const char* fmt, int a, int b, int c)
@@ -158,6 +160,8 @@ static void load_config(void)
             on.stage = parse_int(line + 6, on.stage);
         } else if (strncmp(line, "stage_select=", 13) == 0) {
             on.stage_select = parse_int(line + 13, on.stage_select);
+        } else if (strncmp(line, "record=", 7) == 0) {
+            on.record = parse_int(line + 7, 0);
         } else if (strncmp(line, "delay=", 6) == 0) {
             on.delay_setting = parse_int(line + 6, on.delay_setting);
         }
@@ -433,6 +437,49 @@ void mp_slippi_online_frame_begin(void)
     }
 }
 
+/* ---- end of each engine body: catching up (Dolphin's shouldAdvanceOnlineFrame) ----
+ * A lockstep peer never runs ahead, but it can fall behind: the PC loads a
+ * match faster and keeps its frames up to 7 ahead of our inputs. Every 30
+ * frames, when the opponent is more than 26.7 ms ahead, queue an extra pad
+ * sample on some of the next frames, so the scene loop runs an extra engine
+ * body (the draw just skips a frame): up to 3 extra frames, one every 5. */
+void lb_8001955C(void);
+void fn_800195FC(void);
+
+void mp_slippi_online_frame_end(void)
+{
+    int frame;
+    if (!hooks_on() || on.game_over || on.disconnected) {
+        return;
+    }
+    frame = global_frame();
+    /* As Dolphin: no advancing before frame 120; the PC's own start-up
+     * stalls line the two games up first. */
+    if (frame > 120 && frame % 30 == 0 && !on.advancing) {
+        int offset = mp_platform_slippi_net_time_offset_us();
+        if (offset < -(16683 + 10000)) {
+            int n = -offset / 16683;
+            on.advance_left = n > 3 ? 3 : n;
+            on.advance_gap = 0;
+            on.advancing = on.advance_left > 0;
+            if (on.advances < 20 || frame % 600 == 0) {
+                logf_("Slippi online: %d us behind at frame %d; catching up %d frames\n", -offset, frame,
+                      on.advance_left);
+            }
+        }
+    }
+    if (on.advancing) {
+        if (on.advance_gap-- <= 0) {
+            fn_800195FC();   /* one more pad sample: one more engine body */
+            on.advances++;
+            on.advance_gap = 4;
+            if (--on.advance_left <= 0) {
+                on.advancing = 0;
+            }
+        }
+    }
+}
+
 /* ---- what the render pass does that gameplay reads ----
  * The PC draws every frame; a 3DS tick that is not followed by a draw still
  * needs the camera matrices (offscreen checks) and the fighters' bone
@@ -589,6 +636,8 @@ void mp_slippi_online_start_melee(StartMeleeData* data)
     on.desync_write_idx = 0;
     on.disconnected = on.disconnect_shown = on.desync_shown = on.game_over = on.game_end_frame = 0;
     on.skips = on.skip_run = on.frames = on.waits = on.wait_ms = on.longest_wait_ms = on.no_sample_bodies = 0;
+    on.advance_left = on.advance_gap = on.advancing = 0;
+    on.advances = 0;
     *seed_ptr = on.rng_offset;
     /* No transformation from a held A. */
     for (i = 0; i < 4; i++) {
@@ -597,7 +646,9 @@ void mp_slippi_online_start_melee(StartMeleeData* data)
     gobj = GObj_Create(4, 7, 0);
     HSD_GObj_SetupProc(gobj, sync_rng_proc, 0);
     on.active = 1;
-    mp_slippi_record_online_begin();
+    if (on.record) {
+        mp_slippi_record_online_begin();
+    }
     logf_("Slippi online: match starts, local port %d, delay %d, rng offset %08X\n", on.local_index + 1,
           on.delay, (int) on.rng_offset);
 }
@@ -612,6 +663,7 @@ void mp_slippi_online_match_exit(void)
     logf_("Slippi online: match exit after %d frames, %d waits for the opponent, desync %d\n", (int) on.frames,
           (int) on.waits, on.desync_shown);
     logf_("Slippi online: waited %d ms in total, longest %d ms\n", (int) on.wait_ms, (int) on.longest_wait_ms, 0);
+    logf_("Slippi online: %d extra frames run to catch up\n", (int) on.advances, 0, 0);
     on.active = 0;
 }
 
