@@ -292,6 +292,12 @@ Remaining mismatches (`--all`), by area:
   pointer, fused for a local in registers). Fixed where the census shows it.
 * Subnormals flush to zero and NaNs are default NaNs on hardware (see §5).
   Float-to-int of NaN: ARM gives 0, `fctiwz` gives 0x80000000.
+* Float to u8/u16 (fixed 2026-10-03 in `tools/fp_contract.py`).
+  - MWCC converts with `fctiwz` (signed, toward zero) and stores the low bits, so -102.0 becomes 0x9A.
+  - Clang emits `fptoui`, and ARM's unsigned convert clamps negatives to 0.
+  - Nana records Popo's stick this way (`ftCo_800B0918`), so every left/down input reached her as neutral. An Ice Climbers game desynced at frame 100 (hardware run 8).
+  - The IR pass now rewrites `fptoui` to i8/i16 as `llvm.fptosi.sat.i32` + `trunc`. There are about 150 sites, mostly colours, plus some fighter and stage code.
+  - 32-bit unsigned already agreed: MWCC calls `__cvt_fp2unsigned`, which clamps like ARM.
 * Dolphin rounds the second factor of a single-precision multiply to 25 bits
   when it holds a non-single value. Only `ps_math.c` models this (the
   `frsqrte` estimate); C code always rounds to float before single ops.

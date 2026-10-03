@@ -12,7 +12,10 @@
  * within 10 s of returning holds 30 until the scene or roster changes. */
 enum{MP_RATE_AUTO,MP_RATE_30,MP_RATE_60,MP_RATE_MODES};
 static const char*const rate_names[MP_RATE_MODES]={"auto","30","60"};
-static unsigned rate_mode=MP_RATE_AUTO,rate_interval=1,rate_cycle_pending;
+/* Slippi fork: start at 60. AUTO counted the match load and the waits for
+ * the opponent as missed frames and capped online matches at 30 for their
+ * first seconds; the console holds 60 online (RATE still cycles). */
+static unsigned rate_mode=MP_RATE_60,rate_interval=1,rate_cycle_pending;
 /* Published by the translator's thread-load report (game.c). */
 static volatile float rate_engine_ms,rate_translator_ms,rate_gpu_ms;
 static volatile unsigned rate_load_serial;

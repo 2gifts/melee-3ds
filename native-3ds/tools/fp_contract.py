@@ -19,6 +19,12 @@ in the function whose source wrote it):
   MSL's inline sqrtf. Same fnmsub sign rule.
 * In functions listed as no-contract (the console fused nothing there), the
   call becomes a plain multiply and add, each rounded.
+* fptoui to i8/i16 -> fptosi.sat to i32, then trunc. MWCC converts a float
+  to u8/u16 with fctiwz (signed, toward zero, saturating) and stores the low
+  bits, so -102.0 becomes 0x9A. ARM's unsigned convert clamps it to 0. Nana
+  records Popo's stick this way (ftCo_800B0918), so every left/down input
+  reached her as neutral. 32-bit unsigned already agrees: MWCC calls
+  __cvt_fp2unsigned, which clamps like ARM.
 
 See docs/slippi/determinism.md.
 """
@@ -33,6 +39,7 @@ CALL = re.compile(r'^(\s*)(%[-\w.$]+) = (?:tail |notail )?call (?:[a-z]+ )*(floa
                   r'@llvm\.fmuladd\.(f32|f64)\((.*)\)(.*)$')
 VECTOR = re.compile(r'@llvm\.fmuladd\.v\d+')
 NARROW = re.compile(r'^\s*(%[-\w.$]+) = (fpext|sitofp|uitofp) (?:[a-z]+ )*(float|i1|i8|i16) (\S+) to double')
+FPTOUI = re.compile(r'^(\s*)(%[-\w.$]+) = fptoui (float|double) (\S+) to (i8|i16)\s*$')
 FNEG = re.compile(r'^\s*(%[-\w.$]+) = fneg (?:[a-z]+ )*(float|double) (.+?)\s*(?:,\s*!.*)?$')
 
 
@@ -121,6 +128,7 @@ def rewrite(ir, no_contract=None, keep_fused=False, module=''):
     out, stats = [], {'f32': 0, 'f64': 0, 'f32_unfused': 0, 'f64_unfused': 0, 'fnmsub': 0}
     fn, kinds, negs, narrow, counter = None, set(), {}, {}, 0
     uses_fma = False
+    sat = set()
     for line in ir.splitlines():
         m = DEFINE.match(line)
         if m:
@@ -139,6 +147,17 @@ def rewrite(ir, no_contract=None, keep_fused=False, module=''):
         w = NARROW.match(line)
         if w:
             narrow[w.group(1)] = {'float': 24, 'i1': 1, 'i8': 8, 'i16': 16}[w.group(3)]
+        u = FPTOUI.match(line)
+        if u and fn is not None:
+            indent, result, src, value, dst = u.groups()
+            counter += 1
+            t = '%mp.fc' + str(counter) + '.'
+            suffix = 'f32' if src == 'float' else 'f64'
+            sat.add((src, suffix))
+            out.append(f'{indent}{t}i = call i32 @llvm.fptosi.sat.i32.{suffix}({src} {value})')
+            out.append(f'{indent}{result} = trunc i32 {t}i to {dst}')
+            stats['fptoui_narrow'] = stats.get('fptoui_narrow', 0) + 1
+            continue
         c = CALL.match(line)
         if not c or fn is None:
             out.append(line)
@@ -196,6 +215,9 @@ def rewrite(ir, no_contract=None, keep_fused=False, module=''):
     text = '\n'.join(out) + '\n'
     if uses_fma and not re.search(r'^(declare|define)\b[^\n]*@mp_fma\(', text, re.M):
         text += '\ndeclare double @mp_fma(double, double, double)\n'
+    for src, suffix in sorted(sat):
+        if not re.search(r'^declare\b[^\n]*@llvm\.fptosi\.sat\.i32\.' + suffix + r'\(', text, re.M):
+            text += f'\ndeclare i32 @llvm.fptosi.sat.i32.{suffix}({src})\n'
     return text, stats
 
 

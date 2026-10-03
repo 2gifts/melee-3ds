@@ -61,6 +61,32 @@ static void fighter_core(const char *code)
     cache(name);
 }
 
+/* Files a stage opens during the match, not at its load: Pokemon Stadium's
+ * transformations (one SD open, ~300 ms, each time it changes; the console
+ * then runs behind the PC). Read once the match's stage is known, which may
+ * be the opponent's pick, during the match load. */
+void slippi_prefetch_stage_extras(int stage)
+{
+    static const char *const stadium[] = {"GrPs1.dat", "GrPs2.dat", "GrPs3.dat", "GrPs4.dat"};
+    unsigned i, cached = 0;
+    if (stage != 3) {
+        return;
+    }
+    for (i = 0; i < sizeof stadium / sizeof stadium[0]; i++) {
+        if (mp_native_file_cache(stadium[i]) == 1) {
+            ++cached;
+        }
+    }
+    {
+        extern void mp_native_log(const char *);
+        extern unsigned mp_native_prefetch_bytes(void);
+        char text[120];
+        snprintf(text, sizeof text, "Slippi load: %u of 4 Stadium transformation files in RAM (%u KB cached)\n", cached,
+                 mp_native_prefetch_bytes() / 1024);
+        mp_native_log(text);
+    }
+}
+
 void slippi_prefetch_match(int character, int color, int stage)
 {
     unsigned i, k;

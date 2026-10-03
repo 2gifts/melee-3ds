@@ -185,6 +185,13 @@ int slippi_net_match_block(unsigned char *out)
                (unsigned)crc32_bytes(out, 0x138), out[0xE], out[0xF], out[0x60], out[0x63], out[0x84], out[0x87], rng, out[0x13C], out[0x13D]);
     }
     sp_unlock();
+#ifdef __3DS__
+    if (ready && out) {
+        /* The stage may be the opponent's pick: cache what it loads mid-match. */
+        extern void slippi_prefetch_stage_extras(int stage);
+        slippi_prefetch_stage_extras((out[0xE] << 8) | out[0xF]);
+    }
+#endif
     return ready;
 }
 
