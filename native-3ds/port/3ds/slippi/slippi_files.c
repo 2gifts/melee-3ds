@@ -89,20 +89,8 @@ unsigned mp_native_slippi_sd_stat(int which)
     return which == 0 ? mp_file_sd_opens : which == 1 ? mp_file_sd_open_ticks / 1000 : mp_file_sd_bytes;
 }
 
-void mp_native_file_prefetch(int id);
-extern unsigned mp_prefetch_hits;
-
-void mp_native_file_prefetch_pause(int paused);
-
-void mp_native_slippi_prefetch_pause(int paused)
-{
-    mp_native_file_prefetch_pause(paused);
-}
-
-void mp_native_slippi_prefetch(int id)
-{
-    mp_native_file_prefetch(id);
-}
+extern unsigned mp_prefetch_hits, mp_prefetch_files;
+unsigned mp_native_prefetch_bytes(void);
 
 unsigned mp_native_slippi_prefetch_hits(void)
 {
@@ -110,10 +98,7 @@ unsigned mp_native_slippi_prefetch_hits(void)
 }
 
 /* 0: files cached, 1: KB cached. */
-extern unsigned mp_prefetch_files;
-unsigned mp_native_prefetch_bytes(void);
 unsigned mp_native_slippi_prefetch_stat(int which)
 {
-    unsigned mp_native_prefetch_queue(int which);
-    return which == 0 ? mp_prefetch_files : which == 1 ? mp_native_prefetch_bytes() / 1024 : mp_native_prefetch_queue(which - 2);
+    return which == 0 ? mp_prefetch_files : mp_native_prefetch_bytes() / 1024;
 }

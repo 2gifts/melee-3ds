@@ -23,12 +23,8 @@ void mp_platform_slippi_wait_poll(void);
 void mp_platform_slippi_load_log(int on);
 unsigned mp_platform_slippi_ms(void);
 unsigned mp_platform_slippi_sd_stat(int which);
-/* Read a disc file (mp_platform_file_id) into the RAM prefetch cache in the
- * background; later reads of it never touch the SD card. */
-void mp_platform_slippi_prefetch(int id);
+/* Reads served from the RAM file cache (slippi_prefetch.c). */
 unsigned mp_platform_slippi_prefetch_hits(void);
-/* Hold the background reader while a match loads or runs. */
-void mp_platform_slippi_prefetch_pause(int paused);
 /* 0: files cached so far, 1: KB cached. */
 unsigned mp_platform_slippi_prefetch_stat(int which);
 

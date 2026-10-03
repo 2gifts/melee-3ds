@@ -143,6 +143,8 @@ static void draw(const choices* c, const slippi_user* u, int row)
     printf("  The PC player picks your code in\n  Slippi's Direct mode.\n");
 }
 
+void slippi_prefetch_match(int character, int color, int stage);
+
 void slippi_boot_menu(void)
 {
     char upath[256], cpath[256], *cfg;
@@ -150,6 +152,7 @@ void slippi_boot_menu(void)
     choices c;
     char err[96];
     int row = 0;
+    int prefetch_on = 1;
     snprintf(upath, sizeof upath, "%s/user.json", sp_data_dir());
     snprintf(cpath, sizeof cpath, "%s/config.ini", sp_data_dir());
     memset(&user, 0, sizeof user);
@@ -165,7 +168,14 @@ void slippi_boot_menu(void)
         c.color = key_int(cfg, "color", c.color);
         c.stage = key_int(cfg, "stage", c.stage);
         c.delay = key_int(cfg, "delay", c.delay);
-        if (key_int(cfg, "selftest", 0) || !key_int(cfg, "boot_menu", 1)) { free(cfg); return; }
+        if (key_int(cfg, "selftest", 0)) { free(cfg); return; }
+        if (!key_int(cfg, "boot_menu", 1)) {
+            /* Automated online runs: same read-ahead, no menu. */
+            if (c.opponent[0] && key_int(cfg, "prefetch", 1)) slippi_prefetch_match(c.character, c.color, c.stage);
+            free(cfg);
+            return;
+        }
+        prefetch_on = key_int(cfg, "prefetch", 1);
         free(cfg);
     }
     if (c.character < 0 || c.character > 25) c.character = 2;
@@ -195,6 +205,10 @@ void slippi_boot_menu(void)
         }
         if (k) draw(&c, &user, row);
         gspWaitForVBlank();
+    }
+    if (session == 1 && prefetch_on) {
+        printf("\x1b[2J\x1b[1;1H");
+        slippi_prefetch_match(c.character, c.color, c.stage);
     }
     printf("\x1b[2J\x1b[1;1H%s\n", session == 1 ? "Connecting to Slippi..." : "Offline");
 }

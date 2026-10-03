@@ -617,111 +617,6 @@ void mp_slippi_tick_without_draw(void)
     }
 }
 
-/* ---- match files read ahead (see mp_native_file_prefetch) ----
- * The lists are what a match load opens, measured with the open log on each
- * legal stage: files every match uses, each stage's own, and each fighter's
- * (model, animations, costumes, effects, sound bank). */
-int mp_platform_file_id(const char* name);
-
-static const char* const common_files[] = {
-    "LbRb.dat", "EfMnData.dat", "EfCoData.dat", "LbRf.dat", "ItCo.usd", "PdPm.dat", "TyDatai.usd",
-    "IfAll.usd", "PlCo.dat", "GmPause.usd", "SdIntro.dat", "IfCoGet.dat", "LbBf.dat", "audio/us/clink.ssm",
-};
-static const struct {
-    int stage;
-    const char* files[6];
-} stage_files[] = {
-    {2, {"GrIz.dat"}},
-    {3, {"GrPs.usd", "audio/us/pstadium.ssm", "GrPs1.dat", "GrPs2.dat", "GrPs3.dat", "GrPs4.dat"}},
-    {8, {"GrSt.dat"}},
-    {28, {"GrOp.dat", "audio/us/pupupu.ssm"}},
-    {31, {"GrNBa.dat"}},
-    {32, {"GrNLa.dat", "audio/us/last.ssm"}},
-};
-/* External character id: file code, effects code, sound bank. */
-static const struct {
-    const char* code;
-    const char* effects;
-    const char* bank;
-} fighters[26] = {
-    {"Ca", "Ca", "captain"}, {"Dk", "Dk", "dk"}, {"Fx", "Fx", "fox"}, {"Gw", NULL, "gw"},
-    {"Kb", "Kb", "kirby"}, {"Kp", "Kp", "koopa"}, {"Lk", "Lk", "link"}, {"Lg", "Lg", "luigi"},
-    {"Mr", "Mr", "mario"}, {"Ms", "Ms", "mars"}, {"Mt", "Mt", "mewtwo"}, {"Ns", "Ns", "ness"},
-    {"Pe", "Pe", "peach"}, {"Pk", "Pk", "pikachu"}, {"Pp", "Ic", "ice"}, {"Pr", "Pr", "purin"},
-    {"Ss", "Ss", "samus"}, {"Ys", "Ys", "yoshi"}, {"Zd", "Zd", "zs"}, {"Sk", "Zd", "zs"},
-    {"Fc", "Fx", "falco"}, {"Cl", "Lk", "clink"}, {"Dr", "Mr", "drmario"}, {"Fe", "Fe", "emblem"},
-    {"Pc", "Pk", "pichu"}, {"Gn", "Gn", "ganon"},
-};
-static const char* const costume_codes[] = {"Nr", "Re", "Bu", "Gr", "Ye", "Wh", "Bk", "Or", "La", "Pi", "Aq", "Gy"};
-
-static void prefetch_name(const char* name)
-{
-    int id = mp_platform_file_id(name);
-    if (id >= 0) {
-        mp_platform_slippi_prefetch(id);
-    }
-}
-
-static void prefetch_code(const char* code)
-{
-    char name[32];
-    unsigned i;
-    snprintf(name, sizeof name, "Pl%s.dat", code);
-    prefetch_name(name);
-    snprintf(name, sizeof name, "Pl%sAJ.dat", code);
-    prefetch_name(name);
-    for (i = 0; i < sizeof costume_codes / sizeof costume_codes[0]; i++) {
-        snprintf(name, sizeof name, "Pl%s%s.dat", code, costume_codes[i]);
-        prefetch_name(name);
-    }
-}
-
-static void prefetch_fighter(int ext)
-{
-    char name[40];
-    if (ext < 0 || ext >= 26) {
-        return;
-    }
-    prefetch_code(fighters[ext].code);
-    if (ext == 14) {
-        prefetch_code("Nn");            /* Nana */
-    } else if (ext == 18) {
-        prefetch_code("Sk");            /* Zelda transforms into Sheik */
-    } else if (ext == 19) {
-        prefetch_code("Zd");
-    }
-    if (fighters[ext].effects != NULL) {
-        snprintf(name, sizeof name, "Ef%sData.dat", fighters[ext].effects);
-        prefetch_name(name);
-    }
-    snprintf(name, sizeof name, "audio/us/%s.ssm", fighters[ext].bank);
-    prefetch_name(name);
-}
-
-static void prefetch_stage(int stage)
-{
-    unsigned i, k;
-    for (i = 0; i < sizeof stage_files / sizeof stage_files[0]; i++) {
-        if (stage_files[i].stage == stage) {
-            for (k = 0; k < 6 && stage_files[i].files[k] != NULL; k++) {
-                prefetch_name(stage_files[i].files[k]);
-            }
-        }
-    }
-}
-
-/* Before matchmaking: the common files, this player's fighter and stage.
- * The opponent's fighter and stage follow once picked (14 MB budget). */
-static void prefetch_ours(void)
-{
-    unsigned i;
-    for (i = 0; i < sizeof common_files / sizeof common_files[0]; i++) {
-        prefetch_name(common_files[i]);
-    }
-    prefetch_fighter(on.character);
-    prefetch_stage(on.stage);
-}
-
 /* ---- matchmaking, before the match scene (the online CSS's job) ---- */
 
 void mp_slippi_online_boot_mode(u8* mode)
@@ -738,8 +633,6 @@ int mp_slippi_online_wait_match(void)
     if (!mp_slippi_online_configured() || mp_slippi_replay_on()) {
         return 0;
     }
-    mp_platform_slippi_prefetch_pause(0);   /* waiting: read ahead */
-    prefetch_ours();
     if (!on.started) {
         on.started = 1;
         logf_("Slippi online: looking for the opponent\n", 0, 0, 0);
@@ -796,22 +689,10 @@ int mp_slippi_online_wait_match(void)
             logf_("Slippi online: connected as player %d, ping %d ms; selections sent\n",
                   mp_platform_slippi_net_local_index() + 1, mp_platform_slippi_net_ping_ms(), 0);
         }
-        if (status == 3) {
-            /* The opponent's fighter, as soon as it is picked (kept for
-             * rematches even when the match starts right away). */
-            int remote = mp_platform_slippi_net_remote_character();
-            if (remote >= 0 && remote != on.prefetched_remote) {
-                on.prefetched_remote = remote;
-                prefetch_fighter(remote);
-            }
-        }
         if (status == 3 && mp_platform_slippi_net_match_block(on.block)) {
             on.pending = 1;
-            mp_platform_slippi_prefetch_pause(1);   /* the match load needs the SD card */
-            logf_("Slippi load: %d files (%d KB) read ahead before the match\n",
-                  (int) mp_platform_slippi_prefetch_stat(0), (int) mp_platform_slippi_prefetch_stat(1), 0);
-            logf_("Slippi load: read-ahead queue %d, taken %d, step %d\n", (int) mp_platform_slippi_prefetch_stat(2),
-                  (int) mp_platform_slippi_prefetch_stat(3), (int) mp_platform_slippi_prefetch_stat(4));
+            logf_("Slippi load: %d files (%d KB) in the RAM cache\n", (int) mp_platform_slippi_prefetch_stat(0),
+                  (int) mp_platform_slippi_prefetch_stat(1), 0);
             load_mark("match ready", 1);
             mp_platform_slippi_load_log(1);
             on.load_logging = 1;

@@ -43,23 +43,16 @@ unsigned mp_file_log_bytes;
  * matches. On the console every file open costs 130-250 ms and a match load
  * opens about 25 files, so a cold load takes several seconds while the PC
  * peer, which loads in about one, waits at its first frame. */
-/* Budget and headroom from the console: the ordinary heap is 86 MB and a
- * running match uses about 59 MB of it. A 32 MB budget left nothing, so
- * the network library could not allocate the opponent's selections. */
-enum {PREFETCH_MAX=96,PREFETCH_BUDGET=14*1024*1024,PREFETCH_HEADROOM=20*1024*1024,PREFETCH_CHUNK=256*1024};
+/* Files cached in RAM before any networking starts (the boot menu's START,
+ * slippi_prefetch.c), read by the main thread with nothing else running.
+ * Reading in the background while the 3DS matched and connected (October 3)
+ * left the opponent's selections undelivered on the console twice, so the
+ * cache is only ever filled up front. Budget: the ordinary heap is 86 MB and
+ * a running match uses about 59 MB of it. */
+enum {PREFETCH_MAX=64,PREFETCH_BUDGET=10*1024*1024};
 static struct {int id;unsigned char *data;} prefetch[PREFETCH_MAX];
-static unsigned prefetch_count,prefetch_bytes;   /* published entries */
-static int prefetch_queue[PREFETCH_MAX];
-static unsigned prefetch_queued,prefetch_taken;
-static volatile unsigned prefetch_paused;   /* a match is loading or running */
-volatile unsigned mp_pf_step,mp_pf_id;
-unsigned mp_prefetch_hits,mp_prefetch_hit_bytes,mp_prefetch_files,mp_prefetch_skipped;
-unsigned mp_native_prefetch_bytes(void);
-#ifdef __3DS__
-static Thread prefetch_thread;
-static LightEvent prefetch_wake;
-static LightLock prefetch_queue_lock;
-#endif
+static unsigned prefetch_count,prefetch_bytes;
+unsigned mp_prefetch_hits,mp_prefetch_hit_bytes,mp_prefetch_files;
 static const unsigned char *prefetched(int id){
     unsigned n=__atomic_load_n(&prefetch_count,__ATOMIC_ACQUIRE);
     for(unsigned i=0;i<n;++i)if(prefetch[i].id==id)return prefetch[i].data;
@@ -305,81 +298,23 @@ int mp_native_file_read(int id,void *dst,unsigned n,unsigned offset){
     file_read_finished(id,dst,n,offset,result,ticks);
     mp_log_phase(previous);return result;
 }
-#ifdef __3DS__
-/* Reads queued files through its own stream, never the shared readers or
- * their lock: the engine busy-waits for its reads at a higher priority, so a
- * lock held by this low-priority thread would never be released. It pauses
- * between pieces while a match loads or runs (mp_native_file_prefetch_pause). */
-static void prefetch_worker(void*unused){
-    (void)unused;
-    for(;;){
-        LightEvent_Wait(&prefetch_wake);
-        for(;;){
-            int id=-1;
-            LightLock_Lock(&prefetch_queue_lock);
-            if(prefetch_taken<prefetch_queued)id=prefetch_queue[prefetch_taken++];
-            LightLock_Unlock(&prefetch_queue_lock);
-            if(id<0)break;
-            mp_pf_step=1;mp_pf_id=id;
-            if(prefetched(id))continue;
-            unsigned size=files[id].size;
-            if(!size||prefetch_bytes+size>PREFETCH_BUDGET||__atomic_load_n(&prefetch_count,__ATOMIC_ACQUIRE)>=PREFETCH_MAX)continue;
-            {   /* Never eat into the heap the game and the network need. */
-                extern unsigned __ctru_heap_size;struct mallinfo heap=mallinfo();
-                unsigned used=heap.uordblks,available=__ctru_heap_size>used?__ctru_heap_size-used:0;
-                if(available<size+PREFETCH_HEADROOM){__atomic_fetch_add(&mp_prefetch_skipped,1,__ATOMIC_RELAXED);continue;}
-            }
-            mp_pf_step=2;
-            unsigned char *data=malloc(size);if(!data)continue;
-            mp_pf_step=3;
-            u64 start=svcGetSystemTick();int ok=1;
-            /* The FS service directly: no newlib stdio, so no stdio locks
-             * shared with the other threads. */
-            const char *path=files[id].path;
-            if(!strncmp(path,"sdmc:",5))path+=5;
-            Handle handle;
-            if(R_FAILED(FSUSER_OpenFileDirectly(&handle,ARCHIVE_SDMC,fsMakePath(PATH_EMPTY,""),fsMakePath(PATH_ASCII,path),FS_OPEN_READ,0))){free(data);continue;}
-            mp_pf_step=4;
-            for(unsigned off=0;off<size&&ok;off+=PREFETCH_CHUNK){
-                while(__atomic_load_n(&prefetch_paused,__ATOMIC_ACQUIRE))svcSleepThread(20000000);
-                unsigned n=size-off<PREFETCH_CHUNK?size-off:PREFETCH_CHUNK;u32 got=0;
-                ok=R_SUCCEEDED(FSFILE_Read(handle,&got,off,data+off,n))&&got==n;
-            }
-            mp_pf_step=5;
-            FSFILE_Close(handle);
-            mp_pf_step=6;
-            if(!ok){free(data);continue;}
-            unsigned slot=__atomic_load_n(&prefetch_count,__ATOMIC_ACQUIRE);
-            prefetch[slot].id=id;prefetch[slot].data=data;prefetch_bytes+=size;
-            __atomic_store_n(&prefetch_count,slot+1,__ATOMIC_RELEASE);
-            (void)start;
-            __atomic_fetch_add(&mp_prefetch_files,1,__ATOMIC_RELAXED);
-        }
-    }
+/* Read a whole file into the RAM cache now (main thread, before the engine
+ * and the network start). 1 cached, 0 skipped (budget, missing), -1 error. */
+int mp_native_file_cache(const char *name){
+    int id=mp_native_file_id(name);
+    if(id<0)return 0;
+    if(prefetched(id))return 1;
+    unsigned size=files[id].size;
+    if(!size||prefetch_bytes+size>PREFETCH_BUDGET||prefetch_count>=PREFETCH_MAX)return 0;
+    unsigned char *data=malloc(size);if(!data)return -1;
+    if(native_file_read(id,data,size,0)!=(int)size){free(data);return -1;}
+    prefetch[prefetch_count].id=id;prefetch[prefetch_count].data=data;
+    prefetch_bytes+=size;++mp_prefetch_files;
+    __atomic_store_n(&prefetch_count,prefetch_count+1,__ATOMIC_RELEASE);
+    return 1;
 }
 unsigned mp_native_prefetch_bytes(void){return prefetch_bytes;}
-unsigned mp_native_prefetch_queue(int which){return which==0?prefetch_queued:which==1?prefetch_taken:which==2?mp_pf_step:mp_pf_id;}
-void mp_native_file_prefetch_pause(int paused){
-    __atomic_store_n(&prefetch_paused,paused?1u:0u,__ATOMIC_RELEASE);
-    if(!paused&&prefetch_thread)LightEvent_Signal(&prefetch_wake);
-}
-/* Queue a file (by id) for the RAM prefetch cache; repeats are ignored. */
-void mp_native_file_prefetch(int id){
-    if(id<0||(unsigned)id>=__atomic_load_n(&file_count,__ATOMIC_ACQUIRE)||prefetched(id))return;
-    if(!prefetch_thread){
-        LightEvent_Init(&prefetch_wake,RESET_ONESHOT);LightLock_Init(&prefetch_queue_lock);
-        s32 priority=0x30;svcGetThreadPriority(&priority,CUR_THREAD_HANDLE);
-        /* Below the game's threads: it only uses idle time. */
-        prefetch_thread=threadCreate(prefetch_worker,NULL,65536,priority<0x3E?priority+2:priority,-2,false);
-        if(!prefetch_thread)return;
-    }
-    LightLock_Lock(&prefetch_queue_lock);
-    int queued=0;
-    for(unsigned i=prefetch_taken;i<prefetch_queued;++i)if(prefetch_queue[i]==id)queued=1;
-    if(!queued&&prefetch_queued<PREFETCH_MAX)prefetch_queue[prefetch_queued++]=id;
-    LightLock_Unlock(&prefetch_queue_lock);
-    LightEvent_Signal(&prefetch_wake);
-}
+#ifdef __3DS__
 static void file_worker(void*unused){
     (void)unused;
     for(;;){
