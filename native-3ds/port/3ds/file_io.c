@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <limits.h>
+#include <malloc.h>
 #ifdef __3DS__
 #include <3ds.h>
 #endif
@@ -42,14 +43,17 @@ unsigned mp_file_log_bytes;
  * matches. On the console every file open costs 130-250 ms and a match load
  * opens about 25 files, so a cold load takes several seconds while the PC
  * peer, which loads in about one, waits at its first frame. */
-enum {PREFETCH_MAX=96,PREFETCH_BUDGET=32*1024*1024,PREFETCH_CHUNK=256*1024};
+/* Budget and headroom from the console: the ordinary heap is 86 MB and a
+ * running match uses about 59 MB of it. A 32 MB budget left nothing, so
+ * the network library could not allocate the opponent's selections. */
+enum {PREFETCH_MAX=96,PREFETCH_BUDGET=14*1024*1024,PREFETCH_HEADROOM=20*1024*1024,PREFETCH_CHUNK=256*1024};
 static struct {int id;unsigned char *data;} prefetch[PREFETCH_MAX];
 static unsigned prefetch_count,prefetch_bytes;   /* published entries */
 static int prefetch_queue[PREFETCH_MAX];
 static unsigned prefetch_queued,prefetch_taken;
 static volatile unsigned prefetch_paused;   /* a match is loading or running */
 volatile unsigned mp_pf_step,mp_pf_id;
-unsigned mp_prefetch_hits,mp_prefetch_hit_bytes,mp_prefetch_files;
+unsigned mp_prefetch_hits,mp_prefetch_hit_bytes,mp_prefetch_files,mp_prefetch_skipped;
 unsigned mp_native_prefetch_bytes(void);
 #ifdef __3DS__
 static Thread prefetch_thread;
@@ -320,6 +324,11 @@ static void prefetch_worker(void*unused){
             if(prefetched(id))continue;
             unsigned size=files[id].size;
             if(!size||prefetch_bytes+size>PREFETCH_BUDGET||__atomic_load_n(&prefetch_count,__ATOMIC_ACQUIRE)>=PREFETCH_MAX)continue;
+            {   /* Never eat into the heap the game and the network need. */
+                extern unsigned __ctru_heap_size;struct mallinfo heap=mallinfo();
+                unsigned used=heap.uordblks,available=__ctru_heap_size>used?__ctru_heap_size-used:0;
+                if(available<size+PREFETCH_HEADROOM){__atomic_fetch_add(&mp_prefetch_skipped,1,__ATOMIC_RELAXED);continue;}
+            }
             mp_pf_step=2;
             unsigned char *data=malloc(size);if(!data)continue;
             mp_pf_step=3;
@@ -361,7 +370,7 @@ void mp_native_file_prefetch(int id){
         LightEvent_Init(&prefetch_wake,RESET_ONESHOT);LightLock_Init(&prefetch_queue_lock);
         s32 priority=0x30;svcGetThreadPriority(&priority,CUR_THREAD_HANDLE);
         /* Below the game's threads: it only uses idle time. */
-        prefetch_thread=threadCreate(prefetch_worker,NULL,65536,priority>0x18?priority-1:priority,-2,false);
+        prefetch_thread=threadCreate(prefetch_worker,NULL,65536,priority<0x3E?priority+2:priority,-2,false);
         if(!prefetch_thread)return;
     }
     LightLock_Lock(&prefetch_queue_lock);

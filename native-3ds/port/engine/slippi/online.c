@@ -710,21 +710,16 @@ static void prefetch_stage(int stage)
     }
 }
 
-/* Before matchmaking: the common files, this player's fighter, the chosen
- * stage first and then the other legal stages. */
+/* Before matchmaking: the common files, this player's fighter and stage.
+ * The opponent's fighter and stage follow once picked (14 MB budget). */
 static void prefetch_ours(void)
 {
-    unsigned i, k;
+    unsigned i;
     for (i = 0; i < sizeof common_files / sizeof common_files[0]; i++) {
         prefetch_name(common_files[i]);
     }
     prefetch_fighter(on.character);
     prefetch_stage(on.stage);
-    for (i = 0; i < sizeof stage_files / sizeof stage_files[0]; i++) {
-        for (k = 0; k < 6 && stage_files[i].files[k] != NULL; k++) {
-            prefetch_name(stage_files[i].files[k]);
-        }
-    }
 }
 
 /* ---- matchmaking, before the match scene (the online CSS's job) ---- */
