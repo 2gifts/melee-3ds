@@ -499,7 +499,7 @@ static void slippi_css_page(void){
         if(v->hold_z)rect(SL_SIDE_X,SL_ACTION_Y+SL_ACTION_H-3,SL_SIDE_W*v->hold_z/0x30,3,slippi_red);
         center(SL_SIDE_X+SL_SIDE_W/2,SL_ACTION_Y+5,"DISCONNECT",13,ink);
     }else{
-        const char* hint=v->phase==SLIPPI_PHASE_SEARCH?"Z: CANCEL":v->phase==SLIPPI_PHASE_ERROR?"Z: CLEAR":"START: ENTER CODE";
+        const char* hint=v->phase==SLIPPI_PHASE_SEARCH?"Z: CANCEL":v->phase==SLIPPI_PHASE_ERROR?"Z: CLEAR":"OR PRESS START";
         center(SL_SIDE_X+SL_SIDE_W/2,SL_ACTION_Y+6,hint,11,muted);
     }
 }

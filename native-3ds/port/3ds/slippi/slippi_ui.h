@@ -52,6 +52,7 @@ extern const char slippi_ui_keys[SLIPPI_KEYS + 1];
 int slippi_ui_css(int packed, int trigger, int held);   /* packed = ready | ckind << 8 | color << 16 */
 void slippi_ui_event(int event, int arg);
 int slippi_ui_remote(void);                              /* char | color << 8, or -1 */
+int slippi_ui_text(int line, char *out, int len);       /* top-screen CSS text */
 
 /* Native pad (services.c, engine thread): the GameCube buttons the game
  * gets after the session's filter; *zero_sticks is set while the keyboard

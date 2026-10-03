@@ -44,6 +44,9 @@ FIXES = {
          '            mnCharSel_804D6CF6 = 1;\n'
          '        }\n'
          '    }\n', 1),
+        # DisableNametagBox (80261e5c): name entry would rebuild the CSS texts.
+        ('                            if ((cursor->x4 != 3 ||\n',
+         '                            if (!mp_slippi_css_online() && (cursor->x4 != 3 ||\n', 1),
         # DisableLRSTART (80266bc4).
         ('    if (mn_8022F218() != 0) {\n',
          '    if (!mp_slippi_css_online() && mn_8022F218() != 0) {\n', 1),

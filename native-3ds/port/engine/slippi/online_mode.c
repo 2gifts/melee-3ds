@@ -21,6 +21,7 @@
 #include <melee/lb/lbdvd.h>
 #include <melee/lb/types.h>
 #include <melee/mn/types.h>
+#include <sysdolphin/baselib/sislib.h>
 #include <slippi_engine.h>
 #include <slippi_net_bridge.h>
 
@@ -31,6 +32,7 @@ static s8 saved_ckind = CKind_Fox;
 static s8 saved_color;
 static u8 next_state = ST_VS;
 static int sss_alt;   /* frozen Stadium (Z on the SSS) */
+static HSD_Text* css_text;
 
 int mp_slippi_sss_alt_mode(void)
 {
@@ -78,6 +80,7 @@ static void css_enter(GameModeState* state)
     css->vs.start.players[1].slot_type = Gm_PKind_NA;
     lbDvd_SetupVsPreloadCache();
     next_state = ST_VS;
+    css_text = NULL;   /* the CSS's SIS texts are freed with each scene */
     mp_platform_slippi_ui_event(1 /* CSS_ENTER */, 0);
 }
 
@@ -105,6 +108,64 @@ static void css_exit(GameModeState* state)
     gm_SetNextGameModeStateId(ST_VS);
 }
 
+/* ---- the online CSS text (LoadCSSText.asm, UserDisplayFunctions.asm) ----
+ * One SIS text on the CSS's canvas 0, scaled 0.1 like Slippi's; the lines
+ * come from the native session (slippi_ui_text). Positions, sizes and
+ * colours are Slippi's. */
+enum { TEXT_LINES = 19 };
+static const struct {
+    float x, y, size;
+} text_layout[TEXT_LINES] = {
+    { 70, 23, 0.5f },                                                     /* header */
+    { -112, 20, 0.4f }, { -112, 40, 0.5f }, { -112, 65, 0.4f }, { -112, 85, 0.5f }, /* user */
+    { 90, 52, 0.4f }, { 70, 52, 0.45f }, { 90, 75, 0.4f }, { 70, 75, 0.45f },
+    { 90, 98, 0.4f }, { 70, 98, 0.45f },                                  /* status lines */
+    { 70, 132.5f, 0.4f }, { 70, 152.5f, 0.4f },                           /* Z, chat */
+    { -130, -246, 0.5f }, { -50, -246, 0.5f },                            /* Playing: name */
+    { 90, 52, 0.4f }, { 90, 70, 0.4f }, { 90, 88, 0.4f }, { 90, 106, 0.4f }, /* error */
+};
+static const GXColor text_colors[5] = {
+    { 0xFF, 0xFF, 0xFF, 0xFF }, { 0x8E, 0x91, 0x96, 0xFF }, { 0xFF, 0x00, 0x00, 0xFF },
+    { 0x33, 0xFF, 0x2F, 0xFF }, { 0x3C, 0xBC, 0xFF, 0xFF },
+};
+static int text_ids[TEXT_LINES], text_color_now[TEXT_LINES];
+static char text_now[TEXT_LINES][64];
+
+static void css_text_frame(void)
+{
+    int i;
+    char buf[64];
+    if (css_text == NULL) {
+        css_text = HSD_SisLib_803A6754(0, 0);
+        if (css_text == NULL) {
+            return;
+        }
+        css_text->default_kerning = 1;
+        css_text->default_alignment = 0;
+        css_text->pos_z = 0.0f;
+        css_text->font_size.x = 0.1f;
+        css_text->font_size.y = 0.1f;
+        for (i = 0; i < TEXT_LINES; i++) {
+            text_ids[i] = HSD_SisLib_803A6B98(css_text, text_layout[i].x, text_layout[i].y, "");
+            HSD_SisLib_803A7548(css_text, text_ids[i], text_layout[i].size, text_layout[i].size);
+            text_color_now[i] = -1;
+            text_now[i][0] = 0;
+        }
+    }
+    for (i = 0; i < TEXT_LINES; i++) {
+        int color = mp_platform_slippi_ui_text(i, buf, sizeof buf);
+        buf[sizeof buf - 1] = 0;
+        if (strcmp(buf, text_now[i]) != 0) {
+            strcpy(text_now[i], buf);
+            HSD_SisLib_803A70A0(css_text, text_ids[i], "%s", buf);
+        }
+        if (color != text_color_now[i] && color >= 0 && color < 5) {
+            text_color_now[i] = color;
+            HSD_SisLib_803A74F0(css_text, text_ids[i], (GXColor*) &text_colors[color]);
+        }
+    }
+}
+
 /* Called from mnCharSel_Scene_OnFrame (tools/slippi_edits/online_ui.py) while
  * the CSS runs normally. Returns 1 to leave the CSS (match or stage pick). */
 int mp_slippi_css_frame(int ready, PlayerInitData* local, PlayerInitData* remote, u32 trigger, u32 held)
@@ -113,6 +174,7 @@ int mp_slippi_css_frame(int ready, PlayerInitData* local, PlayerInitData* remote
     int flags = mp_platform_slippi_ui_css(packed, (int) trigger, (int) held);
     int opponent = mp_platform_slippi_ui_remote();
     play_sfx(flags);
+    css_text_frame();
     /* The opponent's fighter, once known, preloads while we wait, so the
      * match loads faster; it is never shown. Straight into the preload
      * cache's second slot: marking players[1] present would make the 1-door

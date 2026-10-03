@@ -554,3 +554,140 @@ unsigned slippi_ui_pad(unsigned down, unsigned gc, int *zero_sticks)
     }
     return gc;
 }
+
+/* ---- top-screen CSS text (Slippi's LoadCSSText / UserDisplayFunctions) ----
+ * Lines (fixed slots, positions in online_mode.c):
+ *   0 header       1 "User"      2 name       3 "Connect Code"   4 code
+ *   5 line 1       6 spinner 1   7 line 2     8 spinner 2        9 line 3
+ *  10 spinner 3   11 Z hint     12 chat hint 13 "Playing:"      14 opponent
+ *  15-18 error lines
+ * Text goes through Melee's SIS converter, which takes letters, digits,
+ * space and . , - : ' " as ASCII and any other byte as a Shift-JIS lead
+ * byte: other punctuation becomes its full-width form ('#' -> 0x8194). */
+enum { TEXT_WHITE, TEXT_GRAY, TEXT_RED, TEXT_DONE, TEXT_WAIT };
+
+static void sis(char *out, int len, const char *in)
+{
+    static const struct { char c; unsigned short sjis; } wide[] = {
+        {'!', 0x8149}, {'#', 0x8194}, {'$', 0x8190}, {'%', 0x8193}, {'&', 0x8195}, {'(', 0x8169}, {')', 0x816a},
+        {'*', 0x8196}, {'+', 0x817b}, {'/', 0x815e}, {';', 0x8147}, {'<', 0x8183}, {'=', 0x8181}, {'>', 0x8184},
+        {'?', 0x8148}, {'@', 0x8197}, {'[', 0x816d}, {'\\', 0x815f}, {']', 0x816e}, {'^', 0x814f}, {'_', 0x8151},
+        {'`', 0x814d}, {'{', 0x816f}, {'|', 0x8162}, {'}', 0x8170}, {'~', 0x8160},
+    };
+    int n = 0;
+    for (; *in && n + 3 < len; in++) {
+        unsigned char c = (unsigned char) *in;
+        unsigned short w = 0;
+        unsigned i;
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == ' ' || c == '.' ||
+            c == ',' || c == '-' || c == ':' || c == '\'' || c == '"') {
+            out[n++] = (char) c;
+            continue;
+        }
+        if (c >= 0x80) {
+            /* UTF-8 sequence: one full-width '?' for the whole character. */
+            while ((in[1] & 0xC0) == 0x80) in++;
+            w = 0x8148;
+        } else {
+            for (i = 0; i < sizeof wide / sizeof wide[0]; i++)
+                if (wide[i].c == (char) c) w = wide[i].sjis;
+        }
+        if (w) {
+            out[n++] = (char) (w >> 8);
+            out[n++] = (char) w;
+        }
+    }
+    out[n] = 0;
+}
+
+static int spinner_glyph(char *out, int len, int done)
+{
+    unsigned short w = done ? 0x817C : ui.spinner ? 0x817E : 0x817B;
+    if (len < 3) return TEXT_WAIT;
+    out[0] = (char) (w >> 8);
+    out[1] = (char) w;
+    out[2] = 0;
+    return done ? TEXT_DONE : TEXT_WAIT;
+}
+
+/* One error line of about 30 characters (Slippi wraps the same way). */
+static void error_line(int index, char *out, int len)
+{
+    const char *e = ui.error[0] ? ui.error : "Unknown error";
+    char line[40];
+    int k;
+    for (k = 0; k <= index && *e; k++) {
+        int n = 0, last = -1;
+        while (e[n] && n < 30) {
+            if (e[n] == ' ') last = n;
+            n++;
+        }
+        if (e[n] && last > 0) n = last;
+        snprintf(line, sizeof line, "%.*s", n, e);
+        e += n;
+        while (*e == ' ') e++;
+        if (k == index) {
+            sis(out, len, line);
+            return;
+        }
+    }
+    out[0] = 0;
+}
+
+int slippi_ui_text(int line, char *out, int len)
+{
+    char b[96];
+    int error = ui.phase == SLIPPI_PHASE_ERROR, connected = ui.phase == SLIPPI_PHASE_CONNECTED;
+    out[0] = 0;
+    switch (line) {
+    case 0: sis(out, len, error ? "Error" : "Direct Mode"); return TEXT_WHITE;
+    case 1: sis(out, len, "User"); return TEXT_GRAY;
+    case 2: sis(out, len, ui.user_name); return TEXT_WHITE;
+    case 3: sis(out, len, "Connect Code"); return TEXT_GRAY;
+    case 4: sis(out, len, ui.user_code); return TEXT_WHITE;
+    case 5:
+        if (!error) sis(out, len, ui.ready ? "Character selected" : "Select your character");
+        return TEXT_WHITE;
+    case 6: return error ? TEXT_WHITE : spinner_glyph(out, len, ui.ready);
+    case 7:
+        if (error) return TEXT_WHITE;
+        if (ui.page == SLIPPI_PAGE_CODE) sis(out, len, "Enter the code on the touch screen");
+        else if (ui.locked) sis(out, len, "Locked in");
+        else if (ui.phase == SLIPPI_PHASE_IDLE) sis(out, len, "Press START to enter code");
+        else if (connected) sis(out, len, ui.need_stage && !ui.chose_stage ? "Press START to select stage" : "Press START to lock in");
+        return TEXT_WHITE;
+    case 8:
+        if (error || !out) return TEXT_WHITE;
+        if (ui.phase == SLIPPI_PHASE_IDLE && ui.page != SLIPPI_PAGE_CODE && !ui.locked) return spinner_glyph(out, len, 0);
+        return spinner_glyph(out, len, ui.locked);
+    case 9:
+        if (ui.phase == SLIPPI_PHASE_SEARCH) {
+            snprintf(b, sizeof b, ui.net_status == 2 ? "Connecting to %s" : "Searching for %s", ui.target);
+            sis(out, len, b);
+        } else if (connected) {
+            sis(out, len, "Waiting on opponent");
+        }
+        return TEXT_WHITE;
+    case 10:
+        if (ui.phase == SLIPPI_PHASE_SEARCH || connected) return spinner_glyph(out, len, 0);
+        return TEXT_WHITE;
+    case 11:
+        if (ui.phase == SLIPPI_PHASE_SEARCH) sis(out, len, "Press Z to cancel");
+        else if (error) sis(out, len, "Press Z to clear error");
+        else if (connected) sis(out, len, "Hold Z to disconnect");
+        return TEXT_GRAY;
+    case 12:
+        if (connected) sis(out, len, "Use D-Pad to Chat");
+        return TEXT_GRAY;
+    case 13:
+        if (connected) sis(out, len, "Playing:");
+        return TEXT_GRAY;
+    case 14:
+        if (connected) sis(out, len, ui.opponent_name[0] ? ui.opponent_name : ui.opponent_code);
+        return TEXT_WHITE;
+    case 15: case 16: case 17: case 18:
+        if (error) error_line(line - 15, out, len);
+        return TEXT_RED;
+    }
+    return TEXT_WHITE;
+}
