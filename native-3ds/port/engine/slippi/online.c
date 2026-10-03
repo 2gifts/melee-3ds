@@ -32,6 +32,7 @@
 #include <sysdolphin/baselib/random.h>
 #include <slippi_engine.h>
 #include <slippi_net_bridge.h>
+#include <slippi_rules.h>
 
 void mp_platform_log(const char* text);
 void mp_slippi_gmvs_end_online(int pauser);   /* gmvs.c (tools/slippi_edits/online.py) */
@@ -563,6 +564,9 @@ void mp_slippi_online_start_melee(StartMeleeData* data)
     on.rng_offset = be32(on.block + BLOCK_SIZE);
     on.local_index = on.block[BLOCK_SIZE + 4] & 3;
     on.remote_index = on.local_index == 0 ? 1 : 0;
+    /* Online-only gameplay codes (LGL, GAME! hold) and the frozen Stadium choice. */
+    mp_slippi_rules_set_online(2 /* DIRECT */, on.local_index);
+    mp_slippi_rules_set_frozen_stadium(on.block[BLOCK_SIZE + 6]);
     delay = on.block[BLOCK_SIZE + 5];
     if (delay < MIN_DELAY) {
         delay = on.delay_setting;
@@ -604,6 +608,7 @@ void mp_slippi_online_match_exit(void)
         return;
     }
     mp_slippi_record_online_end();
+    mp_slippi_rules_set_online(-1, 0);
     logf_("Slippi online: match exit after %d frames, %d waits for the opponent, desync %d\n", (int) on.frames,
           (int) on.waits, on.desync_shown);
     logf_("Slippi online: waited %d ms in total, longest %d ms\n", (int) on.wait_ms, (int) on.longest_wait_ms, 0);

@@ -12,6 +12,10 @@
 #include <slippi_rules.h>
 
 static MPUcfPad pads[4];
+/* The four raw pads the last HSD_PadRenewMasterStatus consumed
+ * (tools/slippi_edits/online.py); the Slippi replay playback writes the
+ * recorded raw sticks here too. */
+PADStatus mp_pad_consumed[4];
 volatile unsigned mp_ucf_enabled=1;
 unsigned mp_ucf_checks[8],mp_ucf_applied[8];
 void mp_ucf_reset(void){memset(pads,0,sizeof(pads));}
@@ -20,10 +24,8 @@ static int active(Fighter*f){return mp_ucf_enabled&&mp_slippi_rule(MP_SR_UCF)&&f
 void mp_ucf_input(Fighter*f){
     if(!active(f)||ftCo_800A2040(f))return;
     ++mp_ucf_checks[0];
-    int i=(int)HSD_PadLibData.qread-1;
-    if(i<0)i+=HSD_PadLibData.qnum;
-    if(!HSD_PadLibData.queue||i<0||i>=HSD_PadLibData.qnum)return;
-    PADStatus*s=&HSD_PadLibData.queue[i].stat[f->x618_player_id];
+    /* The raw pad this engine body consumed (see mp_pad_consumed). */
+    PADStatus*s=&mp_pad_consumed[f->x618_player_id];
     MPUcfPad*p=&pads[f->x618_player_id];mp_ucf_push(p,s->stickX,s->stickY);
     if(f->kind!=Ft_Kind_Zelda||f->motion_id!=349){
         mp_ucf_cardinal(s->stickX,s->stickY,&f->input.lstick[0].x,&f->input.lstick[0].y);
@@ -78,3 +80,5 @@ float mp_ucf_squat_threshold(Fighter*f){
     if(f->x670_timer_lstick_tilt_x<1&&mp_ucf_rim(f->input.lstick[0].x,f->input.lstick[0].y)){++mp_ucf_applied[7];return .59f;}
     return p_ftCommonData->x94;
 }
+/* Slippi experiment diagnostics: the UCF stick history (replay fighter dumps). */
+const void* mp_ucf_history(unsigned* size){*size=sizeof(pads);return pads;}

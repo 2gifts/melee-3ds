@@ -12,23 +12,11 @@ static int mp_ucf_rim(float x,float y){
     int iy=(int)(float)((double)y*80.0-(double)0.0001f)+2;
     return ix*ix+iy*iy>6400;
 }
-/* PowerPC fmadds: a*b+c with a single rounding to float. The product is
- * exact in double; the sum is rounded to odd (Boldo-Melquiond), which leaves
- * enough bits for the final float rounding to be the correctly rounded one. */
+/* fmadds as Dolphin computes it (the PC peer is Dolphin): the exact product
+ * plus c rounded to double, then to float. Equal to the plain double sum,
+ * because a float*float product is exact in double. */
 static float mp_ucf_fmadds(float a,float b,float c){
-    double p=(double)a*(double)b;
-    double s=p+(double)c;
-    double v=s-p;
-    double err=(p-(s-v))+((double)c-v);
-    if(err!=0){
-        unsigned long long bits;
-        __builtin_memcpy(&bits,&s,sizeof bits);
-        if(!(bits&1)){
-            if((err>0)==(s>0))++bits;else--bits;
-            __builtin_memcpy(&s,&bits,sizeof bits);
-        }
-    }
-    return (float)s;
+    return (float)((double)a*(double)b+(double)c);
 }
 static void mp_ucf_cardinal(int x,int y,float*fx,float*fy){
     if((x<=-80||x>=80)&&y>=-6&&y<=6){*fx=x<0?-1.f:1.f;*fy=0;}

@@ -4,6 +4,19 @@ DECL = '#include <slippi_engine.h>\n'
 
 FIXES = {
     'sysdolphin/baselib/controller.c': [
+        # The raw pads this engine body consumed. UCF reads raw stick history
+        # from the queue entry behind qread, but on the 3DS a later pad alarm
+        # can already have refilled that slot when the fighters run (the
+        # console polls once per frame, before the body). Keep a copy.
+        ('    if (p->qcount != 0) {\n        qread = &p->queue->stat[p->qread * 4];\n',
+         '    if (p->qcount != 0) {\n        qread = &p->queue->stat[p->qread * 4];\n'
+         '        {\n'
+         '            extern PADStatus mp_pad_consumed[4];\n'
+         '            int k;\n'
+         '            for (k = 0; k < 4; k++) {\n'
+         '                mp_pad_consumed[k] = qread[k];\n'
+         '            }\n'
+         '        }\n', 1),
         ('#include "controller.h"\n', DECL + '#include "controller.h"\n', 1),
         # TriggerSendInput (80376A28): send this frame's pad, take the remote
         # one, or drop the sample while waiting for it.
@@ -21,7 +34,8 @@ FIXES = {
         # StartEngineLoop (801A4DE4): checksums, disconnect handling.
         ('            HSD_PerfSetStartTime();\n',
          '            HSD_PerfSetStartTime();\n'
-         '            mp_slippi_online_frame_begin();\n', 1),
+         '            mp_slippi_online_frame_begin();\n'
+         '            mp_slippi_replay_body_begin();\n', 1),
         # A tick the render pass will not follow (the 3DS draws less often
         # than it simulates): its gameplay-visible side effects.
         ('            if (temp_r25->unk_C != 0) {\n                break;\n            }\n',

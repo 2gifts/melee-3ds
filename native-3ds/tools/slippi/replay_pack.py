@@ -17,9 +17,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from slp import parse  # noqa: E402
 
 
-def pack(replay):
+def pack(replay, raw=False):
+    """raw: 'SLR2', 40-byte entries that also carry the physical buttons
+    (bytes 6-7) and physical L/R floats (32-39); the port feeds the raw pad
+    through the game's own pad processing instead of injecting results."""
     r = replay
-    out = bytearray(b'SLR1')
+    out = bytearray(b'SLR2' if raw else b'SLR1')
     out += struct.pack('>I', (r.version[0] << 16) | (r.version[1] << 8) | r.version[2])
     out += r.game_info
     assert len(out) == 0x140
@@ -32,16 +35,19 @@ def pack(replay):
         entries = sorted(by_frame.get(frame, []), key=lambda e: (e[0], e[1]))
         out += struct.pack('>IB3x', r.frame_seed.get(frame, 0), len(entries))
         for port, follower, pre in entries:
-            out += struct.pack('>BB4B2x', port, follower, *pre['raw'])
+            out += struct.pack('>BB4B', port, follower, *pre['raw'])
+            out += pre['phys'] if raw else b'\0\0'
             out += pre['lstick'][0] + pre['lstick'][1] + pre['cstick'][0] + pre['cstick'][1]
             out += pre['trigger'] + pre['buttons']
+            if raw:
+                out += pre['phys_lr']
     return bytes(out)
 
 
 def main():
     src, dst = sys.argv[1], sys.argv[2]
     r = parse(src)
-    data = pack(r)
+    data = pack(r, raw='--raw' in sys.argv)
     Path(dst).write_bytes(data)
     print(f'{src}: version {".".join(map(str, r.version))}, frames {r.first}..{r.last}, '
           f'{len(data)} bytes, stage {struct.unpack(">H", r.game_info[0xE:0x10])[0]}')

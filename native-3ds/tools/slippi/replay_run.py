@@ -30,7 +30,7 @@ def ended(path):
     return len(data) >= 40 and len(data) % 40 == 0 and data[-40:-39] == b'E'
 
 
-def run(slp, instance='replay', dsx=None, timeout=None, port=24820, keep=False):
+def run(slp, instance='replay', dsx=None, timeout=None, port=24820, keep=False, raw=False):
     slp = Path(slp)
     replay = parse(slp)
     frames = replay.last - replay.first + 1
@@ -38,12 +38,12 @@ def run(slp, instance='replay', dsx=None, timeout=None, port=24820, keep=False):
     home = emu.prepare(instance, port)
     sd = emu.sd(home)
     (sd / 'slippi').mkdir(parents=True, exist_ok=True)
-    (sd / 'slippi/replay.bin').write_bytes(pack(replay))
+    (sd / 'slippi/replay.bin').write_bytes(pack(replay, raw))
     out = sd / 'slippi/replay-out.bin'
     out.unlink(missing_ok=True)
     (sd / 'game.log').unlink(missing_ok=True)
     dsx = Path(dsx or ROOT / 'dist/3ds/melee/melee-development.3dsx')
-    result = ROOT / 'build/slippi-replays' / slp.stem
+    result = ROOT / 'build/slippi-replays' / (slp.stem + ('-raw' if raw else ''))
     result.mkdir(parents=True, exist_ok=True)
     proc = emu.launch(home, dsx.resolve())
     start = time.monotonic()
@@ -86,8 +86,9 @@ def main():
     ap.add_argument('--dsx')
     ap.add_argument('--timeout', type=float)
     ap.add_argument('--keep', action='store_true')
+    ap.add_argument('--raw', action='store_true', help='feed raw pads through the game pad code')
     a = ap.parse_args()
-    sys.exit(run(a.slp, a.instance, a.dsx, a.timeout, a.port, a.keep))
+    sys.exit(run(a.slp, a.instance, a.dsx, a.timeout, a.port, a.keep, a.raw))
 
 
 if __name__ == '__main__':

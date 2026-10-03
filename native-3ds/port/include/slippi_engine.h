@@ -30,6 +30,7 @@ void mp_slippi_replay_input(struct Fighter* fp);
 void mp_slippi_replay_post_frame(struct Fighter* fp);
 void mp_slippi_replay_match_exit(void);
 int mp_slippi_replay_frame_index(void);
+void mp_slippi_replay_body_begin(void);
 
 /* ---- online play (port/engine/slippi/online.c) ---- */
 struct PADStatus;

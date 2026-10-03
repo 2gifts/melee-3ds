@@ -33,16 +33,11 @@ static Fighter make(void){Fighter f={0};f.facing_dir=1;return f;}
 static void speed(int x,int y){memset(pads,0,sizeof(pads));mp_ucf_push(&pads[0],0,0);mp_ucf_push(&pads[0],0,0);mp_ucf_push(&pads[0],x,y);}
 int main(void){
     unsigned cases=0;
-    /* fmadds against a correctly rounded fused multiply-add. */
-    {unsigned s=12345;for(int i=0;i<2000000;++i){float v[3];for(int k=0;k<3;++k){s=s*1103515245u+12345u;unsigned b=s;s=s*1103515245u+12345u;b^=s>>16;
-        b=(b&0x807FFFFFu)|((unsigned)(100+(b>>23)%56)<<23);memcpy(&v[k],&b,4);}
-        float want=fmaf(v[0],v[1],v[2]),got=mp_ucf_fmadds(v[0],v[1],v[2]);
-        if(memcmp(&want,&got,4)){printf("fmadds %a %a %a: %a vs %a\n",(double)v[0],(double)v[1],(double)v[2],(double)got,(double)want);return 1;}}
-     float x=.7f,y=.1f;assert(mp_ucf_fmadds(x,x,y*y)==fmaf(x,x,y*y));
-     /* (1+2^-12)^2 is a float tie; a tiny addend decides it, which a plain
-      * double sum loses and the round-to-odd sum keeps. */
-     float a=1.0f+0x1p-12f,c=0x1p-80f;
-     assert((float)((double)a*a+c)!=fmaf(a,a,c)&&mp_ucf_fmadds(a,a,c)==fmaf(a,a,c)&&mp_ucf_fmadds(a,a,-c)==fmaf(a,a,-c));}
+    /* fmadds as Dolphin rounds it: exact product + c in double, then float
+     * (the Slippi peer is Dolphin; tools/slippi/fp_vectors.py models the same). */
+    {float a=1.0f+0x1p-12f,c=0x1p-80f;
+     assert(mp_ucf_fmadds(a,a,c)==(float)((double)a*a+c));
+     float x=.7f,y=.1f;assert(mp_ucf_fmadds(x,x,y*y)==(float)((double)x*x+(double)(y*y)));}
     for(int x=-128;x<128;++x)for(int y=-128;y<128;++y){
         float a=.37f,b=-.23f;mp_ucf_cardinal(x,y,&a,&b);
         if(abs(x)>=80&&abs(y)<=6){assert(a==(x<0?-1.f:1.f)&&b==0);}
@@ -53,7 +48,7 @@ int main(void){
         int iy=(int)(float)(fabs((double)fy)*80.0-(double).0001f)+2;
         assert(mp_ucf_rim(fx,fy)==(ix*ix+iy*iy>6400));++cases;
     }
-    Fighter f=make();raw_queue[0].stat[0]=(PADStatus){80,6,-4,-81};
+    Fighter f=make();mp_pad_consumed[0]=(PADStatus){80,6,-4,-81};
     mp_ucf_reset();mp_ucf_input(&f);assert(f.input.lstick[0].x==1&&f.input.lstick[0].y==0&&f.input.cstick[0].y==-1);
     f.kind=Ft_Kind_Zelda;f.motion_id=349;f.input.lstick[0]=(Vec2){.95f,.075f};mp_ucf_input(&f);assert(f.input.lstick[0].x==.95f);
     unsigned index=pads[0].index;f.is_cpu=1;mp_ucf_input(&f);assert(pads[0].index==index);

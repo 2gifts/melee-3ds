@@ -40,10 +40,12 @@ void mp_platform_log(const char* text);
 #define OUT_PATH "sdmc:/3ds/melee/slippi/replay-out.bin"
 #define ONLINE_OUT_PATH "sdmc:/3ds/melee/slippi/online-out.bin"
 #define FIRST_FRAME (-123)
-#define ENTRY_SIZE 32
+#define ENTRY_SIZE (raw_mode ? 40 : 32)
 #define HEADER_SIZE 0x14C
 
 static int loaded;            /* 0 = not tried, 1 = active, -1 = absent */
+static int raw_mode;          /* SLR2: raw pads through the game's pad code */
+static int dump_first = 1, dump_last = 0;   /* dump.txt: whole Fighter structs */
 static const u8* blob;
 static unsigned blob_size;
 static const u8** frame_ptr;  /* per replay frame, its record */
@@ -83,7 +85,8 @@ static int load(void)
         return 0;
     }
     blob_size = mp_platform_slippi_file_size();
-    if (blob_size < HEADER_SIZE || memcmp(blob, "SLR1", 4) != 0) {
+    raw_mode = blob_size >= 4 && memcmp(blob, "SLR2", 4) == 0;
+    if (blob_size < HEADER_SIZE || (memcmp(blob, "SLR1", 4) != 0 && !raw_mode)) {
         mp_platform_log("Slippi replay: bad replay.bin\n");
         return 0;
     }
@@ -101,6 +104,31 @@ static int load(void)
         off += 8 + blob[off + 4] * ENTRY_SIZE;
     }
     mp_platform_slippi_unlimited();
+    {
+        /* sdmc:/3ds/melee/slippi/dump.txt "FIRST LAST": dump every fighter's
+         * whole struct at its post-frame point for those replay frames. */
+        const char* d = mp_platform_slippi_file_load("sdmc:/3ds/melee/slippi/dump.txt");
+        if (d != NULL) {
+            int v[2] = {0, 0}, k = 0, sign = 1;
+            unsigned n = mp_platform_slippi_file_size(), j;
+            for (j = 0; j <= n && k < 2; j++) {
+                char c = j < n ? d[j] : ' ';
+                if (c == '-') {
+                    sign = -1;
+                } else if (c >= '0' && c <= '9') {
+                    v[k] = v[k] * 10 + (c - '0');
+                } else if (j > 0 && d[j - 1] >= '0' && d[j - 1] <= '9') {
+                    v[k] *= sign;
+                    sign = 1;
+                    k++;
+                }
+            }
+            dump_first = v[0];
+            dump_last = v[1];
+            mp_platform_free((void*) d);
+            mp_platform_slippi_file_write("sdmc:/3ds/melee/slippi/fighter-dump.bin", "", 0, 0);
+        }
+    }
     loaded = 1;
     logf_("Slippi replay: %d frames from %d\n", (int) frame_count, first_frame);
     return 1;
@@ -208,6 +236,78 @@ static void out_end(void)
     put32(b + 4, (u32) frame_index);
     out_len += 40;
     out_flush();
+}
+
+/* ---- raw mode: the recorded pads enter where PADRead's results do ----
+ * Called at the top of each engine body, before HSD_PadRenewMasterStatus
+ * reads the queue entry: the entry gets each port's raw stick, c-stick,
+ * physical buttons and triggers (recovered from the processed L/R floats). */
+static u8 raw_trigger(const u8* f)
+{
+    PadLibData* p = &HSD_PadLibData;
+    float v = bef(f);
+    int raw;
+    if (v <= 0.0f) {
+        return 0;
+    }
+    raw = (int) (v * (float) p->scale_analogLR + 0.5f);
+    if (p->clamp_analogLRShift == 1) {
+        raw += p->clamp_analogLRMin;
+    }
+    return (u8) (raw > 255 ? 255 : raw);
+}
+
+void mp_slippi_replay_body_begin(void)
+{
+    PadLibData* p = &HSD_PadLibData;
+    const u8* rec;
+    int frame, i, n;
+    if (!mp_slippi_replay_on() || !raw_mode || terminated || p->qcount == 0) {
+        return;
+    }
+    frame = gm_801A4BA8() == 0 ? FIRST_FRAME : frame_index + 1;
+    rec = frame_record(frame);
+    if (rec == NULL) {
+        return;
+    }
+    n = rec[4];
+    for (i = 0; i < n; i++) {
+        const u8* e = rec + 8 + i * ENTRY_SIZE;
+        PADStatus* pad;
+        if (e[1] != 0 || e[0] > 3) {
+            continue;
+        }
+        pad = &p->queue[p->qread].stat[e[0]];
+        memset(pad, 0, sizeof *pad);
+        pad->stickX = (s8) e[2];
+        pad->stickY = (s8) e[3];
+        pad->substickX = (s8) e[4];
+        pad->substickY = (s8) e[5];
+        pad->button = (u16) (e[6] << 8 | e[7]);
+        pad->triggerLeft = raw_trigger(e + 32);
+        pad->triggerRight = raw_trigger(e + 36);
+    }
+}
+
+/* 'Q' record: the processed inputs a fighter got (raw mode). */
+static void out_inputs(Fighter* fp)
+{
+    u8* b;
+    if (out_len + 40 > sizeof out_buf) {
+        out_flush();
+    }
+    b = out_buf + out_len;
+    memset(b, 0, 40);
+    b[0] = 'Q';
+    b[1] = fp->player_id;
+    put32(b + 4, (u32) frame_index);
+    putf(b + 16, fp->input.lstick[0].x);
+    putf(b + 20, fp->input.lstick[0].y);
+    putf(b + 24, fp->input.cstick[0].x);
+    putf(b + 28, fp->input.cstick[0].y);
+    putf(b + 32, fp->input.triggers[0]);
+    put32(b + 36, fp->input.held_buttons[0]);
+    out_len += 40;
 }
 
 /* ---- the 3DS's own record of an online match ----
@@ -391,6 +491,12 @@ void mp_slippi_replay_input(Fighter* fp)
         return;
     }
     follower = fp->x221F_b4 && fp->kind == Ft_Kind_Nana;
+    if (raw_mode) {
+        if (!follower) {
+            out_inputs(fp);
+        }
+        goto spawn;
+    }
     e = entry_for(frame_index, fp->player_id, follower);
     if (e == NULL) {
         out_record('p', fp);   /* no recorded input for this fighter */
@@ -414,7 +520,16 @@ void mp_slippi_replay_input(Fighter* fp)
         pad->stickY = (s8) e[3];
         pad->substickX = (s8) e[4];
         pad->substickY = (s8) e[5];
+        {
+            extern PADStatus mp_pad_consumed[4];
+            PADStatus* c = &mp_pad_consumed[fp->x618_player_id & 3];
+            c->stickX = (s8) e[2];
+            c->stickY = (s8) e[3];
+            c->substickX = (s8) e[4];
+            c->substickY = (s8) e[5];
+        }
     }
+spawn:
     /* Spawn correction on the first frame. */
     if (frame_index == FIRST_FRAME) {
         CmSubject* box;
@@ -433,9 +548,36 @@ void mp_slippi_replay_input(Fighter* fp)
     out_record('P', fp);
 }
 
+static void dump_fighter(Fighter* fp)
+{
+    u8 head[16];
+    if (frame_index < dump_first || frame_index > dump_last) {
+        return;
+    }
+    memset(head, 0, sizeof head);
+    put32(head, (u32) frame_index);
+    head[4] = fp->player_id;
+    head[5] = (u8) (fp->x221F_b4 && fp->kind == Ft_Kind_Nana);
+    put32(head + 8, (u32) sizeof(Fighter));
+    mp_platform_slippi_file_write("sdmc:/3ds/melee/slippi/fighter-dump.bin", head, sizeof head, 1);
+    mp_platform_slippi_file_write("sdmc:/3ds/melee/slippi/fighter-dump.bin", fp, sizeof(Fighter), 1);
+    {
+        extern const void* mp_ucf_history(unsigned* size);
+        unsigned n;
+        const void* h = mp_ucf_history(&n);
+        head[4] = (u8) (0x80 | fp->player_id);
+        put32(head + 8, n);
+        mp_platform_slippi_file_write("sdmc:/3ds/melee/slippi/fighter-dump.bin", head, sizeof head, 1);
+        mp_platform_slippi_file_write("sdmc:/3ds/melee/slippi/fighter-dump.bin", h, n, 1);
+    }
+}
+
 /* SendGamePostFrame's point: after the camera callback. */
 void mp_slippi_replay_post_frame(Fighter* fp)
 {
+    if (!online_rec && mp_slippi_replay_on() && !terminated && !fp->x221F_b3) {
+        dump_fighter(fp);
+    }
     if (online_rec) {
         if (!fp->x221F_b3) {
             out_record('O', fp);
