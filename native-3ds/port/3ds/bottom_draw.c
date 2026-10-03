@@ -199,6 +199,8 @@ static void footer(unsigned fps,unsigned show_fps,unsigned expanded,unsigned rat
     else center(280,220,guide?"CLOSE":"CONTROLS",13,guide?gold:ink);
 }
 unsigned mp_bottom_hit(unsigned x,unsigned y){if(x>=320||y<215||y>=240)return 0;return x<80?MP_BOTTOM_FPS:x<160?MP_BOTTOM_RATE:x<240?MP_BOTTOM_VIEW:MP_BOTTOM_GUIDE;}
+/* Slippi Direct matches: the players' display names (bottom_draw.c's online part). */
+static const char* card_labels[4];
 static void card(int x,int y,int w,int h,const MPBottomPlayer* p,unsigned slot,int battle,int stock,int stamina){
     uint16_t color=colors[p->color%4];int out=battle&&stock&&!p->stocks;
     rect(x,y,w,h,RGB(25,36,51));rect(x,y,3,h,p->kind==3?RGB(66,78,90):color);
@@ -206,7 +208,8 @@ static void card(int x,int y,int w,int h,const MPBottomPlayer* p,unsigned slot,i
     if(p->kind==3){char id[12];snprintf(id,sizeof(id),"P%u",slot+1);text(x+11,y+6,id,14,muted);center(x+w/2,y+33,"CLOSED",17,muted);return;}
     int pw=w>200?56:44,ph=w>200?78:62;
     portrait(x+5,y+h-ph,pw,ph,p,out);
-    int tx=x+pw+11;char b[32];snprintf(b,sizeof(b),p->kind==1?"P%u / CPU":"PLAYER %u",slot+1);
+    int tx=x+pw+11;char b[48];snprintf(b,sizeof(b),p->kind==1?"P%u / CPU":"PLAYER %u",slot+1);
+    if(card_labels[slot])snprintf(b,sizeof(b),"P%u  %s",slot+1,card_labels[slot]);
     text(tx,y+4,b,11,out?muted:color);
     const char* name=p->character<26?names[p->character]:"RANDOM";
     if(w>200){fit(tx,y+17,name,17,125,out?muted:ink);
@@ -443,7 +446,8 @@ enum{SL_ACTION_X=8,SL_ACTION_Y=187,SL_ACTION_W=190,SL_ACTION_H=23,SL_SIDE_X=204,
 static int slippi_online_css_drawn; /* the last online page drawn was the CSS one (not the SSS) */
 static int slippi_online_page(const MPBottomState* s){
     const SlippiUiView* v=slippi_ui_view();
-    return s->scene==8&&s->mode==8&&(v->page==SLIPPI_PAGE_CSS||v->page==SLIPPI_PAGE_CODE||v->page==SLIPPI_PAGE_CHAT);
+    return s->scene==8&&s->mode==8&&(v->page==SLIPPI_PAGE_CSS||v->page==SLIPPI_PAGE_CODE||v->page==SLIPPI_PAGE_CHAT||
+                                     v->page==SLIPPI_PAGE_SETTINGS);
 }
 static void status_line(int y,int done,const char* s,int spinner){
     text(17,y,done?"-":spinner?"x":"+",12,done?slippi_done:slippi_wait);fit(33,y,s,12,270,ink);
@@ -494,18 +498,36 @@ static void slippi_css_page(void){
     }
     /* Actions */
     int enabled;const char* action=slippi_action(v,&enabled);
-    int aw=connected&&v->chat_enabled?SL_CONNECTED_W:SL_ACTION_W;
+    int aw=(connected&&v->chat_enabled)||v->phase==SLIPPI_PHASE_IDLE?SL_CONNECTED_W:SL_ACTION_W;
     if(enabled)pill(SL_ACTION_X,SL_ACTION_Y,aw,SL_ACTION_H,action,13,1);
     else{rect(SL_ACTION_X,SL_ACTION_Y,aw,SL_ACTION_H,card_color);center(SL_ACTION_X+aw/2,SL_ACTION_Y+5,action,13,muted);}
     if(connected&&v->chat_enabled)pill(SL_CHAT_X,SL_ACTION_Y,SL_CHAT_W,SL_ACTION_H,"CHAT",13,0);
+    if(v->phase==SLIPPI_PHASE_IDLE)pill(SL_CHAT_X,SL_ACTION_Y,SL_CHAT_W,SL_ACTION_H,"SETTINGS",12,0);
     if(connected){
         rect(SL_SIDE_X,SL_ACTION_Y,SL_SIDE_W,SL_ACTION_H,v->hold_z?RGB(90,30,34):dark);
         if(v->hold_z)rect(SL_SIDE_X,SL_ACTION_Y+SL_ACTION_H-3,SL_SIDE_W*v->hold_z/0x30,3,slippi_red);
         center(SL_SIDE_X+SL_SIDE_W/2,SL_ACTION_Y+5,"DISCONNECT",13,ink);
     }else{
-        const char* hint=v->phase==SLIPPI_PHASE_SEARCH?"Z: CANCEL":v->phase==SLIPPI_PHASE_ERROR?"Z: CLEAR":"OR PRESS START";
+        const char* hint=v->phase==SLIPPI_PHASE_SEARCH?"Z: CANCEL":v->phase==SLIPPI_PHASE_ERROR?"Z: CLEAR":"START";
         center(SL_SIDE_X+SL_SIDE_W/2,SL_ACTION_Y+6,hint,11,muted);
     }
+}
+enum{SET_Y0=38,SET_H=44,SET_STEP=52};
+static void slippi_settings_page(void){
+    const SlippiUiView* v=slippi_ui_view();char b[16];
+    header("ONLINE SETTINGS","BACK");
+    int y=SET_Y0;
+    rect(8,y,304,SET_H,card_color);rect(8,y,3,SET_H,gold);
+    text(19,y+6,"DELAY FRAMES",14,ink);fit(19,y+25,"KEEP AT 2 UNLESS PING IS 120+ MS",10,186,muted);
+    pill(214,y+9,26,26,"-",17,0);snprintf(b,sizeof(b),"%d",v->delay);center(258,y+12,b,20,gold);pill(276,y+9,26,26,"+",17,0);
+    y+=SET_STEP;
+    rect(8,y,304,SET_H,card_color);rect(8,y,3,SET_H,v->chat_enabled?gold:line_color);
+    text(19,y+6,"QUICK CHAT",14,ink);fit(19,y+25,"D-PAD MESSAGES ON THE CSS",10,186,muted);
+    pill(240,y+9,62,26,v->chat_enabled?"ON":"OFF",14,v->chat_enabled);
+    y+=SET_STEP;
+    rect(8,y,304,SET_H,card_color);rect(8,y,3,SET_H,line_color);
+    text(19,y+6,"RECENT CODES",14,ink);snprintf(b,sizeof(b),"%d SAVED",v->history_count);fit(19,y+25,b,10,190,muted);
+    pill(240,y+9,62,26,"CLEAR",13,0);
 }
 static void chat_rect(int i,int* x,int* y){*x=8+(i/8)*156;*y=CHAT_ROW0+(i%8)*CHAT_STEP;}
 static void slippi_chat_page(void){
@@ -561,12 +583,21 @@ unsigned mp_bottom_online_touch(unsigned x,unsigned y){
         if(inside(x,y,8,35,304,36))slippi_ui_use_suggestion();
         return 1;
     }
+    if(v->page==SLIPPI_PAGE_SETTINGS){
+        if(inside(x,y,214,SET_Y0+9,26,26))slippi_ui_set_delay(-1);
+        else if(inside(x,y,276,SET_Y0+9,26,26))slippi_ui_set_delay(1);
+        else if(inside(x,y,8,SET_Y0+SET_STEP,304,SET_H))slippi_ui_toggle_chat();
+        else if(inside(x,y,240,SET_Y0+2*SET_STEP+9,62,26))slippi_ui_clear_history();
+        else if(!inside(x,y,8,SET_Y0,304,3*SET_STEP))slippi_ui_close_settings();
+        return 1;
+    }
+    if(v->phase==SLIPPI_PHASE_IDLE&&inside(x,y,SL_CHAT_X,SL_ACTION_Y,SL_CHAT_W,SL_ACTION_H)){slippi_ui_open_settings();return 1;}
     if(v->page==SLIPPI_PAGE_CHAT){
         for(int i=0;i<16;++i){int cx,cy;chat_rect(i,&cx,&cy);if(inside(x,y,cx,cy,CHAT_W,CHAT_H)){slippi_ui_send_chat(i);return 1;}}
         slippi_ui_close_chat();return 1;
     }
     if(v->phase==SLIPPI_PHASE_CONNECTED&&v->chat_enabled&&inside(x,y,SL_CHAT_X,SL_ACTION_Y,SL_CHAT_W,SL_ACTION_H)){slippi_ui_open_chat();return 1;}
-    if(inside(x,y,SL_ACTION_X,SL_ACTION_Y,v->phase==SLIPPI_PHASE_CONNECTED&&v->chat_enabled?SL_CONNECTED_W:SL_ACTION_W,SL_ACTION_H)){
+    if(inside(x,y,SL_ACTION_X,SL_ACTION_Y,(v->phase==SLIPPI_PHASE_CONNECTED&&v->chat_enabled)||v->phase==SLIPPI_PHASE_IDLE?SL_CONNECTED_W:SL_ACTION_W,SL_ACTION_H)){
         if(v->phase==SLIPPI_PHASE_SEARCH||v->phase==SLIPPI_PHASE_ERROR)slippi_ui_cancel();
         else slippi_ui_press_start();
         return 1;
@@ -578,10 +609,21 @@ unsigned mp_bottom_online_active(const MPBottomState* s){return slippi_online_pa
 void mp_bottom_draw(uint16_t* pixels,const MPBottomState* s,unsigned fps,unsigned show_fps,unsigned expanded,unsigned rate,unsigned guide){
     canvas=pixels;background();
     int battle=s->scene==2||s->scene==3||s->scene==4||s->scene==44;
+    static char online_labels[2][48];
+    for(int i=0;i<4;++i)card_labels[i]=NULL;
+    if((battle||s->scene==5)&&s->mode==8){
+        const SlippiUiView* v=slippi_ui_view();int me=slippi_ui_local_port();
+        if(me>=0){
+            snprintf(online_labels[me],sizeof(online_labels[0]),"%s",v->user_name[0]?v->user_name:v->user_code);
+            snprintf(online_labels[!me],sizeof(online_labels[0]),"%s  %d MS",v->opponent_name[0]?v->opponent_name:v->opponent_code,v->ping_ms);
+            for(int k=0;k<2;++k)for(char* c=online_labels[k];*c;++c)if(*c>='a'&&*c<='z')*c-=32;
+            card_labels[0]=online_labels[0];card_labels[1]=online_labels[1];
+        }
+    }
     if(guide)guide_page();
     else if(battle||s->scene==5){
         char timer[24];if(s->timer)snprintf(timer,sizeof(timer),"%u:%02u",s->seconds/60,s->seconds%60);else snprintf(timer,sizeof(timer),"%s",s->scene==4?"FREE PLAY":s->teams?"TEAMS":"FREE FOR ALL");
-        header(s->scene==5?"MATCH COMPLETE":s->scene==4?"TRAINING":s->scene==3?"SUDDEN DEATH":"MELEE",s->scene==5?"RESULTS":timer);
+        header(s->scene==5?"MATCH COMPLETE":s->scene==4?"TRAINING":s->scene==3?"SUDDEN DEATH":s->mode==8?"DIRECT":"MELEE",s->scene==5?"RESULTS":timer);
         unsigned count=0;for(unsigned i=0;i<4;++i)if(s->players[i].kind!=3)++count;
         if(count<=2){unsigned row=0;for(unsigned i=0;i<4;++i)if(s->players[i].kind!=3)card(8,38+(row++)*86,304,80,&s->players[i],i,s->scene==4?2:1,s->stock_mode,s->stamina);
             if(!count)center(160,100,"GET READY",28,gold);
@@ -590,7 +632,8 @@ void mp_bottom_draw(uint16_t* pixels,const MPBottomState* s,unsigned fps,unsigne
     }else if(slippi_online_page(s)){
         slippi_online_css_drawn=1;
         if(slippi_ui_view()->page==SLIPPI_PAGE_CODE)slippi_code_page();
-        else if(slippi_ui_view()->page==SLIPPI_PAGE_CHAT)slippi_chat_page();else slippi_css_page();
+        else if(slippi_ui_view()->page==SLIPPI_PAGE_CHAT)slippi_chat_page();
+        else if(slippi_ui_view()->page==SLIPPI_PAGE_SETTINGS)slippi_settings_page();else slippi_css_page();
     }else if(s->scene==8){
         header("SELECT YOUR FIGHTER",mode_title(s->mode));
         for(unsigned i=0;i<4;++i)card(8+(i%2)*156,38+(i/2)*76,148,70,&s->players[i],i,0,0,0);

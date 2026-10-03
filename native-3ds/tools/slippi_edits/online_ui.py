@@ -103,6 +103,12 @@ FIXES = {
         ('/// @brief checks if a menu selection is locked\n', MENU_CODE + '\n/// @brief checks if a menu selection is locked\n', 1),
         ('#include "mnmain.h"\n', DECL + '#include "mnmain.h"\n', 1),
     ],
+    # IncreaseTextHeap (801a3f9c): the online CSS's text needs the menus' size.
+    'melee/gm/gm_1A3F.c': [
+        ('    case GS_CSS:\n        HSD_SisLib_803A6048(0x2400);\n',
+         '    case GS_CSS:\n'
+         '        HSD_SisLib_803A6048(state_machine.routing.curr_mode == GM_HANYU_CSS ? 0x4800 : 0x2400);\n', 1),
+    ],
     'melee/gm/gmmenumode.c': [
         ('#include "gm_1A3F.h"\n', DECL + '#include "gm_1A3F.h"\n', 1),
         ('    previous_mode = gm_GetPreviousGameMode();\n',

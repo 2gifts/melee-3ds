@@ -51,6 +51,8 @@ static int user_loaded, history_loaded, frame, pending_start, pending_cancel, sf
 static unsigned stage_used;   /* stages drawn from the pool this connection */
 static char history[SLIPPI_HISTORY_MAX][SLIPPI_CODE_MAX + 1];
 
+static void load_settings(void);
+
 const SlippiUiView *slippi_ui_view(void) { return &ui; }
 
 /* FrozenStadiumToggle: a static byte in Slippi, kept between visits. */
@@ -82,6 +84,7 @@ static void load_user(void)
         copy(ui.user_code, sizeof ui.user_code, user.connect_code);
     }
     memset(&user, 0, sizeof user);   /* the play key stays out of memory dumps */
+    load_settings();
 }
 
 /* direct-codes.txt: one code per line, most recent first. */
@@ -92,7 +95,13 @@ static void load_history(void)
     if (history_loaded) return;
     history_loaded = 1;
     text = mp_native_slippi_file_load(HISTORY_PATH);
-    if (!text) return;
+    if (!text) {
+        slippi_config cfg;
+        slippi_config_defaults(&cfg);
+        if (slippi_config_load(&cfg, "sdmc:/3ds/melee/slippi/config.ini") == 0 && cfg.opponent[0])
+            copy(history[ui.history_count++], sizeof history[0], cfg.opponent);
+        return;
+    }
     size = mp_native_slippi_file_size();
     while (i < size && ui.history_count < SLIPPI_HISTORY_MAX) {
         char line[SLIPPI_CODE_MAX + 1];
@@ -390,6 +399,102 @@ static void chat_frame(int trigger)
     }
 }
 
+/* ---- online settings ---- */
+#define CONFIG_PATH "sdmc:/3ds/melee/slippi/config.ini"
+static int settings_loaded;
+
+static void load_settings(void)
+{
+    slippi_config cfg;
+    if (settings_loaded) return;
+    settings_loaded = 1;
+    slippi_config_defaults(&cfg);
+    slippi_config_load(&cfg, CONFIG_PATH);
+    ui.delay = cfg.delay;
+    ui.chat_enabled = cfg.chat_enabled;
+}
+
+/* Rewrite config.ini with key=value replaced (or added), keeping the rest. */
+static void save_setting(const char *key, int value)
+{
+    char *text = mp_native_slippi_file_load(CONFIG_PATH);
+    unsigned size = text ? mp_native_slippi_file_size() : 0, i = 0;
+    char out[2048];
+    int n = 0, found = 0;
+    size_t klen = strlen(key);
+    while (i < size && n < (int) sizeof out - 64) {
+        unsigned start = i;
+        while (i < size && text[i] != '\n') i++;
+        if (i - start > klen && !strncmp(text + start, key, klen) && text[start + klen] == '=') {
+            n += snprintf(out + n, sizeof out - n, "%s=%d\n", key, value);
+            found = 1;
+        } else {
+            n += snprintf(out + n, sizeof out - n, "%.*s\n", (int) (i - start), text + start);
+        }
+        i++;
+    }
+    if (!found) n += snprintf(out + n, sizeof out - n, "%s=%d\n", key, value);
+    free(text);
+    mp_native_file_write_async(CONFIG_PATH, out, (unsigned) n);
+}
+
+void slippi_ui_open_settings(void)
+{
+    load_settings();
+    load_history();
+    ui.page = SLIPPI_PAGE_SETTINGS;
+    sfx |= SFX_FORWARD;
+    changed();
+}
+
+void slippi_ui_close_settings(void)
+{
+    ui.page = SLIPPI_PAGE_CSS;
+    sfx |= SFX_BACK;
+    changed();
+}
+
+void slippi_ui_set_delay(int delta)
+{
+    int d = ui.delay + delta;
+    if (d < 1 || d > 9) {   /* Slippi Dolphin's range */
+        sfx |= SFX_ERROR;
+        return;
+    }
+    ui.delay = d;
+    sp_lock();
+    g_slippi.cfg.delay = d;   /* the next match (if the network is up) */
+    sp_unlock();
+    save_setting("delay", d);
+    sfx |= SFX_MOVE;
+    changed();
+}
+
+void slippi_ui_toggle_chat(void)
+{
+    ui.chat_enabled ^= 1;
+    sp_lock();
+    g_slippi.cfg.chat_enabled = ui.chat_enabled;
+    sp_unlock();
+    save_setting("chat", ui.chat_enabled);
+    sfx |= SFX_MOVE;
+    changed();
+}
+
+void slippi_ui_clear_history(void)
+{
+    ui.history_count = 0;
+    mp_native_file_write_async(HISTORY_PATH, "", 0);
+    sfx |= SFX_BACK;
+    changed();
+}
+
+int slippi_ui_local_port(void)
+{
+    if (ui.phase != SLIPPI_PHASE_CONNECTED && ui.page != SLIPPI_PAGE_MATCH) return -1;
+    return local_port();
+}
+
 static void update_net(void)
 {
     int st = slippi_net_status();
@@ -421,8 +526,6 @@ static void update_net(void)
             sp_lock();
             copy(ui.opponent_name, sizeof ui.opponent_name, g_slippi.match.remote_name);
             copy(ui.opponent_code, sizeof ui.opponent_code, g_slippi.match.remote_code);
-            ui.delay = g_slippi.cfg.delay;
-            ui.chat_enabled = g_slippi.cfg.chat_enabled;
             sp_unlock();
             changed();
         }
@@ -447,7 +550,8 @@ int slippi_ui_css(int packed, int trigger, int held)
         ui.ready = ready;
         changed();
     }
-    if (ui.page != SLIPPI_PAGE_CODE && ui.page != SLIPPI_PAGE_CSS && ui.page != SLIPPI_PAGE_CHAT) {
+    if (ui.page != SLIPPI_PAGE_CODE && ui.page != SLIPPI_PAGE_CSS && ui.page != SLIPPI_PAGE_CHAT &&
+        ui.page != SLIPPI_PAGE_SETTINGS) {
         ui.page = SLIPPI_PAGE_CSS;
         changed();
     }

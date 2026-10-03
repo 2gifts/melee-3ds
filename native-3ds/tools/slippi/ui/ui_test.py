@@ -196,6 +196,10 @@ def main():
         bottom.choose(state, 0, icon)
         select.act(frames=30)
         capture('css-selected')
+        touch(126 + 36, 187 + 11)          # SETTINGS
+        touch(276 + 13, 38 + 9 + 13)       # delay +
+        capture('settings')
+        touch(160, 205)                    # outside: back
         select.act(0x1000, 2)   # START: code entry
         select.act(frames=20)
         capture('keyboard')

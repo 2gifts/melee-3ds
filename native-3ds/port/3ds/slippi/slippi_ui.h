@@ -20,7 +20,7 @@ enum {
 };
 
 enum { SLIPPI_PHASE_IDLE, SLIPPI_PHASE_SEARCH, SLIPPI_PHASE_CONNECTED, SLIPPI_PHASE_ERROR };
-enum { SLIPPI_PAGE_NONE, SLIPPI_PAGE_CSS, SLIPPI_PAGE_CODE, SLIPPI_PAGE_MATCH, SLIPPI_PAGE_CHAT };
+enum { SLIPPI_PAGE_NONE, SLIPPI_PAGE_CSS, SLIPPI_PAGE_CODE, SLIPPI_PAGE_MATCH, SLIPPI_PAGE_CHAT, SLIPPI_PAGE_SETTINGS };
 
 #define SLIPPI_CODE_MAX 8
 #define SLIPPI_HISTORY_MAX 16
@@ -81,5 +81,14 @@ const char *slippi_ui_chat_message(int index);
 void slippi_ui_open_chat(void);
 void slippi_ui_send_chat(int index);
 void slippi_ui_close_chat(void);
+/* Online settings (Slippi Dolphin's "Delay Frames" and "Quick Chat"), kept in
+ * config.ini as delay= and chat=. */
+void slippi_ui_open_settings(void);
+void slippi_ui_close_settings(void);
+void slippi_ui_set_delay(int delta);
+void slippi_ui_toggle_chat(void);
+void slippi_ui_clear_history(void);
+/* The match page: this console's port (0/1) once connected, else -1. */
+int slippi_ui_local_port(void);
 
 #endif
