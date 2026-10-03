@@ -119,6 +119,15 @@ static int ingest_ticket(const sj_node *resp)
                 ip_only(sj_get_str(el, "ipAddress", "1.1.1.1:123"), local_ext, sizeof(local_ext));
                 m->local_index = (int)sj_get_num(el, "port", 0) - 1;
             }
+            {
+                const sj_node *chat = sj_get(el, "chatMessages");
+                char (*dst)[32] = sj_get_bool(el, "isLocalPlayer", 0) ? m->local_chat : m->remote_chat;
+                if (chat && chat->type == SJ_ARRAY) {
+                    int k = 0;
+                    for (const sj_node *c = chat->child; c && k < 16; c = c->next, ++k)
+                        if (c->type == SJ_STRING) copy_str(dst[k], sizeof(dst[k]), c->string);
+                }
+            }
         }
         for (const sj_node *el = players->child; el; el = el->next) {
             if ((int)sj_get_num(el, "port", 0) - 1 == m->local_index) continue;

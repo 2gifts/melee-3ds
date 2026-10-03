@@ -101,6 +101,10 @@ typedef struct {
     uint8_t stages[16];
     int stage_count;
     uint32_t items;
+    /* Each player's quick-chat messages (chatMessages, 16 each; custom or the
+     * defaults), in Slippi's order: page Up, Left, Right, Down; each page Up,
+     * Left, Right, Down. Empty when the server sent none. */
+    char local_chat[16][32], remote_chat[16][32];
 } slippi_match;
 
 typedef struct {

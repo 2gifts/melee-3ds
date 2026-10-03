@@ -17,7 +17,7 @@ void slippi_config_defaults(slippi_config *cfg)
     cfg->net_thread = 1;
     cfg->net_thread_core = -2;
     cfg->net_thread_interval_us = 2000;
-    cfg->chat_enabled = 0;
+    cfg->chat_enabled = 1;
     cfg->auto_resend = 1;
     cfg->send_checksum = 1;
     cfg->mm_retries = -1;

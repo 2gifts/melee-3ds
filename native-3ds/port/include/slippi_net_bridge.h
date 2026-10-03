@@ -90,5 +90,7 @@ int mp_platform_slippi_ui_remote(void);
 /* Top-screen CSS text line (0-18, see slippi_ui.c) into buf as SIS-ready bytes;
  * returns its colour: 0 white, 1 gray, 2 red, 3 done (green), 4 waiting (blue). */
 int mp_platform_slippi_ui_text(int line, char* buf, int len);
+/* Frozen Stadium (alt stage mode): 1 toggles, 0 reads; returns the state. */
+int mp_platform_slippi_ui_alt(int toggle);
 
 #endif

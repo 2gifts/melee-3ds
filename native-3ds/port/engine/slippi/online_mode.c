@@ -31,17 +31,18 @@ static CSSData online_css;
 static s8 saved_ckind = CKind_Fox;
 static s8 saved_color;
 static u8 next_state = ST_VS;
-static int sss_alt;   /* frozen Stadium (Z on the SSS) */
+volatile int mp_slippi_test_lose;   /* development: count every game as lost */
 static HSD_Text* css_text;
 
 int mp_slippi_sss_alt_mode(void)
 {
-    return sss_alt;
+    return mp_platform_slippi_ui_alt(0);
 }
 
+/* Z on the online SSS (FrozenStadiumToggle). */
 void mp_slippi_sss_toggle_alt(void)
 {
-    sss_alt ^= 1;
+    lbAudioAx_80024030(mp_platform_slippi_ui_alt(1) ? 1 : 0);
 }
 
 static void css_enter(GameModeState* state);
@@ -112,7 +113,7 @@ static void css_exit(GameModeState* state)
  * One SIS text on the CSS's canvas 0, scaled 0.1 like Slippi's; the lines
  * come from the native session (slippi_ui_text). Positions, sizes and
  * colours are Slippi's. */
-enum { TEXT_LINES = 19 };
+enum { TEXT_LINES = 24 };
 static const struct {
     float x, y, size;
 } text_layout[TEXT_LINES] = {
@@ -123,10 +124,12 @@ static const struct {
     { 70, 132.5f, 0.4f }, { 70, 152.5f, 0.4f },                           /* Z, chat */
     { -130, -246, 0.5f }, { -50, -246, 0.5f },                            /* Playing: name */
     { 90, 52, 0.4f }, { 90, 70, 0.4f }, { 90, 88, 0.4f }, { 90, 106, 0.4f }, /* error */
+    { 70, 175, 0.4f }, { 70, 192.5f, 0.4f }, { 70, 210, 0.4f }, { 70, 227.5f, 0.4f }, { 70, 245, 0.4f }, /* chat */
 };
-static const GXColor text_colors[5] = {
+static const GXColor text_colors[7] = {
     { 0xFF, 0xFF, 0xFF, 0xFF }, { 0x8E, 0x91, 0x96, 0xFF }, { 0xFF, 0x00, 0x00, 0xFF },
     { 0x33, 0xFF, 0x2F, 0xFF }, { 0x3C, 0xBC, 0xFF, 0xFF },
+    { 229, 76, 76, 0xFF }, { 59, 189, 255, 0xFF },   /* chat: P1, P2 (SPT_CHAT_P1/P2) */
 };
 static int text_ids[TEXT_LINES], text_color_now[TEXT_LINES];
 static char text_now[TEXT_LINES][64];
@@ -159,7 +162,7 @@ static void css_text_frame(void)
             strcpy(text_now[i], buf);
             HSD_SisLib_803A70A0(css_text, text_ids[i], "%s", buf);
         }
-        if (color != text_color_now[i] && color >= 0 && color < 5) {
+        if (color != text_color_now[i] && color >= 0 && color < 7) {
             text_color_now[i] = color;
             HSD_SisLib_803A74F0(css_text, text_ids[i], (GXColor*) &text_colors[color]);
         }
@@ -245,6 +248,9 @@ static void vs_exit(GameModeState* state)
         won = ((u8*) end)[0] != local;
     } else if (end->outcome != 0) {
         won = end->player_standings[local].is_big_loser == 0;
+    }
+    if (mp_slippi_test_lose) {
+        won = 0;   /* UI tests: take the loser's path (stage pick) */
     }
     mp_platform_slippi_ui_event(4 /* RESULT */, won);
     gm_SetNextGameModeStateId(ST_CSS);

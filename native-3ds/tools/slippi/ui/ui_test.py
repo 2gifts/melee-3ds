@@ -86,6 +86,9 @@ def main():
     ap.add_argument('--icon', type=int, default=None, help='CSS icon for our fighter (default Fox)')
     ap.add_argument('--no-peer', action='store_true', help='only the menus, no fake opponent')
     ap.add_argument('--match-seconds', type=float, default=40)
+    ap.add_argument('--pick-kind', type=int, default=None, help='SSS: stage kind to pick (default: printed list, first)')
+    ap.add_argument('--frozen', action='store_true', help='SSS: press Z (frozen Stadium) before picking')
+    ap.add_argument('--games', type=int, default=1, help='2: the 3DS quits game 1 (LRAS), picks the stage, plays game 2')
     ap.add_argument('--mm-port', type=int, default=43113)
     ap.add_argument('--code-encoding', default='fullwidth')
     args = ap.parse_args()
@@ -96,7 +99,8 @@ def main():
     procs = {}
     home = emu.prepare('ui', PORT)
     sd = emu.sd(home)
-    write_profile(sd / 'slippi', 'a', USERS['b']['connectCode'], args, 2, ['prefetch=0'])
+    extra = ['prefetch=0']
+    write_profile(sd / 'slippi', 'a', USERS['b']['connectCode'], args, 2, extra)
     (sd / 'slippi' / 'direct-codes.txt').unlink(missing_ok=True)
     (sd / 'game.log').unlink(missing_ok=True)
     if not args.no_peer:
@@ -150,6 +154,8 @@ def main():
     try:
         set_word('mp_test_frame_limit', 0)
         set_word('mp_slippi_no_scripts', 1)
+        if args.games > 1:
+            set_word('mp_slippi_test_lose', 1, 'big')
         select.observe((0, 1, 0, 0))
         for _ in range(70):
             state = select.observe()
@@ -188,11 +194,25 @@ def main():
             peer_dir = OUT / 'b'
             write_profile(peer_dir, 'b', USERS['a']['connectCode'], args, 2)
             procs['b'] = start([TOOLS / '../build/slippi-tools/slippi_fake_peer.exe', '--dir', peer_dir,
-                                '--frames', 900, '--linger', 5], OUT / 'peer_b.log')
+                                '--frames', 900, '--linger', 5, '--chat', '0x88', '--hold-ms', 25000,
+                                '--games', args.games],
+                               OUT / 'peer_b.log')
         touch(*OK_KEY)
         patient(select.act, frames=30)
         patient(capture, 'searching')
         if not args.no_peer:
+            # Connected, waiting on the opponent (it holds 25 s): chat.
+            patient(select.act, frames=240)
+            patient(capture, 'connected')
+            patient(select.act, 0x8, 2)        # D-pad up: page Up
+            patient(select.act, frames=10)
+            patient(capture, 'chat-page')
+            patient(select.act, 0x1, 2)        # D-pad left: "one more"
+            patient(select.act, frames=20)
+            patient(capture, 'chat-sent')
+            touch(126 + 36, 187 + 11)          # CHAT pill
+            patient(capture, 'chat-bottom')
+            touch(160, 205)                    # outside the pills: back
             s = wait_scene(2, 8, timeout=120)
             patient(select.act, frames=200)
             patient(capture, 'match')
@@ -201,6 +221,42 @@ def main():
                 time.sleep(1)
             patient(select.act, frames=60)
             patient(capture, 'after-match')
+            if args.games > 1:
+                patient(select.act, 0x1000, 2)     # START: the loser picks the stage
+                wait_scene(9, 8, timeout=60)
+                patient(select.act, frames=90)
+                patient(capture, 'sss')
+                s = patient(select.observe)
+                print('SSS icons:', [(i, ic.get('stage_kind'), ic.get('available')) for i, ic in enumerate(s['icons'])])
+                want = next(i for i, ic in enumerate(s['icons']) if ic.get('stage_kind') == args.pick_kind)
+                for _ in range(120):
+                    if s['selection'] == want:
+                        s = patient(select.act, frames=12)
+                        if s['selection'] == want:
+                            break
+                        continue
+                    tx, ty = s['icons'][want]['xy']
+                    dx, dy = tx - s['cursor'][0], ty - s['cursor'][1]
+                    x = max(-80, min(80, round(dx / .03)))
+                    y = max(-80, min(80, round(dy / .03)))
+                    patient(select.observe, (0, 2, x, y))
+                    s = patient(select.act, frames=3)
+                if args.frozen:
+                    patient(select.act, 0x10, 2)   # Z: frozen Stadium
+                    patient(select.act, frames=20)
+                    patient(capture, 'sss-frozen')
+                patient(select.act, 0x100, 4)      # A: pick it
+                wait_scene(8, 8, timeout=60)
+                patient(select.act, frames=60)
+                patient(capture, 'stage-picked')
+                wait_scene(2, 8, timeout=120)
+                patient(select.act, frames=200)
+                patient(capture, 'game2')
+                end = time.monotonic() + args.match_seconds
+                while time.monotonic() < end and patient(bottom.snapshot)['scene'] != 8:
+                    time.sleep(1)
+                patient(select.act, frames=60)
+                patient(capture, 'after-game2')
     finally:
         emu.stop(proc)
         for name, (p, f) in procs.items():

@@ -34,12 +34,15 @@ static uint32_t crc32_bytes(const unsigned char *p, int n)
 int main(int argc, char **argv)
 {
     const char *dir = ".";
-    int frames = 600, character = 0x14, linger_s = 3;
+    int frames = 600, character = 0x14, linger_s = 3, chat = 0, hold_ms = 0, games = 1;
     for (int i = 1; i < argc; ++i) {
         if (!strcmp(argv[i], "--dir") && i + 1 < argc) dir = argv[++i];
         else if (!strcmp(argv[i], "--frames") && i + 1 < argc) frames = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--character") && i + 1 < argc) character = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--linger") && i + 1 < argc) linger_s = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--chat") && i + 1 < argc) chat = (int)strtol(argv[++i], NULL, 0);
+        else if (!strcmp(argv[i], "--hold-ms") && i + 1 < argc) hold_ms = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--games") && i + 1 < argc) games = atoi(argv[++i]);
         else { fprintf(stderr, "unknown option %s\n", argv[i]); return 2; }
     }
     setvbuf(stdout, NULL, _IONBF, 0);
@@ -63,25 +66,44 @@ int main(int argc, char **argv)
     slippi_info(SLIPPI_INFO_CODE, code, sizeof(code));
     sp_log("peer: connected to '%s' (%s); MM index %d, decider %d, delay %d", name, code, mm_index, slippi_is_decider(), delay);
 
-    /* Lock in (Dolphin setMatchSelections): decider picks Final Destination. */
-    slippi_net_set_selections(character, 0, 0x20, slippi_is_decider());
-    unsigned char block[0x140];
-    t0 = sp_time_us();
-    while (!slippi_net_match_block(block)) {
+    /* UI tests: a quick-chat message, then stay on the CSS a while. */
+    if (chat) { slippi_send_chat(chat); sp_log("peer: sent chat 0x%x", chat); }
+    for (uint64_t until = sp_time_us() + (uint64_t)hold_ms * 1000; sp_time_us() < until;) {
         slippi_poll();
-        if (slippi_status() != SLIPPI_STATUS_CONNECTED || sp_time_us() - t0 > 30000000ull) { sp_log("peer: FAIL no remote selections"); return 1; }
+        int id = slippi_chat_poll();
+        if (id) sp_log("peer: received chat 0x%x", id);
         sp_sleep_us(5000);
     }
-    sp_log("peer: match block crc32 0x%08x (rng 0x%02x%02x%02x%02x, stage 0x%02x%02x)", crc32_bytes(block, 0x138), block[0x138],
-           block[0x139], block[0x13A], block[0x13B], block[0xE], block[0xF]);
-
-    slippi_start_game();
     int frame = 1, stall = 0, halts = 0, rollback_halts = 0, time_sync_halts = 0, frames_to_skip = 0, skipping = 0;
     int verified = 0, bad = 0, max_ahead = 0;
     long long ping_sum = 0, ping_n = 0;
     uint64_t start = sp_time_us(), next = start;
     int result = 0;
+    for (int game = 0; game < games && !result; ++game) {
+    /* Lock in (Dolphin setMatchSelections): the decider picks Final
+     * Destination for game 1; later games leave the stage to the other side
+     * (the winner's START in Slippi's Direct mode). */
+    slippi_net_set_selections(character, 0, 0x20, game == 0 && slippi_is_decider());
+    unsigned char block[0x140];
+    t0 = sp_time_us();
+    while (!slippi_net_match_block(block)) {
+        slippi_poll();
+        if (slippi_status() != SLIPPI_STATUS_CONNECTED || sp_time_us() - t0 > 180000000ull) { sp_log("peer: FAIL no remote selections"); return 1; }
+        sp_sleep_us(5000);
+    }
+    if (game) sp_log("peer: game %d", game + 1);
+    sp_log("peer: match block crc32 0x%08x (rng 0x%02x%02x%02x%02x, stage 0x%02x%02x)", crc32_bytes(block, 0x138), block[0x138],
+           block[0x139], block[0x13A], block[0x13B], block[0xE], block[0xF]);
+
+    slippi_start_game();
+    frame = 1;
+    verified = 0;
+    stall = 0;
+    next = sp_time_us();
+    int sel_count = g_slippi.remote_sel_count;
     while (frame <= frames) {
+        /* Multi-game runs: the other side's next selections end this game. */
+        if (games > 1 && g_slippi.remote_sel_count != sel_count) { sp_log("peer: game %d over at frame %d", game + 1, frame); break; }
         uint64_t now = sp_time_us();
         if (now < next) { slippi_poll(); sp_sleep_us((uint32_t)(next - now > 1000 ? 1000 : next - now)); continue; }
         next += SLIPPI_FRAME_US;
@@ -103,7 +125,7 @@ int main(int argc, char **argv)
         if (latest - finalized < frame - finalized - ROLLBACK_MAX_FRAMES) {
             skip = 1;
             ++rollback_halts;
-            if (++stall > 60 * 7) { sp_log("peer: 7 s stall, disconnecting"); slippi_disconnect(); result = 1; break; }
+            if (++stall > (games > 1 ? 60 * 300 : 60 * 7)) { sp_log("peer: stall, disconnecting"); slippi_disconnect(); result = 1; break; }
         } else {
             stall = 0;
             if (frame % 30 == 0 && !skipping && frame <= 120) {
@@ -137,6 +159,7 @@ int main(int argc, char **argv)
                    slippi_remote_checksum_frame() <= 0 || slippi_remote_checksum() == slippi_test_checksum(slippi_remote_checksum_frame()) ? "ok" : "BAD");
         ++frame;
     }
+    }
     double secs = (double)(sp_time_us() - start) / 1e6;
     /* Keep acking/re-sending until the other side has everything. */
     uint64_t end = sp_time_us() + (uint64_t)linger_s * 1000000;
@@ -157,7 +180,7 @@ int main(int argc, char **argv)
            ping_n ? ping_sum / 1000.0 / ping_n : 0.0, slippi_stat(SLIPPI_STAT_PAD_PACKETS_SENT), slippi_stat(SLIPPI_STAT_PAD_PACKETS_RECEIVED),
            slippi_stat(SLIPPI_STAT_PAD_PACKETS_STALE), slippi_stat(SLIPPI_STAT_PAD_GAPS), slippi_stat(SLIPPI_STAT_ACKS_SENT),
            slippi_stat(SLIPPI_STAT_ACKS_RECEIVED), slippi_stat(SLIPPI_STAT_RESENDS), slippi_stat(SLIPPI_STAT_DROPPED_TEST));
-    int pass = !result && bad == 0 && verified >= frames;
+    int pass = !result && bad == 0 && (games > 1 || verified >= frames);
     sp_log("peer: %s", pass ? "PASS" : "FAIL");
     slippi_shutdown();
     return pass ? 0 : 1;

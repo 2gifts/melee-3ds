@@ -27,6 +27,14 @@ FIXES = {
          '            break;\n'
          '        case SEL_1P_TRAINING:\n', 1),
     ],
+    'melee/mn/mnstagesel.c': [
+        ('#include "mnstagesel.h"\n', DECL + '#include "mnstagesel.h"\n', 1),
+        ('    if (mnStageSel_804D6CA4 != 0) {\n        mnStageSel_804D6CA4 -= 1;\n        return;\n    }\n',
+         '    if (mp_slippi_css_online() && (mnStageSel_804D6CA0 & HSD_PAD_Z) && mnStageSel_804D6CAF == 0) {\n'
+         '        mp_slippi_sss_toggle_alt();\n'
+         '    }\n'
+         '    if (mnStageSel_804D6CA4 != 0) {\n        mnStageSel_804D6CA4 -= 1;\n        return;\n    }\n', 1),
+    ],
     'melee/mn/mncharsel.c': [
         ('#include "mncharsel.h"\n', DECL + '#include "mncharsel.h"\n', 1),
         # FetchMatchInfo / HandleInputsOnCSS: the session runs once per frame;

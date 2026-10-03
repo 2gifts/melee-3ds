@@ -52,6 +52,16 @@ static unsigned stage_used;   /* stages drawn from the pool this connection */
 static char history[SLIPPI_HISTORY_MAX][SLIPPI_CODE_MAX + 1];
 
 const SlippiUiView *slippi_ui_view(void) { return &ui; }
+
+/* FrozenStadiumToggle: a static byte in Slippi, kept between visits. */
+int slippi_ui_alt(int toggle)
+{
+    if (toggle) {
+        ui.frozen_stadium ^= 1;
+        ++ui.serial;
+    }
+    return ui.frozen_stadium;
+}
 unsigned slippi_ui_serial(void) { return ui.serial; }
 
 static void changed(void) { ++ui.serial; }
@@ -192,6 +202,9 @@ static void stop(int phase)
     ui.opponent_name[0] = ui.opponent_code[0] = 0;
     games = 0;
     stage_used = 0;
+    ui.chat_page = -1;
+    ui.chat_count = 0;
+    if (ui.page == SLIPPI_PAGE_CHAT) ui.page = SLIPPI_PAGE_CSS;
     changed();
 }
 
@@ -222,6 +235,159 @@ static void begin_search(const char *code)
         ui.phase = SLIPPI_PHASE_SEARCH;
     }
     changed();
+}
+
+
+/* ---- quick chat (Slippi's CSS chat; ids from SlippiNetplay) ----
+ * Message id = page bit (Up 0x80, Left 0x10, Right 0x20, Down 0x40) | direction
+ * bit (Left 1, Right 2, Down 4, Up 8). 0x10 alone: "chat disabled" reply. */
+static const char *const default_chat[16] = {
+    "ggs", "one more", "brb", "good luck", "well played", "that was fun", "thanks", "too good",
+    "sorry", "my b", "lol", "wow", "gotta go", "one sec", "let's play again later", "bad connection",
+};
+static const int chat_page_bits[4] = {0x80, 0x10, 0x20, 0x40};
+static const int chat_dir_bits[4] = {8, 1, 2, 4};
+static int chat_cooldown, chat_page_frames, chat_age[3];
+
+static const char *chat_message(int remote, int index)
+{
+    const char *s;
+    if (index < 0 || index > 15) return "";
+    s = remote ? g_slippi.match.remote_chat[index] : g_slippi.match.local_chat[index];
+    return s[0] ? s : default_chat[index];
+}
+
+const char *slippi_ui_chat_message(int index) { return chat_message(0, index); }
+
+static int chat_index(int id)
+{
+    int p, d;
+    for (p = 0; p < 4; p++)
+        for (d = 0; d < 4; d++)
+            if (id == (chat_page_bits[p] | chat_dir_bits[d])) return p * 4 + d;
+    return -1;
+}
+
+static void chat_add(int port, const char *who, const char *text)
+{
+    int i;
+    if (ui.chat_count == 3) {
+        for (i = 0; i < 2; i++) {
+            memcpy(ui.chat_text[i], ui.chat_text[i + 1], sizeof ui.chat_text[i]);
+            ui.chat_port[i] = ui.chat_port[i + 1];
+            chat_age[i] = chat_age[i + 1];
+        }
+        ui.chat_count = 2;
+    }
+    snprintf(ui.chat_text[ui.chat_count], sizeof ui.chat_text[0], "%s: %s", who, text);
+    ui.chat_port[ui.chat_count] = port;
+    chat_age[ui.chat_count] = 0;
+    ui.chat_count++;
+    changed();
+}
+
+static int local_port(void)
+{
+    int i;
+    sp_lock();
+    i = g_slippi.match.local_index;
+    sp_unlock();
+    return i == 1 ? 1 : 0;
+}
+
+void slippi_ui_send_chat(int index)
+{
+    if (ui.phase != SLIPPI_PHASE_CONNECTED || !ui.chat_enabled || index < 0 || index > 15) return;
+    if (ui.page == SLIPPI_PAGE_CHAT) ui.page = SLIPPI_PAGE_CSS;
+    ui.chat_page = -1;
+    if (chat_cooldown > 0) {
+        sfx |= SFX_ERROR;
+        changed();
+        return;
+    }
+    slippi_send_chat(chat_page_bits[index / 4] | chat_dir_bits[index % 4]);
+    chat_add(local_port(), ui.user_name[0] ? ui.user_name : ui.user_code, chat_message(0, index));
+    chat_cooldown = 60;
+    sfx |= SFX_FORWARD;
+}
+
+void slippi_ui_open_chat(void)
+{
+    if (ui.phase != SLIPPI_PHASE_CONNECTED || !ui.chat_enabled) {
+        sfx |= SFX_ERROR;
+        return;
+    }
+    ui.page = SLIPPI_PAGE_CHAT;
+    sfx |= SFX_FORWARD;
+    changed();
+}
+
+void slippi_ui_close_chat(void)
+{
+    ui.page = SLIPPI_PAGE_CSS;
+    ui.chat_page = -1;
+    sfx |= SFX_BACK;
+    changed();
+}
+
+/* Once per CSS frame: D-pad page then direction, incoming messages, ageing. */
+static void chat_frame(int trigger)
+{
+    int d = -1, i, id;
+    if (chat_cooldown > 0) chat_cooldown--;
+    for (i = 0; i < ui.chat_count; i++) {
+        if (++chat_age[i] > 600) {   /* a message stays about ten seconds */
+            int k;
+            for (k = i; k + 1 < ui.chat_count; k++) {
+                memcpy(ui.chat_text[k], ui.chat_text[k + 1], sizeof ui.chat_text[k]);
+                ui.chat_port[k] = ui.chat_port[k + 1];
+                chat_age[k] = chat_age[k + 1];
+            }
+            ui.chat_count--;
+            i--;
+            changed();
+        }
+    }
+    if (ui.phase != SLIPPI_PHASE_CONNECTED) {
+        if (ui.chat_page >= 0 || ui.page == SLIPPI_PAGE_CHAT) {
+            ui.chat_page = -1;
+            if (ui.page == SLIPPI_PAGE_CHAT) ui.page = SLIPPI_PAGE_CSS;
+            changed();
+        }
+        return;
+    }
+    id = slippi_chat_poll();
+    if (id) {
+        const char *who = ui.opponent_name[0] ? ui.opponent_name : ui.opponent_code;
+        if (id == SLIPPI_CHAT_DISABLED) {
+            char line[64];
+            snprintf(line, sizeof line, "%s has chat disabled", who);
+            chat_add(!local_port(), "", line);
+            /* "name: " prefix not wanted here */
+            snprintf(ui.chat_text[ui.chat_count - 1], sizeof ui.chat_text[0], "%s", line);
+        } else if ((i = chat_index(id)) >= 0) {
+            chat_add(!local_port(), who, chat_message(1, i));
+        }
+        sfx |= SFX_MOVE;
+    }
+    if (!ui.chat_enabled || ui.page == SLIPPI_PAGE_CODE) return;
+    if (trigger & GC_UP) d = 0;
+    else if (trigger & GC_LEFT) d = 1;
+    else if (trigger & GC_RIGHT) d = 2;
+    else if (trigger & GC_DOWN) d = 3;
+    if (ui.chat_page >= 0 && ++chat_page_frames > 300) {
+        ui.chat_page = -1;
+        changed();
+    }
+    if (d < 0) return;
+    if (ui.chat_page < 0) {
+        ui.chat_page = d;
+        chat_page_frames = 0;
+        sfx |= SFX_MOVE;
+        changed();
+    } else {
+        slippi_ui_send_chat(ui.chat_page * 4 + d);
+    }
 }
 
 static void update_net(void)
@@ -256,6 +422,7 @@ static void update_net(void)
             copy(ui.opponent_name, sizeof ui.opponent_name, g_slippi.match.remote_name);
             copy(ui.opponent_code, sizeof ui.opponent_code, g_slippi.match.remote_code);
             ui.delay = g_slippi.cfg.delay;
+            ui.chat_enabled = g_slippi.cfg.chat_enabled;
             sp_unlock();
             changed();
         }
@@ -280,7 +447,7 @@ int slippi_ui_css(int packed, int trigger, int held)
         ui.ready = ready;
         changed();
     }
-    if (ui.page != SLIPPI_PAGE_CODE && ui.page != SLIPPI_PAGE_CSS) {
+    if (ui.page != SLIPPI_PAGE_CODE && ui.page != SLIPPI_PAGE_CSS && ui.page != SLIPPI_PAGE_CHAT) {
         ui.page = SLIPPI_PAGE_CSS;
         changed();
     }
@@ -293,6 +460,7 @@ int slippi_ui_css(int packed, int trigger, int held)
         slippi_net_poll();
         update_net();
     }
+    chat_frame(trigger);
     if (ui.page == SLIPPI_PAGE_CSS) {
         if (trigger & GC_START) pending_start = 1;
         if (trigger & GC_Z) pending_cancel = 1;
@@ -547,7 +715,7 @@ unsigned slippi_ui_pad(unsigned down, unsigned gc, int *zero_sticks)
         *zero_sticks = 1;
         return 0;   /* nothing reaches the game while typing */
     }
-    if (ui.page == SLIPPI_PAGE_CSS && ui.locked) {
+    if ((ui.page == SLIPPI_PAGE_CSS || ui.page == SLIPPI_PAGE_CHAT) && ui.locked) {
         /* Locked in: A/B cannot unselect, X/Y cannot recolour
          * (PreventA/BPressCharUnselect, PreventColorChange). */
         gc &= ~(unsigned) (GC_A | GC_B | GC_X | GC_Y);
@@ -677,7 +845,7 @@ int slippi_ui_text(int line, char *out, int len)
         else if (connected) sis(out, len, "Hold Z to disconnect");
         return TEXT_GRAY;
     case 12:
-        if (connected) sis(out, len, "Use D-Pad to Chat");
+        if (connected && ui.chat_enabled) sis(out, len, "Use D-Pad to Chat");
         return TEXT_GRAY;
     case 13:
         if (connected) sis(out, len, "Playing:");
@@ -688,6 +856,24 @@ int slippi_ui_text(int line, char *out, int len)
     case 15: case 16: case 17: case 18:
         if (error) error_line(line - 15, out, len);
         return TEXT_RED;
+    case 19: case 20: case 21: case 22: case 23:
+        if (error || ui.phase != SLIPPI_PHASE_CONNECTED) return TEXT_WHITE;
+        if (ui.chat_page >= 0) {
+            static const char *const pages[4] = {"Up", "Left", "Right", "Down"};
+            if (line == 19) {
+                snprintf(b, sizeof b, "Page: %s", pages[ui.chat_page]);
+                sis(out, len, b);
+                return TEXT_WHITE;
+            }
+            snprintf(b, sizeof b, "%s: %s", pages[line - 20], chat_message(0, ui.chat_page * 4 + line - 20));
+            sis(out, len, b);
+            return TEXT_GRAY;
+        }
+        if (line - 19 < ui.chat_count) {
+            sis(out, len, ui.chat_text[line - 19]);
+            return ui.chat_port[line - 19] ? 6 : 5;
+        }
+        return TEXT_WHITE;
     }
     return TEXT_WHITE;
 }
