@@ -247,6 +247,14 @@ What the Azahar runs show:
 - The PC side logged 602/602 3DS pads verified and every 3DS checksum `ok`.
 - Ping in the emulator is 2–17 ms, because emulated time is coarse and the network thread runs at 2 ms.
 
+## First-connection race (fixed 2026-10-03)
+
+- **Symptom (hardware runs 5–7).** The first connection after boot hung or dropped. The PC got our selections and started its match; the 3DS never got the PC's selections, and logged no "late connection".
+- **Cause.** Matchmaking and P2P share one ENet host here. Dolphin instead opens its P2P host only after matchmaking. When the opponent hears "match found" first, it connects and sends its selections straight away. Our ENet accepts and acknowledges both, but `service_locked` dropped every non-MM event while status was SEARCHING.
+- **Fix.** Those events are queued (`early_event_keep`, `slippi_net.c`). `slippi_p2p_start` replays them once the opponent's address is known. The replay skips stale peers: disconnects, and connects for peers that are no longer connected.
+- **Tests.** `slippi_fake_mm --delay-first-ms N` holds the first ticket's reply. Use it via `online_game_test.py --mm-hold-first 3000 [--peer-wait 16 to hold the 3DS]` and `online_pair_test.py --mm-hold-first 3000`.
+- **Logging.** Connection events before a match are logged as `net: event ...`.
+
 ## Open issues
 
 - **Real server acceptance.**

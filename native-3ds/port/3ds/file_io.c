@@ -127,7 +127,9 @@ static unsigned index_directory(FS_Archive sdmc,IndexEntry **table,const char *r
     free(subdirs);
     return count;
 }
+static int disc_indexed;
 static void index_files(void){
+    if(disc_indexed)return;disc_indexed=1;
     FS_Archive sdmc;if(R_FAILED(FSUSER_OpenArchive(&sdmc,ARCHIVE_SDMC,fsMakePath(PATH_EMPTY,""))))return;
     u64 start=svcGetSystemTick();
     disc_index_count=index_directory(sdmc,disc_index,"/3ds/melee/files/","","",0);
@@ -138,6 +140,11 @@ static void index_files(void){
         duplicates?"; old flat copies also present, delete them for faster loading":"",visual_index_count,(unsigned)((svcGetSystemTick()-start)/(SYSCLOCK_ARM11/1000)));
     extern void mp_native_log(const char*);mp_native_log(text);
 }
+/* Slippi boot prefetch: the index must exist before files are looked up,
+ * or files kept in subfolders are not found. Later init reuses it. */
+void mp_native_files_index(void){index_files();}
+#else
+void mp_native_files_index(void){}
 #endif
 /* Disc files found at startup (a complete US v1.02 extraction has 1209). */
 unsigned mp_native_disc_file_count(void){return disc_index_count;}

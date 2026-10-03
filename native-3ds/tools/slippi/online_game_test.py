@@ -37,6 +37,8 @@ def main():
     ap.add_argument('--code-encoding', default='fullwidth')
     ap.add_argument('--show', action='store_true')
     ap.add_argument('--peer-wait', type=float, default=2, help='seconds before the fake PC peer starts (its player picking)')
+    ap.add_argument('--mm-hold-first', type=int, default=0,
+                    help='ms the fake MM holds the 3DS match reply (the PC connects and sends selections first)')
     args = ap.parse_args()
 
     out = OUT / 'game'
@@ -45,6 +47,8 @@ def main():
     out.mkdir(parents=True)
     procs = {}
     mm_cmd = [TOOLS / 'slippi_fake_mm.exe', '--port', args.mm_port] + ([] if args.peer_host else ['--second-is-host'])
+    if args.mm_hold_first:
+        mm_cmd += ['--delay-first-ms', args.mm_hold_first]
     procs['mm'] = start(mm_cmd, out / 'fake_mm.log')
     time.sleep(0.5)
     write_profile(out / 'b', 'b', USERS['a']['connectCode'], args, args.peer_delay)

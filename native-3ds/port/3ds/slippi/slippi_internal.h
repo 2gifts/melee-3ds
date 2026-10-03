@@ -204,6 +204,10 @@ void slippi_fail(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 void slippi_set_status(int status);
 int slippi_create_host(void);
 void slippi_destroy_host(void);
+/* P2P events that arrive while this side still waits for the mm server's
+ * match reply (one host serves both; the opponent can hear first). */
+void slippi_early_events_replay(void);
+void slippi_early_events_clear(void);
 
 /* bridge.c: native side of port/include/slippi_net_bridge.h */
 int slippi_net_start(const char *opponent_code);

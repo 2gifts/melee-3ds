@@ -102,6 +102,7 @@ void slippi_p2p_start(void)
     slippi_set_status(SLIPPI_STATUS_CONNECTING);
     sp_log("p2p: connecting to %s from local port %u (player index %d, decider %d)", g->match.remote_addr, g->host_port,
            g->match.local_index, g->match.is_host);
+    slippi_early_events_replay();
 }
 
 /* Dolphin Send(): pads/acks unsequenced on channel 1, everything else reliable on 0. */

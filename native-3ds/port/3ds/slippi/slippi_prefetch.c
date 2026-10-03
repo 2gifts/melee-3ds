@@ -66,6 +66,13 @@ void slippi_prefetch_match(int character, int color, int stage)
     unsigned i, k;
     char name[40];
     done_files = done_total = 0;
+    {
+        /* The SD index first: without it, files kept in subfolders are not
+         * found (on the console only 2 of 20 were cached). Startup reuses it. */
+        extern void mp_native_files_index(void);
+        printf("\x1b[20;1H  Finding game files...");
+        mp_native_files_index();
+    }
     for (i = 0; i < sizeof common_files / sizeof common_files[0]; i++) {
         cache(common_files[i]);
     }

@@ -77,6 +77,7 @@ def main():
     ap.add_argument('--mm-port', type=int, default=43113)
     ap.add_argument('--code-encoding', default='fullwidth')
     ap.add_argument('--show', action='store_true')
+    ap.add_argument('--mm-hold-first', type=int, default=0, help='ms the fake MM holds the first ticket match reply')
     args = ap.parse_args()
 
     out = OUT / 'pair'
@@ -86,7 +87,10 @@ def main():
     sym = symbols()
     keys = sym['mp_test_keys']
     dsx = (ROOT / 'dist/3ds/melee/melee-development.3dsx').resolve()
-    mm = start([TOOLS / 'slippi_fake_mm.exe', '--port', args.mm_port], out / 'fake_mm.log')
+    mm_cmd = [TOOLS / 'slippi_fake_mm.exe', '--port', args.mm_port]
+    if args.mm_hold_first:
+        mm_cmd += ['--delay-first-ms', args.mm_hold_first]
+    mm = start(mm_cmd, out / 'fake_mm.log')
     time.sleep(0.5)
     sides = []
     for name, who, opp, extra, port in (

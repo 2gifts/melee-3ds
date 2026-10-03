@@ -10,7 +10,7 @@
  * Two Direct tickets pair when each one searches for the other's connect code.
  * The first ticket of a pair gets port 1 and isHost (configurable).
  *
- * Usage: slippi_fake_mm [--port 43113] [--second-is-host] [--error TEXT]
+ * Usage: slippi_fake_mm [--port 43113] [--second-is-host] [--error TEXT] [--delay-first-ms N]
  *                       [--min-version X.Y.Z] [--external-ip A.B.C.D] [--once]
  */
 #include "slippi_internal.h"
@@ -30,6 +30,13 @@ typedef struct {
 static ticket tickets[MAX_TICKETS];
 static int second_is_host, once, matches;
 static const char *forced_error, *min_version, *external_ip;
+/* --delay-first-ms: hold the first ticket's match reply, so the other side
+ * connects (and sends its selections) before that client knows the match. */
+static int delay_first_ms;
+static ENetPeer *held_peer;
+static char *held_json;
+static size_t held_len;
+static uint64_t held_due_us;
 
 static void send_json(ENetPeer *peer, sj_buf *b)
 {
@@ -89,6 +96,18 @@ static void send_match(ticket *first, ticket *second)
         sj_key(&b, "stages", &f); sj_raw(&b, "[2,3,8,28,31,32]");
         sj_key(&b, "type", &f); sj_string(&b, "get-ticket-resp");
         sj_raw(&b, "}");
+        if (delay_first_ms > 0 && me == first && !held_json) {
+            held_json = malloc(b.length);
+            if (held_json) {
+                memcpy(held_json, b.data, b.length);
+                held_len = b.length;
+                held_peer = me->peer;
+                held_due_us = sp_time_us() + (uint64_t)delay_first_ms * 1000;
+                sp_log("mm: holding %s's get-ticket-resp for %d ms", me->code, delay_first_ms);
+                sj_buf_free(&b);
+                continue;
+            }
+        }
         send_json(me->peer, &b);
         sp_log("mm: -> %s get-ticket-resp (%u bytes): %s", me->code, (unsigned)b.length, b.data);
         sj_buf_free(&b);
@@ -176,6 +195,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--min-version") && i + 1 < argc) min_version = argv[++i];
         else if (!strcmp(argv[i], "--external-ip") && i + 1 < argc) external_ip = argv[++i];
         else if (!strcmp(argv[i], "--once")) once = 1;
+        else if (!strcmp(argv[i], "--delay-first-ms") && i + 1 < argc) delay_first_ms = atoi(argv[++i]);
         else { fprintf(stderr, "unknown option %s\n", argv[i]); return 2; }
     }
     setvbuf(stdout, NULL, _IONBF, 0);
@@ -207,6 +227,13 @@ int main(int argc, char **argv)
                     break;
                 default: break;
             }
+        }
+        if (held_json && sp_time_us() >= held_due_us) {
+            ENetPacket *p = enet_packet_create(held_json, held_len, ENET_PACKET_FLAG_RELIABLE);
+            enet_peer_send(held_peer, 0, p);
+            sp_log("mm: -> sent the held get-ticket-resp (%u bytes)", (unsigned)held_len);
+            free(held_json);
+            held_json = NULL;
         }
         if (once && matches && !done_at) done_at = sp_time_us() + 5000000;
         if (done_at && sp_time_us() > done_at) break;

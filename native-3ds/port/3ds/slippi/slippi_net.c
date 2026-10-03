@@ -48,9 +48,61 @@ int slippi_create_host(void)
     return 0;
 }
 
+/* Dolphin creates its P2P host only after matchmaking, so an opponent that
+ * hears about the match first gets no answer and retries. Here one ENet host
+ * serves matchmaking and P2P, so ENet accepts that connection and its
+ * selections at once; they are held until the match reply arrives. */
+#define EARLY_EVENTS 32
+static ENetEvent early[EARLY_EVENTS];
+static int early_count;
+
+static void early_event_keep(ENetEvent *ev)
+{
+    if (early_count == EARLY_EVENTS) {
+        sp_log("p2p: early event queue full; dropping event %d", ev->type);
+        if (ev->type == ENET_EVENT_TYPE_RECEIVE) enet_packet_destroy(ev->packet);
+        return;
+    }
+    if (ev->type == ENET_EVENT_TYPE_CONNECT && ev->peer)
+        sp_log("p2p: connection from port %u before our match reply; holding it", ev->peer->address.port);
+    early[early_count++] = *ev;
+}
+
+void slippi_early_events_clear(void)
+{
+    for (int i = 0; i < early_count; ++i)
+        if (early[i].type == ENET_EVENT_TYPE_RECEIVE) enet_packet_destroy(early[i].packet);
+    early_count = 0;
+}
+
+/* Lock held; called by slippi_p2p_start once the opponent is known. */
+void slippi_early_events_replay(void)
+{
+    slippi_state *g = &g_slippi;
+    int n = early_count, used = 0;
+    early_count = 0;
+    for (int i = 0; i < n; ++i) {
+        ENetEvent *ev = &early[i];
+        /* A peer that has gone since is reset and its slot may be reused
+         * (even by our own new connection): its disconnect is not replayed,
+         * nor a connect for a peer that is no longer connected. */
+        int stale = ev->type == ENET_EVENT_TYPE_DISCONNECT ||
+                    (ev->type == ENET_EVENT_TYPE_CONNECT && ev->peer && ev->peer->state != ENET_PEER_STATE_CONNECTED);
+        if (!stale && g->host && ev->peer && ev->peer->address.host == g->remote_addr.host &&
+            (g->status == SLIPPI_STATUS_CONNECTING || g->status == SLIPPI_STATUS_CONNECTED)) {
+            slippi_p2p_event(ev);   /* destroys a received packet */
+            ++used;
+        } else if (ev->type == ENET_EVENT_TYPE_RECEIVE) {
+            enet_packet_destroy(ev->packet);
+        }
+    }
+    if (n) sp_log("p2p: replayed %d of %d events that arrived before our match reply", used, n);
+}
+
 void slippi_destroy_host(void)
 {
     slippi_state *g = &g_slippi;
+    slippi_early_events_clear();
     if (!g->host) return;
     enet_host_flush(g->host);
     enet_host_destroy(g->host);
@@ -74,8 +126,15 @@ static void service_locked(void)
             if (rc < 0) sp_log("enet_host_service error");
             break;
         }
+        /* Connection events, and anything before the match: rare, and the
+         * evidence when a first connection goes wrong. */
+        if (g->status != SLIPPI_STATUS_CONNECTED && !(ev.type == ENET_EVENT_TYPE_RECEIVE && ev.peer == g->mm_peer))
+            sp_log("net: event %d slot %d port %u connectID %u status %d mm %d len %u", ev.type, ev.peer ? (int)(ev.peer - g->host->peers) : -1,
+                   ev.peer ? ev.peer->address.port : 0, ev.peer ? (unsigned)ev.peer->connectID : 0, g->status, ev.peer && ev.peer == g->mm_peer,
+                   ev.type == ENET_EVENT_TYPE_RECEIVE ? (unsigned)ev.packet->dataLength : 0);
         if (ev.peer && ev.peer == g->mm_peer) slippi_mm_service_event(&ev);
         else if (g->status == SLIPPI_STATUS_CONNECTING || g->status == SLIPPI_STATUS_CONNECTED) slippi_p2p_event(&ev);
+        else if (g->status == SLIPPI_STATUS_SEARCHING && ev.peer) early_event_keep(&ev);
         else if (ev.type == ENET_EVENT_TYPE_RECEIVE) enet_packet_destroy(ev.packet);
         if (!g->host) return;
     }
