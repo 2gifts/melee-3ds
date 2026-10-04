@@ -208,6 +208,13 @@ FIXES = {
          '        }\n'
          '    }\n', 1),
         ('void mnCharSel_Scene_OnFrame(void)\n', CSS_SHEIK + CSS_TITLE + '\nvoid mnCharSel_Scene_OnFrame(void)\n', 1),
+        # Back from the stage pick, the fighter is already chosen: no
+        # "Choose your character!" (it sounded like a new selection).
+        ('    if (match_type != 0) {\n'
+         '        lbAudioAx_800237A8(mnCharSel_803F0A48.mode_info[match_type].enter_sfx,\n',
+         '    if (match_type != 0 && mp_slippi_css_quiet()) {\n'
+         '    } else if (match_type != 0) {\n'
+         '        lbAudioAx_800237A8(mnCharSel_803F0A48.mode_info[match_type].enter_sfx,\n', 1),
         # The title (joint 36): Slippi's online CSS shows MELEE (its SLPCSS_MODE
         # frame 0), as the VS CSS does, not EVENT MATCH.
         ('        mode_frame = mnCharSel_803F0A48.mode_info[idx].mode_ffa_frame;\n'

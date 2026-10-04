@@ -49,13 +49,19 @@ unsigned mp_file_log_bytes;
  * left the opponent's selections undelivered on the console twice, so the
  * cache is only ever filled up front. Budget: the ordinary heap is 86 MB and
  * a running match uses about 59 MB of it. */
-enum {PREFETCH_MAX=64,PREFETCH_BUDGET=10*1024*1024};
-static struct {int id;unsigned char *data;} prefetch[PREFETCH_MAX];
-static unsigned prefetch_count,prefetch_bytes;
+/* Online play also keeps what each match load reads (mp_file_log_opens is
+ * on from "match ready" to frame 120): the next game against the same
+ * opponent opens almost nothing (hardware run 10: 27 opens, about 6 s, per
+ * load). Least recently used files go first, never one the current load
+ * used; nothing is kept when the heap would drop under KEEP_HEAP_RESERVE.
+ * Every access is under io_lock once the background reader exists. */
+enum {PREFETCH_MAX=64,PREFETCH_BUDGET=10*1024*1024,KEEP_FILE_MAX=3*1024*1024,KEEP_HEAP_RESERVE=12*1024*1024};
+static struct {int id;unsigned char *data;unsigned used;} prefetch[PREFETCH_MAX];
+static unsigned prefetch_count,prefetch_bytes,prefetch_clock,keep_floor;
 unsigned mp_prefetch_hits,mp_prefetch_hit_bytes,mp_prefetch_files;
 static const unsigned char *prefetched(int id){
     unsigned n=__atomic_load_n(&prefetch_count,__ATOMIC_ACQUIRE);
-    for(unsigned i=0;i<n;++i)if(prefetch[i].id==id)return prefetch[i].data;
+    for(unsigned i=0;i<n;++i)if(prefetch[i].id==id){prefetch[i].used=++prefetch_clock;return prefetch[i].data;}
     return NULL;
 }
 #ifdef MP_SMOKE_TEST
@@ -267,6 +273,7 @@ static Reader *open_reader(int id){
     if(setvbuf(stream,(char*)slot->buffer,_IOFBF,sizeof(slot->buffer))){fclose(stream);return NULL;}
     slot->stream=stream;slot->id=id;slot->position=0;slot->stamp=++reader_clock;return slot;
 }
+static const unsigned char *keep_file(int id);
 static int native_file_read(int id,void *dst,unsigned n,unsigned offset){
     if(id<0||(unsigned)id>=__atomic_load_n(&file_count,__ATOMIC_ACQUIRE)||offset>files[id].size||n>INT_MAX||(!dst&&n))return -1;
     if(!n)return 0;
@@ -277,6 +284,7 @@ static int native_file_read(int id,void *dst,unsigned n,unsigned offset){
         __atomic_fetch_add(&mp_file_cache_hits,1,__ATOMIC_RELAXED);__atomic_fetch_add(&mp_file_cache_read_bytes,real,__ATOMIC_RELAXED);return n;
     }
     {const unsigned char *cached=prefetched(id);
+     if(!cached&&mp_file_log_opens)cached=keep_file(id);
      if(cached){memcpy(dst,cached+offset,real);if(real<n)memset((unsigned char*)dst+real,0,n-real);
         __atomic_fetch_add(&mp_prefetch_hits,1,__ATOMIC_RELAXED);__atomic_fetch_add(&mp_prefetch_hit_bytes,real,__ATOMIC_RELAXED);return n;}}
     Reader *r=open_reader(id);if(!r)return -1;
@@ -325,7 +333,7 @@ int mp_native_file_read(int id,void *dst,unsigned n,unsigned offset){
 }
 /* Read a whole file into the RAM cache now (main thread, before the engine
  * and the network start). 1 cached, 0 skipped (budget, missing), -1 error. */
-int mp_native_file_cache(const char *name){
+static int file_cache_locked(const char *name){
     int id=mp_native_file_id(name);
     if(id<0)return 0;
     if(prefetched(id))return 1;
@@ -333,10 +341,58 @@ int mp_native_file_cache(const char *name){
     if(!size||prefetch_bytes+size>PREFETCH_BUDGET||prefetch_count>=PREFETCH_MAX)return 0;
     unsigned char *data=malloc(size);if(!data)return -1;
     if(native_file_read(id,data,size,0)!=(int)size){free(data);return -1;}
-    prefetch[prefetch_count].id=id;prefetch[prefetch_count].data=data;
+    prefetch[prefetch_count].id=id;prefetch[prefetch_count].data=data;prefetch[prefetch_count].used=++prefetch_clock;
     prefetch_bytes+=size;++mp_prefetch_files;
     __atomic_store_n(&prefetch_count,prefetch_count+1,__ATOMIC_RELEASE);
     return 1;
+}
+int mp_native_file_cache(const char *name){
+#ifdef __3DS__
+    if(io_thread)LightLock_Lock(&io_lock);
+#endif
+    int result=file_cache_locked(name);
+#ifdef __3DS__
+    if(io_thread)LightLock_Unlock(&io_lock);
+#endif
+    return result;
+}
+/* A match load starts: files it reads are not evicted for it. */
+void mp_native_file_keep_mark(void){
+#ifdef __3DS__
+    if(io_thread)LightLock_Lock(&io_lock);
+#endif
+    keep_floor=prefetch_clock+1;
+#ifdef __3DS__
+    if(io_thread)LightLock_Unlock(&io_lock);
+#endif
+}
+/* Read a whole file into the cache on its first open during a match load
+ * (one SD open, as streaming it would cost). Streams (.hps) are not kept. */
+static const unsigned char *keep_file(int id){
+    unsigned size=files[id].size;size_t l=strlen(files[id].name);
+    if(!size||size>KEEP_FILE_MAX||(l>4&&!strcmp(files[id].name+l-4,".hps")))return NULL;
+    while(prefetch_bytes+size>PREFETCH_BUDGET||prefetch_count>=PREFETCH_MAX){
+        unsigned victim=PREFETCH_MAX,oldest=0xFFFFFFFFu;
+        for(unsigned i=0;i<prefetch_count;++i)if(prefetch[i].used<keep_floor&&prefetch[i].used<oldest){oldest=prefetch[i].used;victim=i;}
+        if(victim==PREFETCH_MAX)return NULL;
+        prefetch_bytes-=files[prefetch[victim].id].size;free(prefetch[victim].data);--mp_prefetch_files;
+        prefetch[victim]=prefetch[prefetch_count-1];
+        __atomic_store_n(&prefetch_count,prefetch_count-1,__ATOMIC_RELEASE);
+    }
+#ifdef __3DS__
+    {extern unsigned __ctru_heap_size;struct mallinfo heap=mallinfo();
+     if((unsigned)heap.uordblks+size+KEEP_HEAP_RESERVE>__ctru_heap_size)return NULL;}
+#endif
+    unsigned char *data=malloc(size);if(!data)return NULL;
+    Reader *r=open_reader(id);if(!r){free(data);return NULL;}
+    if(r->position!=0&&fseek(r->stream,0,SEEK_SET)){fclose(r->stream);r->stream=NULL;free(data);return NULL;}
+    size_t got=fread(data,1,size,r->stream);r->position=(unsigned)got;
+    __atomic_fetch_add(&mp_file_sd_reads,1,__ATOMIC_RELAXED);__atomic_fetch_add(&mp_file_sd_bytes,got,__ATOMIC_RELAXED);
+    if(got!=size){fclose(r->stream);r->stream=NULL;free(data);return NULL;}
+    prefetch[prefetch_count].id=id;prefetch[prefetch_count].data=data;prefetch[prefetch_count].used=++prefetch_clock;
+    prefetch_bytes+=size;++mp_prefetch_files;
+    __atomic_store_n(&prefetch_count,prefetch_count+1,__ATOMIC_RELEASE);
+    return data;
 }
 unsigned mp_native_prefetch_bytes(void){return prefetch_bytes;}
 #ifdef __3DS__

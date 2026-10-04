@@ -984,12 +984,13 @@ int slippi_ui_text(int line, char *out, int len)
         if (ui.phase == SLIPPI_PHASE_SEARCH || connected) return spinner_glyph(out, len, 0);
         return TEXT_WHITE;
     case 11:
+        if (connected && ui.chat_page >= 0) return TEXT_GRAY;   /* the chat page uses the space */
         if (ui.phase == SLIPPI_PHASE_SEARCH) sis(out, len, "Press Z to cancel");
         else if (error) sis(out, len, "Press Z to clear error");
         else if (connected) sis(out, len, "Hold Z to disconnect");
         return TEXT_GRAY;
     case 12:
-        if (connected && ui.chat_enabled) sis(out, len, "Use D-Pad to Chat");
+        if (connected && ui.chat_enabled && ui.chat_page < 0) sis(out, len, "Use D-Pad to Chat");
         return TEXT_GRAY;
     case 13:
         if (connected) sis(out, len, "Playing:");
@@ -1006,19 +1007,21 @@ int slippi_ui_text(int line, char *out, int len)
                            : (ui.opponent_name[0] ? ui.opponent_name : ui.opponent_code));
         return TEXT_WHITE;
     }
-    case 19: case 20: case 21: case 22: case 23:
-        if (error || ui.phase != SLIPPI_PHASE_CONNECTED) return TEXT_WHITE;
-        if (ui.chat_page >= 0) {
+    case 24: case 25: case 26: case 27: case 28:   /* the open chat page */
+        if (error || !connected || ui.chat_page < 0) return TEXT_WHITE;
+        {
             static const char *const pages[4] = {"Up", "Left", "Right", "Down"};
-            if (line == 19) {
+            if (line == 24) {
                 snprintf(b, sizeof b, "Page: %s", pages[ui.chat_page]);
                 sis(out, len, b);
                 return TEXT_WHITE;
             }
-            snprintf(b, sizeof b, "%s: %s", pages[line - 20], chat_message(0, ui.chat_page * 4 + line - 20));
+            snprintf(b, sizeof b, "%s: %s", pages[line - 25], chat_message(0, ui.chat_page * 4 + line - 25));
             sis(out, len, b);
             return TEXT_GRAY;
         }
+    case 19: case 20: case 21: case 22: case 23:   /* chat messages (3 kept) */
+        if (error || !connected || ui.chat_page >= 0) return TEXT_WHITE;
         if (line - 19 < ui.chat_count) {
             sis(out, len, ui.chat_text[line - 19]);
             return ui.chat_port[line - 19] ? 6 : 5;

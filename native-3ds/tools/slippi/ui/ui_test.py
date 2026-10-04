@@ -269,13 +269,7 @@ def main():
             touch(126 + 36, 187 + 11)          # CHAT pill
             patient(capture, 'chat-bottom')
             touch(160, 205)                    # outside the pills: back
-            try:
-                wait_scene(32, 8, timeout=120)     # the VS splash
-                patient(select.act, frames=70)
-                patient(capture, 'splash')
-            except TimeoutError as e:
-                print('no splash:', e)
-            s = wait_scene(2, 8, timeout=120)
+            s = wait_scene(2, 8, timeout=120)   # no VS splash: straight to the match
             patient(select.act, frames=200)
             patient(capture, 'match')
             end = time.monotonic() + args.match_seconds

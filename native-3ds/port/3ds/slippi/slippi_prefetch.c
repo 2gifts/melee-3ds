@@ -15,7 +15,7 @@ int mp_native_file_cache(const char *name);
 
 static const char *const common_files[] = {
     "LbRb.dat", "EfMnData.dat", "LbRf.dat", "PdPm.dat", "TyDatai.usd", "PlCo.dat", "GmPause.usd",
-    "SdIntro.dat", "IfCoGet.dat", "LbBf.dat", "audio/us/clink.ssm", "EfCoData.dat", "IfAll.usd", "ItCo.usd",
+    "SdIntro.dat", "IfCoGet.dat", "LbBf.dat", "EfCoData.dat", "IfAll.usd", "ItCo.usd",
 };
 static const struct {
     int stage;

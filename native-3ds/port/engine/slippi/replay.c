@@ -434,7 +434,9 @@ void mp_slippi_prepare_match_files(const unsigned char* info)
     scene = lbDvd_GetPreloadCacheScene();
     for (i = 0; i < 4; i++) {
         const u8* p = info + 0x60 + 0x24 * i;
-        scene->game_cache.entries[i].char_id = (s8) p[0];
+        /* Empty slots keep the template's fighter byte (Young Link), which
+         * would cost five SD opens and 3 MB for nobody (hardware run 10). */
+        scene->game_cache.entries[i].char_id = p[1] >= 3 ? ChKind_None : (s8) p[0];
         scene->game_cache.entries[i].color = p[3];
     }
     lbDvd_80018254();
@@ -443,7 +445,7 @@ void mp_slippi_prepare_match_files(const unsigned char* info)
     lbAudioAx_80026F2C(28);
     for (i = 0; i < 6; i++) {
         const u8* p = info + 0x60 + 0x24 * i;
-        if ((s8) p[0] != 33) {
+        if ((s8) p[0] != 33 && p[1] < 3) {
             mask |= lbAudioAx_80026E84((CharacterKind) (s8) p[0]);
         }
     }

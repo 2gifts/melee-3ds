@@ -73,6 +73,7 @@ int mp_slippi_sss_alt_mode(void);
 /* Slippi's patched menu files are installed (Online submenu, descriptions). */
 int mp_platform_slippi_menu_files(void);
 int mp_platform_slippi_has_file(const char* name);
+int mp_slippi_css_quiet(void);
 void mp_slippi_css_title(void* matanim);
 void mp_slippi_menu_prepare(void);
 /* In-game text (online_hud.c): names, delay, status messages. */

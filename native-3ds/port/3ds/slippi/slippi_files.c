@@ -69,8 +69,13 @@ void mp_native_slippi_unlimited(void)
 extern volatile unsigned mp_file_log_opens;
 extern unsigned mp_file_sd_opens, mp_file_sd_open_ticks, mp_file_sd_bytes;
 
+void mp_native_file_keep_mark(void);
+
 void mp_native_slippi_load_log(int on)
 {
+    if (on && !mp_file_log_opens) {
+        mp_native_file_keep_mark();   /* this load's files stay cached for it */
+    }
     mp_file_log_opens = on ? 1u : 0u;
 }
 

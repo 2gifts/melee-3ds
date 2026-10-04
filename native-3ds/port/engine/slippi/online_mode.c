@@ -82,6 +82,14 @@ static void play_sfx(int flags)
 
 /* CSSScenePrep: restore the last fighter, 1P-style CSS (match type 14, the
  * event-match layout Slippi uses), clear the preload cache. */
+/* Set when the CSS comes back from the stage pick: no announcer. */
+static int css_quiet;
+
+int mp_slippi_css_quiet(void)
+{
+    return mp_slippi_css_online() && css_quiet;
+}
+
 static void css_enter(GameModeState* state)
 {
     CSSData* css = gm_GetGameModeStateEnterData(state);
@@ -103,6 +111,7 @@ static void css_exit(GameModeState* state)
     if (css->pending_scene_change == 2) {
         /* B held: back to the menus. The connection closes. */
         mp_platform_slippi_ui_event(2 /* LEAVE */, 0);
+        css_quiet = 0;
         mp_slippi_css_sheik(0);   /* the vanilla CSS keeps Zelda */
         gm_ChangeGameModeAfterCurrentScene(GM_MENU);
         return;
@@ -115,18 +124,21 @@ static void css_exit(GameModeState* state)
         return;
     }
     /* Both locked in: load what the match needs (both fighters, the stage,
-     * their sound banks), as Slippi's game-setup preload does. */
+     * their sound banks), as Slippi's game-setup preload does. Straight to
+     * the match: the VS splash (ST_SPLASH) cost the 3DS about two more
+     * seconds of loading than the PC, which then waited at its first frame. */
     mp_slippi_prepare_match_files(mp_slippi_online_pending_block());
-    gm_SetNextGameModeStateId(ST_SPLASH);
+    gm_SetNextGameModeStateId(ST_VS);
 }
 
 /* ---- the online CSS text (LoadCSSText.asm, UserDisplayFunctions.asm) ----
  * One SIS text on the CSS's canvas 0, scaled 0.1 like Slippi's; the lines
  * come from the native session (slippi_ui_text). Positions, sizes and
  * colours are Slippi's. */
-enum { TEXT_LINES = 24 };
+enum { TEXT_LINES = 29 };
 static const struct {
     float x, y, size;
+    int fit;   /* characters that fit at this size; longer lines are narrowed */
 } text_layout[TEXT_LINES] = {
     { 70, 23, 0.5f },                                                     /* header */
     { -112, 20, 0.4f }, { -112, 40, 0.5f }, { -112, 65, 0.4f }, { -112, 85, 0.5f }, /* user */
@@ -135,7 +147,12 @@ static const struct {
     { 70, 132.5f, 0.4f }, { 70, 152.5f, 0.4f },                           /* Z, chat */
     { -130, -246, 0.5f }, { -50, -246, 0.5f },                            /* Playing: name */
     { 90, 52, 0.4f }, { 90, 70, 0.4f }, { 90, 88, 0.4f }, { 90, 106, 0.4f }, /* error */
-    { 70, 175, 0.4f }, { 70, 192.5f, 0.4f }, { 70, 210, 0.4f }, { 70, 227.5f, 0.4f }, { 70, 245, 0.4f }, /* chat */
+    /* Chat messages and the open chat page, larger than Slippi's 0.4: on the
+     * 3DS's top screen 0.4 is a 7-pixel font. */
+    { 70, 180, 0.55f, 22 }, { 70, 205, 0.55f, 22 }, { 70, 230, 0.55f, 22 }, { 70, 255, 0.55f, 22 },
+    { 70, 280, 0.55f, 22 },
+    { 70, 128, 0.5f, 24 }, { 70, 154, 0.5f, 24 }, { 70, 180, 0.5f, 24 }, { 70, 206, 0.5f, 24 },
+    { 70, 232, 0.5f, 24 },
 };
 static const GXColor text_colors[7] = {
     { 0xFF, 0xFF, 0xFF, 0xFF }, { 0x8E, 0x91, 0x96, 0xFF }, { 0xFF, 0x00, 0x00, 0xFF },
@@ -172,6 +189,23 @@ static void css_text_frame(void)
         if (strcmp(buf, text_now[i]) != 0) {
             strcpy(text_now[i], buf);
             HSD_SisLib_803A70A0(css_text, text_ids[i], "%s", buf);
+            if (text_layout[i].fit > 0) {
+                /* Narrow a long line to the panel's width (characters, a
+                 * Shift-JIS pair counting once), keeping its height. */
+                int chars = 0, k;
+                float sx = text_layout[i].size;
+                for (k = 0; buf[k] != 0; k++) {
+                    u8 c = (u8) buf[k];
+                    if (((c >= 0x81 && c <= 0x9F) || (c >= 0xE0 && c <= 0xEF)) && buf[k + 1] != 0) {
+                        k++;
+                    }
+                    chars++;
+                }
+                if (chars > text_layout[i].fit) {
+                    sx = sx * (float) text_layout[i].fit / (float) chars;
+                }
+                HSD_SisLib_803A7548(css_text, text_ids[i], sx, text_layout[i].size);
+            }
         }
         if (color != text_color_now[i] && color >= 0 && color < 7) {
             text_color_now[i] = color;
@@ -246,6 +280,7 @@ static void sss_exit(GameModeState* state)
     } else {
         mp_platform_slippi_ui_event(3 /* STAGE */, -1);
     }
+    css_quiet = 1;
     gm_SetNextGameModeStateId(ST_CSS);
 }
 
@@ -273,6 +308,7 @@ static void vs_exit(GameModeState* state)
         won = 0;   /* UI tests: take the loser's path (stage pick) */
     }
     mp_platform_slippi_ui_event(4 /* RESULT */, won);
+    css_quiet = 0;   /* after a game the announcer plays, as in VS mode */
     gm_SetNextGameModeStateId(ST_CSS);
 }
 

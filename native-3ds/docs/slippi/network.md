@@ -263,6 +263,20 @@ What the Azahar runs show:
 - **Fix (`online.c`):** the allowed lag grows by half a frame per 30-frame window with 4 or more waits, up to 5 frames (inside the PC's 7-frame rollback window). It shrinks by a quarter frame after 10 quiet windows. LAN play stays at 1.6 frames.
 - **On the PC side:** a larger delay setting on the PC helps the 3DS most, because it is the remote delay that hides the latency.
 
+## Match load time (hardware run 10)
+
+- **Before:** each load took about 9-10 s, 27-29 SD opens of about 220 ms each.
+  - Files in the 1000-entry disc folder cost about 220 ms per open. Stage files (another folder) cost 3-35 ms.
+  - The boot prefetch only runs for `auto_match`, so the menu flow had nothing in RAM.
+- **Fixes:**
+  - **Empty player slots** no longer preload the template's fighter. Young Link's five files (about 3 MB, 1.1 s) had been loaded for nobody in every game. Fixed in `mp_slippi_prepare_match_files`.
+  - **VS splash is off.** This saves 6-8 opens plus the scene itself.
+  - **Keep on read** (`file_io.c`, `keep_file`): during a match load (match ready to frame 120), each file except .hps streams of at most 3 MB is read whole on its first open and kept.
+    - The cache holds up to 10 MB and evicts least recently used files, but never one the current load used.
+    - Nothing is kept if fewer than 12 MB of the heap would remain. Run 10 peaked at 65 MB used of 86 MB.
+  - **Result:** in the emulator, the second game against the same opponent opens no files during the scene preload (158 ms, down from 976 ms). Only the stage's sound bank and music are opened.
+- **Time sync:** the 3DS pads at exactly 60 Hz against Dolphin's 59.94 Hz, so on LAN it drops one frame about every 12 s (`dropping 1 frames`). This is expected and matches what Dolphin does when it is ahead.
+
 ## Open issues
 
 - **Real server acceptance.**

@@ -125,4 +125,12 @@ Sources:
 - **CSS title:** slpCSS.dat (Slippi's art, installed by slippi_files.py) supplies the MODE animation, frame 0 = MELEE, on joint 36. Without the file the EVENT MATCH title is hidden.
 - **Code keyboard buttons:** edges come from held keys, because game.c's extra HID scan ate about half the presses. Directions auto-repeat. Buttons still held when the keyboard closes do not reach the CSS.
 
+**Changed after hardware run 10:**
+- **VS splash: off.** The CSS goes straight to the match (`css_exit` sets `ST_VS`). The splash scene added about two seconds to a 3DS load that was already slower than the PC's. `ST_SPLASH` and its code stay in place.
+- **Larger chat on the top screen.**
+  - Messages are size 0.55, up from Slippi's 0.4, on lines 19-21.
+  - The open chat page is size 0.5, on its own lines 24-28, and takes the place of the "Hold Z" and "D-Pad" hints.
+  - A long line is narrowed to fit the panel instead of running off it.
+- **No "Choose your character!" after the stage pick.** It made the CSS sound like a new selection. It still plays on entry from the menus and after each game, as in VS mode (`mp_slippi_css_quiet`).
+
 **Still open:** custom chat messages are shown from the matchmaking reply when present (Slippi Launcher settings), but the 3DS has no editor for its own.
