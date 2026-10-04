@@ -6,7 +6,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        This is a free hobby project. To fix a problem I need facts, so every field below is required.
+        This is a free hobby project. To fix a problem I need facts, so please fill in every required field.
         Reports without a log, complaints and demands are closed without reply.
 
         **First:** read the yellow message in the builder window. It usually says exactly what to do
