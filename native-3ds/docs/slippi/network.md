@@ -242,7 +242,7 @@ Azahar run, `game.log` excerpt:
 
 What the Azahar runs show:
 - Azahar's soc:U emulation works for this client. Guest `127.0.0.1` is the host's loopback, and a guest bind to port P binds host port P, so the fake MM sees the 3DS at `127.0.0.1:P`.
-- `gethostid()` returns the host's LAN address (0x1d04a8c0 = 192.168.4.29).
+- `gethostid()` returns the host's LAN address (for example 0x0104a8c0 = 192.168.4.1).
 - `ac:u` reports Wi-Fi as connected.
 - The PC side logged 602/602 3DS pads verified and every 3DS checksum `ok`.
 - Ping in the emulator is 2–17 ms, because emulated time is coarse and the network thread runs at 2 ms.

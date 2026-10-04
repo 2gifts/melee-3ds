@@ -2,7 +2,7 @@
 (both eyes) several times. Usage: classic_splash.py ROUND LABEL [STEREO] [--play SECONDS]"""
 import os,sys,time,socket,subprocess,shutil,types,zlib,struct
 from pathlib import Path
-ROOT=Path(r'C:\Users\kirby\Melee Decomp\melee-3ds\native-3ds')
+ROOT=Path(__file__).resolve().parents[3]
 os.environ.setdefault('MP_TEST_ELF',str(ROOT/'build/game-opt/melee.elf'))
 sys.path.insert(0,str(ROOT/'tools'))
 # The harness imports numpy/PIL only for its own screenshots; stub them.

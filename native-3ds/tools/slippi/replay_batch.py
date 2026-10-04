@@ -13,7 +13,7 @@ ROOT = HERE.parents[1]
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('folder', nargs='?', default=r'C:\Users\kirby\Documents\Slippi')
+    ap.add_argument('folder', nargs='?', default=str(Path.home()/'Documents/Slippi'))
     ap.add_argument('--out', default=str(ROOT / 'build/slippi-replays/batch.txt'))
     a = ap.parse_args()
     lines = []

@@ -31,9 +31,9 @@ into the main port.
 
 ## Test assets
 
-- `C:\Users\kirby\Documents\Slippi\**\*.slp` (Slippi 3.19.1). All were recorded with the
+- `%USERPROFILE%\Documents\Slippi\**\*.slp` (Slippi 3.19.1). All were recorded with the
   netplay code set. Two are Direct online games (2026-06-22 21:23); the rest are
   offline vs CPU.
-- Melee Unlocked's sources: `C:\Users\kirby\Melee Decomp\slippi-research\melee-unlocked`
+- Melee Unlocked's sources: a local checkout (`slippi-research/melee-unlocked` next to this repository)
   (shims in `sourceport/game/shim`, decomp patch `sourceport/patches/melee-native.patch`,
   Slippi netcode `port/runtime/hle/slippi_*.cpp`).
