@@ -37,6 +37,6 @@ The `.3dsx` is a separate launch option. Select **melee** in Homebrew Launcher t
 - **Missing game files:** check for `SD:/3ds/melee/files/`, rather than an extra nested `native-alpha/3ds/` directory. Use the supported unmodified base dump.
 - **No audio:** the port needs your homebrew setup's DSP support or an existing `SD:/3ds/dspfirm.cdc`. Firmware is not bundled.
 - **Low frame rate:** try 2D and 1v1 on prepared Diet scenery. See the [performance expectations](../../README.md#performance-to-expect); crowded scenes remain demanding.
-- **Crash or freeze:** note the console model, launch method, fighters, stage, and 2D/3D setting. The readable log is `SD:/3ds/melee/game.log`. Check it before sharing; do not upload game files, firmware, or raw memory dumps.
+- **Crash or freeze:** note the console model, launch method, fighters, stage, and 2D/3D setting. The readable log is `SD:/3ds/melee/game.log`. The game replaces it each time it starts, so copy it right after the problem, before starting Melee again. Do not upload game files, firmware, or raw memory dumps.
 
-The project is complete for now. [Issues](https://github.com/2gifts/melee-3ds/issues) remain available for documenting problems, without a promise of further fixes.
+To report a bug, use the [issue form](https://github.com/2gifts/melee-3ds/issues/new/choose) and attach the log; see [getting help](../../.github/SUPPORT.md).

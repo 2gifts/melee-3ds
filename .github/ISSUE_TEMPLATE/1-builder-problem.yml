@@ -1,0 +1,80 @@
+name: Builder or CIA problem
+description: The one-click builder stopped, or its CIA files do not install.
+title: "[Builder] "
+labels: ["builder"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This is a free hobby project. To fix a problem I need facts, so every field below is required.
+        Reports without a log, complaints and demands are closed without reply.
+
+        **First:** read the yellow message in the builder window. It usually says exactly what to do
+        (internet, PC date, disk space, antivirus). Then run the builder again: it continues where it stopped.
+        Still stuck? Fill this in.
+  - type: input
+    id: version
+    attributes:
+      label: Builder version
+      description: In the name of the zip you downloaded, for example Melee-3DS-CIA-Builder-v1.3.1.zip.
+      placeholder: v1.3.1
+    validations:
+      required: true
+  - type: dropdown
+    id: windows
+    attributes:
+      label: Windows version
+      options:
+        - Windows 11
+        - Windows 10
+        - Something else (Mac, Linux, Wine, Steam Deck... these are not supported)
+    validations:
+      required: true
+  - type: dropdown
+    id: step
+    attributes:
+      label: Where did it stop?
+      options:
+        - Before step 1 (nothing happened, or the window closed)
+        - Step 1 - Checking your disc image
+        - Step 2 - Downloading build tools
+        - Step 3 - Reading the game files from your disc
+        - Step 4 - Compiling the game
+        - Step 5 - Making the HOME Menu icons and CIA files
+        - Step 6 or 7 - Collecting files or copying to the SD card
+        - It finished, but FBI cannot install the CIA
+    validations:
+      required: true
+  - type: textarea
+    id: message
+    attributes:
+      label: What the window said
+      description: Copy the text from the builder window, or attach a screenshot.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: build-log.txt
+      description: |
+        Required. The builder's window shows its working folder (usually C:\MeleeBuild).
+        Drag build-log.txt from that folder into this box. It contains no game files.
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else
+      description: Optional. What you already tried, antivirus software, school or work PC, etc.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I used the newest builder from the releases page.
+          required: true
+        - label: My disc image is a plain US v1.02 .iso (about 1.4 GB), not .rvz, .nkit or a trimmed file.
+          required: true
+        - label: I understand prebuilt CIA files will not be shared.
+          required: true

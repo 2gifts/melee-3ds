@@ -97,6 +97,10 @@ In the everything-unlocked build, Versus starts with **4 stocks, 8 minutes, item
 
 The touch-screen controls guide does not pause a match.
 
+## Reporting problems
+
+This is a free hobby project. Bug reports need facts: **builder problems need `build-log.txt`** (in the folder the builder window shows), and **game problems need steps to reproduce and `SD:/3ds/melee/game.log`**, copied right after the problem. Use the [issue forms](https://github.com/2gifts/melee-3ds/issues/new/choose); ideas and questions go in [Discussions](https://github.com/2gifts/melee-3ds/discussions). Reports without logs, requests for prebuilt CIA files, and complaints are closed. More in [getting help](.github/SUPPORT.md).
+
 ## Scope and credits
 
 This is an unofficial homebrew port. There is **no multiplayer connection, Slippi rollback, or replay recording**. Optional movies are skipped, some graphics are simplified or approximate, and single-player modes have less coverage than Versus and Training. Bugs may remain. See [project status](native-3ds/docs/PORT_STATUS.md).

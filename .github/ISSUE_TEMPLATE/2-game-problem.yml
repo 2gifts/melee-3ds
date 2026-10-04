@@ -1,0 +1,86 @@
+name: Game problem on the 3DS
+description: A crash, freeze, wrong graphics or sound, or other bug while playing.
+title: "[Game] "
+labels: ["game"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This is a free hobby project. To fix a bug I need to make it happen myself, so every required
+        field matters. Reports without steps or a log, complaints and demands are closed without reply.
+
+        **Get the log first.** The game writes `SD:/3ds/melee/game.log` and replaces it every time it starts.
+        Right after the problem, turn the 3DS off (do not start Melee again), put the SD card in your
+        computer and copy `3ds/melee/game.log`.
+
+        Slow frame rates in crowded scenes are known; see the
+        [project status](https://github.com/2gifts/melee-3ds/blob/3ds/native-3ds/docs/PORT_STATUS.md) first.
+  - type: dropdown
+    id: console
+    attributes:
+      label: Console
+      options:
+        - New 3DS
+        - New 3DS XL
+        - New 2DS XL
+        - Original 3DS, 3DS XL or 2DS (not supported)
+    validations:
+      required: true
+  - type: dropdown
+    id: launch
+    attributes:
+      label: How you started the game
+      options:
+        - HOME Menu (CIA) - everything unlocked
+        - HOME Menu (CIA) - Fresh Save
+        - Homebrew Launcher (.3dsx)
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Builder version used to make it
+      placeholder: v1.3.1
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to make it happen
+      description: Exact steps from the title screen. Include mode, fighters, stage and whether 3D was on.
+      placeholder: |
+        1. Versus mode, Fox vs Falco (CPU level 9), Final Destination, 3D on
+        2. Pause and press HOME
+        3. Return to the game
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: What happened, and how often
+      description: For example "the game froze with a black screen, 3 times out of 3".
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: game.log
+      description: Required. Drag the game.log you copied from SD:/3ds/melee/ into this box.
+    validations:
+      required: true
+  - type: textarea
+    id: screen
+    attributes:
+      label: Screenshot or photo
+      description: Optional. If an error screen appeared (for example "Arm11 exception"), attach a clear photo of it.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: My game was made with the newest builder.
+          required: true
+        - label: I searched the existing issues for this problem.
+          required: true
+        - label: I attached files only from 3ds/melee (no game files, firmware or memory dumps).
+          required: true
