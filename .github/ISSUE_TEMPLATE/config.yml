@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Ideas, requests and questions
+    url: https://github.com/2gifts/melee-3ds/discussions
+    about: Feature requests, setup help and general chat go in Discussions. Issues are only for bugs with logs.
+  - name: Prebuilt CIA or 3DSX files
+    url: https://github.com/2gifts/melee-3ds/releases/latest
+    about: Not available and will not be shared (they contain Nintendo's game). Use the one-click builder with your own disc.
