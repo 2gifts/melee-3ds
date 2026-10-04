@@ -85,6 +85,7 @@ def main():
     ap.add_argument('--show', action='store_true')
     ap.add_argument('--icon', type=int, default=None, help='CSS icon for our fighter (default Fox)')
     ap.add_argument('--no-peer', action='store_true', help='only the menus, no fake opponent')
+    ap.add_argument('--no-account', action='store_true', help='without user.json (the missing-account texts)')
     ap.add_argument('--match-seconds', type=float, default=40)
     ap.add_argument('--pick-kind', type=int, default=None, help='SSS: stage kind to pick (default: printed list, first)')
     ap.add_argument('--frozen', action='store_true', help='SSS: press Z (frozen Stadium) before picking')
@@ -105,6 +106,8 @@ def main():
     extra = ['prefetch=0']
     write_profile(sd / 'slippi', 'a', USERS['b']['connectCode'], args, 2, extra)
     (sd / 'slippi' / 'direct-codes.txt').unlink(missing_ok=True)
+    if args.no_account:
+        (sd / 'slippi' / 'user.json').unlink(missing_ok=True)
     # Slippi's menu files, made from this disc (tools/slippi/slippi_files.py).
     files = sd / 'slippi' / 'files'
     if files.exists():
