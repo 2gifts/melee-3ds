@@ -56,7 +56,9 @@ Thanks to Project Slippi (Fizzi and contributors) for Slippi, its protocol, menu
 | PC replays from runs 10 and 11 in the replay harness | 8 of 8 match the 3DS frame for frame (only known pre-game harness rounding) |
 | Two-emulator pair test (2 games) | 4531 of 4531 records identical in each game |
 | Emulator UI test (menus, code entry, chat, loser's stage pick, game 2 from the RAM cache) | Passes |
-| Builder clean-room run (fresh work folder, fake SD card) | See the beta branch's commit message |
+| Builder clean-room run (zip extracted to a path with spaces, fresh `MeleeSlippiBuild` work folder, real disc image, dummy Slippi account) | All 8 steps passed. The output holds the beta CIA (title 000400000F4D4700, green disc icon, 3D banner), `3ds/melee-slippi/melee-slippi.3dsx`, the shared game files, Slippi's 5 menu files and `slpCSS.dat`, the licenses (with ENet), the guide and "What to do next". There is no `3ds/melee/melee.3dsx`, so the regular game is untouched. |
+| SD copy onto a card that already has another Slippi account | That account is kept and the builder says so |
+| Beta first start (emulator) | `saves/slippi/` is created and seeded from `saves/unlocked/` (1 save copied). Without `user.json`, both screens say "No Slippi account" and how to fix it. |
 
 ## Go-live checklist (nothing here has been done yet)
 

@@ -77,6 +77,7 @@ The beta has its own one-click builder, **`Melee-3DS-Slippi-Beta-Builder`**. It 
 4. **Slippi account step.** The builder looks for a Slippi Launcher login on this PC.
    - If it finds one, it shows the display name and connect code and asks whether to put that account on the SD card. Type **Y** to add it.
    - If it doesn't find one, follow [Set up your Slippi account](#set-up-your-slippi-account) yourself.
+   - If your SD card already has a **different** Slippi account, the builder keeps the one on the card.
 5. If your 3DS's SD card is plugged in, the builder offers to copy everything. Otherwise, follow **"What to do next.txt"** in the folder that opens.
 
 The builder works in its own folder, `C:\MeleeSlippiBuild`, separate from the regular `C:\MeleeBuild`.

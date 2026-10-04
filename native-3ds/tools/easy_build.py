@@ -578,6 +578,20 @@ def copy_to_sd(sd_folder, card, src):
         for line in report.getvalue().splitlines():
             say('   Older game files on the card: ' + line)
     items = [p for p in sd_folder.rglob('*') if p.is_file()]
+    # Never replace a Slippi login already on the card with another account.
+    account = Path('3ds/melee/slippi/user.json')
+    if (sd_folder/account).is_file() and (card/account).is_file():
+        def code(path):
+            try:
+                return json.loads(path.read_text(encoding='utf-8')).get('connectCode')
+            except (OSError, ValueError, AttributeError):
+                return None
+        theirs = code(card/account)
+        if theirs and theirs != code(sd_folder/account):
+            items.remove(sd_folder/account)
+            shown_code = str(theirs).encode('ascii', 'replace').decode()
+            say(f'   The SD card already has a different Slippi account ({shown_code}); it was kept.')
+            say('   To use the other account, copy user.json to SD:/3ds/melee/slippi/ yourself.')
     total = sum(p.stat().st_size for p in items)
 
     def needed(path):
