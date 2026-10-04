@@ -118,9 +118,11 @@ Sources:
   - match cards with display names and ping.
 - Menu art: `tools/slippi/slippi_files.py` writes Slippi's patched menu files, made from the player's own disc, to `sdmc:/3ds/melee/slippi/files/`.
 
-**Not done yet:**
-- VS splash before game 1 (names; the announcer calls the opponent).
-- In-game names above percents and "Delay: Nf".
-- The in-game "DISCONNECTED" / "DESYNC DETECTED" texts.
-- Zelda/Sheik selector.
-- The CSS's EVENT MATCH title, which Slippi replaces with its mode art.
+**Added 2026-10-03 (after hardware run 9):**
+- **VS splash before every game** (`online_mode.c`, state `ST_SPLASH`). It is Classic mode's intro scene with Slippi's template, as in SplashScenePrep. You are on the left and the opponent on the right, so the announcer calls the opponent's fighter. "P1/P2 name" labels in port colours and the stage name come from InitVsSplash.
+- **In-game text** (`online_hud.c`, InitInGame): each name under its damage display, "Delay: Nf", and DISCONNECTED (red) or DESYNC DETECTED (amber). A desync now ends the game as a no-contest, as Slippi's StartEngineLoop does.
+- **Zelda/Sheik:** the Zelda icon plays Sheik by default (Slippi's MajorSceneLoad); a SHEIK/ZELDA pill on the bottom page switches it. Zelda is restored when leaving online play.
+- **CSS title:** slpCSS.dat (Slippi's art, installed by slippi_files.py) supplies the MODE animation, frame 0 = MELEE, on joint 36. Without the file the EVENT MATCH title is hidden.
+- **Code keyboard buttons:** edges come from held keys, because game.c's extra HID scan ate about half the presses. Directions auto-repeat. Buttons still held when the keyboard closes do not reach the CSS.
+
+**Still open:** custom chat messages are shown from the matchmaking reply when present (Slippi Launcher settings), but the 3DS has no editor for its own.

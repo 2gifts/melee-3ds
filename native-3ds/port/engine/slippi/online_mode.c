@@ -18,6 +18,7 @@
 #include <melee/gm/gmvsmelee.h>
 #include <melee/gm/types.h>
 #include <melee/lb/lbaudio_ax.h>
+#include <melee/lb/lbarchive.h>
 #include <melee/lb/lbdvd.h>
 #include <melee/lb/types.h>
 #include <melee/mn/types.h>
@@ -25,7 +26,7 @@
 #include <slippi_engine.h>
 #include <slippi_net_bridge.h>
 
-enum { ST_CSS, ST_SSS, ST_VS };
+enum { ST_CSS, ST_SSS, ST_VS, ST_SPLASH };
 
 static CSSData online_css;
 static s8 saved_ckind = CKind_Fox;
@@ -33,6 +34,8 @@ static s8 saved_color;
 static u8 next_state = ST_VS;
 volatile int mp_slippi_test_lose;   /* development: count every game as lost */
 static HSD_Text* css_text;
+static int slpcss_loaded;
+static void** slpcss;   /* slpCSS.dat: chat select, chat message, MODE, connect help */
 
 int mp_slippi_sss_alt_mode(void)
 {
@@ -51,11 +54,16 @@ static void sss_enter(GameModeState* state);
 static void sss_exit(GameModeState* state);
 static void vs_enter(GameModeState* state);
 static void vs_exit(GameModeState* state);
+static void splash_enter(GameModeState* state);
+static void splash_exit(GameModeState* state);
+static u8 splash_data[0x20];
+static u32 splash_exit_data;
 
 GameModeState mp_slippi_online_states[] = {
     { ST_CSS, lbDvdPreload_3, 0, css_enter, css_exit, { GS_CSS, &online_css, &online_css } },
     { ST_SSS, lbDvdPreload_3, 0, sss_enter, sss_exit, { GS_SSS, &gmVsMelee_SssData, &gmVsMelee_SssData } },
     { ST_VS, lbDvdPreload_3, 0, vs_enter, vs_exit, { GS_VS, &gmVsMelee_StartData, &gmVsMelee_VsExitInfo } },
+    { ST_SPLASH, lbDvdPreload_3, 0, splash_enter, splash_exit, { GS_INTRO_EASY, splash_data, &splash_exit_data } },
     { GM_GAMEMODESTATE_TERMINATE },
 };
 
@@ -82,6 +90,8 @@ static void css_enter(GameModeState* state)
     lbDvd_SetupVsPreloadCache();
     next_state = ST_VS;
     css_text = NULL;   /* the CSS's SIS texts are freed with each scene */
+    slpcss_loaded = 0;   /* and its archives */
+    slpcss = NULL;
     mp_platform_slippi_ui_event(1 /* CSS_ENTER */, 0);
 }
 
@@ -93,6 +103,7 @@ static void css_exit(GameModeState* state)
     if (css->pending_scene_change == 2) {
         /* B held: back to the menus. The connection closes. */
         mp_platform_slippi_ui_event(2 /* LEAVE */, 0);
+        mp_slippi_css_sheik(0);   /* the vanilla CSS keeps Zelda */
         gm_ChangeGameModeAfterCurrentScene(GM_MENU);
         return;
     }
@@ -106,7 +117,7 @@ static void css_exit(GameModeState* state)
     /* Both locked in: load what the match needs (both fighters, the stage,
      * their sound banks), as Slippi's game-setup preload does. */
     mp_slippi_prepare_match_files(mp_slippi_online_pending_block());
-    gm_SetNextGameModeStateId(ST_VS);
+    gm_SetNextGameModeStateId(ST_SPLASH);
 }
 
 /* ---- the online CSS text (LoadCSSText.asm, UserDisplayFunctions.asm) ----
@@ -178,6 +189,15 @@ int mp_slippi_css_frame(int ready, PlayerInitData* local, PlayerInitData* remote
     int opponent = mp_platform_slippi_ui_remote();
     play_sfx(flags);
     css_text_frame();
+    if (!slpcss_loaded) {
+        /* SceneLoadCSS: Slippi's CSS art, when slippi_files.py installed it. */
+        slpcss_loaded = 1;
+        if (mp_platform_slippi_has_file("slpCSS.dat")) {
+            lbArchive_LoadSymbols("slpCSS.dat", &slpcss, "slpCSS", NULL);
+        }
+    }
+    mp_slippi_css_title(slpcss != NULL ? slpcss[2] : NULL);
+    mp_slippi_css_sheik((flags & 8) != 0);
     /* The opponent's fighter, once known, preloads while we wait, so the
      * match loads faster; it is never shown. Straight into the preload
      * cache's second slot: marking players[1] present would make the 1-door
@@ -254,4 +274,123 @@ static void vs_exit(GameModeState* state)
     }
     mp_platform_slippi_ui_event(4 /* RESULT */, won);
     gm_SetNextGameModeStateId(ST_CSS);
+}
+
+/* ---- the VS splash before each game (Slippi's minor scene 4) ----
+ * Classic mode's intro screen (GS_INTRO_EASY): this player on the left, the
+ * opponent on the right, so the announcer calls the opponent's fighter.
+ * SplashScenePrep's template and per-side slots; InitVsSplash's names. */
+
+static void splash_enter(GameModeState* state)
+{
+    static const u8 template_[16] = { 0x01, 0x78, 0x01, 0x01, 0x01, 0xFF, 0x21, 0x21,
+                                      0xFF, 0x21, 0x21, 0xEE, 0x00, 0x00, 0xEE, 0x00 };
+    const u8* block = mp_slippi_online_pending_block();
+    u8* d = splash_data + 8;
+    int local = block != NULL ? block[0x138 + 4] & 3 : 0, i, left = 0, right = 0;
+    (void) state;
+    memset(splash_data, 0, sizeof splash_data);
+    memcpy(d, template_, sizeof template_);
+    d[2] = 2;
+    d[6] = d[7] = d[9] = d[10] = d[12] = d[13] = d[15] = d[16] = 1;
+    for (i = 0; i < 4 && block != NULL; i++) {
+        const u8* p = block + 0x60 + 0x24 * i;
+        if (p[1] >= 3) {
+            continue;   /* no player */
+        }
+        if (i == local) {
+            d[5 + left] = p[0];
+            d[11 + left] = p[3];
+            left++;
+        } else {
+            d[8 + right] = p[0];
+            d[14 + right] = p[3];
+            right++;
+        }
+    }
+    d[3] = (u8) left;
+    d[4] = (u8) right;
+    splash_data[3] = 0;   /* not teams (the announcer would say "Team ...") */
+    splash_data[7] = 0;   /* no event-match staging */
+}
+
+static void splash_exit(GameModeState* state)
+{
+    (void) state;
+    gm_SetNextGameModeStateId(ST_VS);
+}
+
+/* External stage ids, as the splash names them. */
+static const char* stage_name(int id)
+{
+    static const char* const names[33] = {
+        NULL, NULL, "Fountain of Dreams", "Pokemon Stadium", "Princess Peach's Castle", "Kongo Jungle",
+        "Brinstar", "Corneria", "Yoshi's Story", "Onett", "Mute City", "Rainbow Cruise", "Jungle Japes",
+        "Great Bay", "Hyrule Temple", "Brinstar Depths", "Yoshi's Island", "Green Greens", "Fourside",
+        "Mushroom Kingdom I", "Mushroom Kingdom II", NULL, "Venom", "Poke Floats", "Big Blue", "Icicle Mountain",
+        NULL, "Flat Zone", "Dream Land", "Yoshi's Island N64", "Kongo Jungle N64", "Battlefield",
+        "Final Destination",
+    };
+    return id >= 0 && id < 33 ? names[id] : NULL;
+}
+
+/* After the splash scene's set-up (gm_Scene_IntroEasy_OnEnter, 80186ec4). */
+void mp_slippi_splash_text(void)
+{
+    static const GXColor ports[4] = {
+        { 0xE5, 0x4C, 0x4C, 0xFF }, { 0x4B, 0x4C, 0xE5, 0xFF }, { 0xFF, 0xCB, 0x00, 0xFF }, { 0x00, 0xB2, 0x00, 0xFF },
+    };
+    static const GXColor white = { 0xFF, 0xFF, 0xFF, 0xFF };
+    const u8* block = mp_slippi_online_pending_block();
+    HSD_Text* t;
+    int local, i, idx;
+    char name[64];
+    const char* stage;
+    if (gm_GetCurrentGameMode() != GM_HANYU_CSS || block == NULL) {
+        return;
+    }
+    local = block[0x138 + 4] & 3;
+    t = HSD_SisLib_803A6754(0, 0);
+    if (t == NULL) {
+        return;
+    }
+    t->default_kerning = 1;
+    t->default_alignment = 0;
+    t->pos_z = 0.0f;
+    t->font_size.x = 1.0f;
+    t->font_size.y = 1.0f;
+    for (i = 3; i >= 0; i--) {
+        const u8* p = block + 0x60 + 0x24 * i;
+        float x = i == local ? 60.0f : 420.0f, y = 80.0f;
+        if (p[1] >= 3 || i > 1) {
+            continue;
+        }
+        idx = HSD_SisLib_803A6B98(t, x, y, "P%d", i + 1);
+        HSD_SisLib_803A7548(t, idx, 0.5f, 0.5f);
+        HSD_SisLib_803A74F0(t, idx, (GXColor*) &ports[i]);
+        if (mp_platform_slippi_ui_text(30 + i, name, sizeof name) >= 0) {
+            name[sizeof name - 1] = 0;
+            idx = HSD_SisLib_803A6B98(t, x + 36.0f, y, "%s", name);
+            HSD_SisLib_803A7548(t, idx, 0.5f, 0.5f);
+            HSD_SisLib_803A74F0(t, idx, (GXColor*) &white);
+        }
+    }
+    stage = stage_name((block[0xE] << 8) | block[0xF]);
+    if (stage != NULL) {
+        HSD_Text* s = HSD_SisLib_803A6754(0, 0);
+        if (s != NULL) {
+            s->pos_x = 238.0f;
+            s->pos_y = 440.0f;
+            s->pos_z = 0.0f;
+            s->box_size_x = 160.0f;
+            s->box_size_y = 300.0f;
+            s->font_size.x = 1.0f;
+            s->font_size.y = 1.0f;
+            s->default_alignment = 1;
+            s->default_kerning = 1;
+            mp_platform_slippi_ui_sis(stage, name, sizeof name);
+            idx = HSD_SisLib_803A6B98(s, 0.0f, 0.0f, "%s", name);
+            HSD_SisLib_803A7548(s, idx, 0.5f, 0.5f);
+        }
+    }
 }

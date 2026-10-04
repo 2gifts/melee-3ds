@@ -233,6 +233,14 @@ Remaining mismatches (`--all`), by area:
 * `fn_8003F654` (plbonuslib, end-of-match bonus stats), `CObjLoad`,
   `HSD_CObjGetLeftVector` (double counts only).
 
+## 6b. Decomp C that differs from the console (tools/slippi_edits/decomp_fixes.py)
+
+- **ftCo_800ADE48 (CPU AI, used by every CPU and by Nana).** For a fighter in hitlag (`x221A_b3`), the console never sets r31 (`switch_cmd`). It keeps the caller's value, which is a pointer in every caller, so the CPU switches to behaviour 0x12, knockback DI (DOL 800ae1f8..800ae284).
+  - The decomp's variable is uninitialised there, and clang took it as 0.
+  - The fix sets it to 1.
+  - Found from hardware run 9: in an Ice Climbers game, Nana kept heading for Popo through hitlag and smash-DI'd back and forth.
+  - `tools/slippi_edits/zz_cputrace.py` traces CPU command bytes and behaviour dispatches during replay runs inside dump.txt's window. It is cheap enough to leave in.
+
 ## 7. Non-finite guards (tools/engine_overlays.py)
 
 * `lbColl_80006E58` (capsule contact): rejects a contact only when

@@ -72,7 +72,15 @@ int mp_slippi_css_frame(int ready, struct PlayerInitData* local, struct PlayerIn
 int mp_slippi_sss_alt_mode(void);
 /* Slippi's patched menu files are installed (Online submenu, descriptions). */
 int mp_platform_slippi_menu_files(void);
+int mp_platform_slippi_has_file(const char* name);
+void mp_slippi_css_title(void* matanim);
 void mp_slippi_menu_prepare(void);
+/* In-game text (online_hud.c): names, delay, status messages. */
+int mp_slippi_online_delay(void);
+void mp_slippi_hud_init(void);
+void mp_slippi_hud_message(int kind);
+void mp_slippi_splash_text(void);
+void mp_slippi_css_sheik(int sheik);
 void mp_slippi_sss_toggle_alt(void);
 
 #endif

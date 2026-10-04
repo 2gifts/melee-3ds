@@ -6,6 +6,7 @@ Slippi Dolphin patches a few of Melee's menu archives when it runs:
 - the stage select screen (MnSlMap);
 - character-select text (SdSlChr);
 - name entry (MnExtAll).
+It also copies slpCSS.dat, Slippi's online CSS art (the mode title).
 The patches (tools/slippi/gamefiles/*.usd.diff) are VCDIFF deltas copied from
 project-slippi/dolphin, Data/Sys/GameFiles/GALE01 (commit 41a7a3a, GPL-2.0+).
 This applies them to the .usd files found under FILES (the disc files the
@@ -56,7 +57,9 @@ def main():
         (out / name).write_bytes(data)
         made += 1
         print(f'{name}: {len(data)} bytes')
-    print(f'{made} of {len(NAMES)} files written to {out}')
+    # Slippi's online CSS art (the MELEE mode title), copied as it is.
+    (out / 'slpCSS.dat').write_bytes((HERE / 'gamefiles' / 'slpCSS.dat').read_bytes())
+    print(f'{made} of {len(NAMES)} patched files and slpCSS.dat written to {out}')
 
 
 if __name__ == '__main__':

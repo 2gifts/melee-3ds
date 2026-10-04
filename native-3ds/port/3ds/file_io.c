@@ -152,8 +152,10 @@ void mp_native_files_index(void){}
 /* Slippi's patched menu files (MnMaAll + SdMenu) are on the SD card. */
 #ifdef __3DS__
 int mp_native_slippi_menu_files(void){return slippi_index_count&&index_find(slippi_index,"MnMaAll.usd")&&index_find(slippi_index,"SdMenu.usd");}
+int mp_native_slippi_has_file(const char* name){return slippi_index_count&&index_find(slippi_index,name)!=NULL;}
 #else
 int mp_native_slippi_menu_files(void){return 0;}
+int mp_native_slippi_has_file(const char* name){(void)name;return 0;}
 #endif
 /* Disc files found at startup (a complete US v1.02 extraction has 1209). */
 unsigned mp_native_disc_file_count(void){return disc_index_count;}

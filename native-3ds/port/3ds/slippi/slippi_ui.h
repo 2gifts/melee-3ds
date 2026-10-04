@@ -9,6 +9,7 @@
 #define SLIPPI_UI_LOCKED 1      /* locked in: no unselect or colour change */
 #define SLIPPI_UI_START 2       /* both locked in: take the match block */
 #define SLIPPI_UI_SSS 4         /* the loser picks the stage */
+#define SLIPPI_UI_SHEIK 8       /* the Zelda icon plays Sheik */
 
 /* slippi_ui_event */
 enum {
@@ -43,6 +44,8 @@ typedef struct {
     int key;                 /* highlighted key */
     int history_count, history_index;
     /* quick chat */
+    int play_zelda;          /* the Zelda icon: 0 Sheik (default online), 1 Zelda */
+    int ckind;               /* the fighter chosen on the CSS */
     int frozen_stadium;      /* Slippi's alt stage mode: Z on the SSS */
     int chat_enabled, chat_page;  /* page -1 closed, else 0 Up 1 Left 2 Right 3 Down */
     int chat_count;               /* lines in chat_text (newest last) */
@@ -64,7 +67,7 @@ int slippi_ui_alt(int toggle);                          /* frozen Stadium: toggl
 /* Native pad (services.c, engine thread): the GameCube buttons the game
  * gets after the session's filter; *zero_sticks is set while the keyboard
  * takes the controls. */
-unsigned slippi_ui_pad(unsigned keys_down, unsigned gc_buttons, int *zero_sticks);
+unsigned slippi_ui_pad(unsigned keys_held, unsigned gc_buttons, int *zero_sticks);
 
 /* Bottom-screen actions (bottom_draw.c's touch handler). */
 void slippi_ui_press_start(void);
@@ -84,6 +87,7 @@ void slippi_ui_close_chat(void);
 /* Online settings (Slippi Dolphin's "Delay Frames" and "Quick Chat"), kept in
  * config.ini as delay= and chat=. */
 void slippi_ui_open_settings(void);
+void slippi_ui_toggle_zelda(void);
 void slippi_ui_close_settings(void);
 void slippi_ui_set_delay(int delta);
 void slippi_ui_toggle_chat(void);

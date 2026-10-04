@@ -441,6 +441,7 @@ const short slippi_ui_key_rects[SLIPPI_KEYS][4]={
     K(0,3),K(1,3),K(2,3),K(3,3),K(4,3),K(5,3),K(6,3),
 #undef K
     {222,157,91,24},{5,185,74,25},{83,185,74,25},{161,185,74,25},{239,185,74,25}};
+enum{SHEIK_X=242,SHEIK_Y=137,SHEIK_W=70,SHEIK_H=18};
 enum{SL_ACTION_X=8,SL_ACTION_Y=187,SL_ACTION_W=190,SL_ACTION_H=23,SL_SIDE_X=204,SL_SIDE_W=108,
      SL_CHAT_X=126,SL_CHAT_W=72,SL_CONNECTED_W=112,CHAT_ROW0=35,CHAT_STEP=21,CHAT_H=19,CHAT_W=148};
 static int slippi_online_css_drawn; /* the last online page drawn was the CSS one (not the SSS) */
@@ -489,6 +490,11 @@ static void slippi_css_page(void){
             if(e[n]&&last>0)n=last;line[n]=0;fit(17,y,line,11,286,ink);e+=n;while(*e==' ')e++;y+=15;}
     }else{
         status_line(140,v->ready,v->ready?"CHARACTER SELECTED":"SELECT YOUR CHARACTER",v->spinner);
+        if(v->ready&&(v->ckind==18||v->ckind==19)&&!v->locked){
+            /* InitSheikSelector: tap to switch the Zelda icon. */
+            pill(SHEIK_X,SHEIK_Y,SHEIK_W,SHEIK_H,v->play_zelda?"ZELDA":"SHEIK",12,1);
+            right(SHEIK_X-6,SHEIK_Y+4,"TAP:",10,muted);
+        }
         if(v->locked)status_line(155,1,"LOCKED IN",0);
         else{const char* what=v->phase==SLIPPI_PHASE_IDLE?"PRESS START TO ENTER CODE":
                 v->need_stage&&!v->chose_stage?"PRESS START TO SELECT STAGE":"PRESS START TO LOCK IN";
@@ -592,6 +598,7 @@ unsigned mp_bottom_online_touch(unsigned x,unsigned y){
         return 1;
     }
     if(v->phase==SLIPPI_PHASE_IDLE&&inside(x,y,SL_CHAT_X,SL_ACTION_Y,SL_CHAT_W,SL_ACTION_H)){slippi_ui_open_settings();return 1;}
+    if(v->page==SLIPPI_PAGE_CSS&&v->ready&&(v->ckind==18||v->ckind==19)&&!v->locked&&inside(x,y,SHEIK_X,SHEIK_Y,SHEIK_W,SHEIK_H)){slippi_ui_toggle_zelda();return 1;}
     if(v->page==SLIPPI_PAGE_CHAT){
         for(int i=0;i<16;++i){int cx,cy;chat_rect(i,&cx,&cy);if(inside(x,y,cx,cy,CHAT_W,CHAT_H)){slippi_ui_send_chat(i);return 1;}}
         slippi_ui_close_chat();return 1;

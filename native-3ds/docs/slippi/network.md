@@ -255,6 +255,14 @@ What the Azahar runs show:
 - **Tests.** `slippi_fake_mm --delay-first-ms N` holds the first ticket's reply. Use it via `online_game_test.py --mm-hold-first 3000 [--peer-wait 16 to hold the 3DS]` and `online_pair_test.py --mm-hold-first 3000`.
 - **Logging.** Connection events before a match are logged as `net: event ...`.
 
+## Slow links (hardware run 9, phone hotspot, 72-113 ms)
+
+- **What happened:** the games stayed in sync and ran to the end, but the 3DS waited for the PC's pad 4345 times (81 s) in a 6420-frame game.
+- **Why:** a lockstep peer needs the remote pad for a frame when it plays that frame. Running level with the PC, the pad arrives after the PC's 2 frames of delay have run out.
+- **The old behaviour made it worse:** catching up whenever the 3DS was 1.6 frames behind removed the very lag that would have hidden the latency.
+- **Fix (`online.c`):** the allowed lag grows by half a frame per 30-frame window with 4 or more waits, up to 5 frames (inside the PC's 7-frame rollback window). It shrinks by a quarter frame after 10 quiet windows. LAN play stays at 1.6 frames.
+- **On the PC side:** a larger delay setting on the PC helps the 3DS most, because it is the remote delay that hides the latency.
+
 ## Open issues
 
 - **Real server acceptance.**

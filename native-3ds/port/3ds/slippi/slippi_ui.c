@@ -438,6 +438,18 @@ static void save_setting(const char *key, int value)
     mp_native_file_write_async(CONFIG_PATH, out, (unsigned) n);
 }
 
+/* Sheik <-> Zelda on the Zelda icon (not while locked in). */
+void slippi_ui_toggle_zelda(void)
+{
+    if (ui.locked) {
+        sfx |= SFX_ERROR;
+        return;
+    }
+    ui.play_zelda ^= 1;
+    sfx |= SFX_MOVE;
+    changed();
+}
+
 void slippi_ui_open_settings(void)
 {
     load_settings();
@@ -546,6 +558,10 @@ int slippi_ui_css(int packed, int trigger, int held)
     int flags = 0, ready = packed & 1;
     ckind = (packed >> 8) & 0xFF;
     color = (packed >> 16) & 0xFF;
+    if (ckind != ui.ckind) {
+        ui.ckind = ckind;
+        changed();
+    }
     if (ready != ui.ready) {
         ui.ready = ready;
         changed();
@@ -622,6 +638,7 @@ int slippi_ui_css(int packed, int trigger, int held)
     }
     if (ui.phase == SLIPPI_PHASE_CONNECTED && ui.locked && sent && slippi_net_remote_ready()) flags |= SLIPPI_UI_START;
     if (ui.locked) flags |= SLIPPI_UI_LOCKED;
+    if (!ui.play_zelda) flags |= SLIPPI_UI_SHEIK;
     flags |= sfx;
     sfx = 0;
     return flags;
@@ -802,9 +819,30 @@ static void move_key(int dx, int dy)
     }
 }
 
-unsigned slippi_ui_pad(unsigned down, unsigned gc, int *zero_sticks)
+/* Edges come from the held keys: game.c scans HID once per rendered frame
+ * as well, so hidKeysDown() here missed about half of the presses.
+ * Directions repeat while held (after 20 reads, every 5). */
+unsigned slippi_ui_pad(unsigned held, unsigned gc, int *zero_sticks)
 {
+    enum { DIRS = KEY_DUP | KEY_DDOWN | KEY_DLEFT | KEY_DRIGHT | KEY_CPAD_UP | KEY_CPAD_DOWN | KEY_CPAD_LEFT | KEY_CPAD_RIGHT };
+    static unsigned previous, repeat, swallow;
+    static int was_code;
+    unsigned down = held & ~previous;
+    if ((held & DIRS) && (held & DIRS) == (previous & DIRS)) {
+        if (++repeat > 20 && repeat % 5 == 0) down |= held & DIRS;
+    } else {
+        repeat = 0;
+    }
+    previous = held;
     *zero_sticks = 0;
+    if (was_code && ui.page != SLIPPI_PAGE_CODE) {
+        /* Leaving the keyboard: what is still held (B, A on OK, START)
+         * reaches the CSS only after a release. */
+        swallow = gc;
+    }
+    was_code = ui.page == SLIPPI_PAGE_CODE;
+    swallow &= gc;
+    gc &= ~swallow;
     if (ui.page == SLIPPI_PAGE_CODE) {
         if (down & (KEY_DUP | KEY_CPAD_UP)) move_key(0, -1);
         if (down & (KEY_DDOWN | KEY_CPAD_DOWN)) move_key(0, 1);
@@ -871,6 +909,8 @@ static void sis(char *out, int len, const char *in)
     }
     out[n] = 0;
 }
+
+void slippi_ui_sis(const char *in, char *out, int len) { sis(out, len, in); }
 
 static int spinner_glyph(char *out, int len, int done)
 {
@@ -960,6 +1000,12 @@ int slippi_ui_text(int line, char *out, int len)
     case 15: case 16: case 17: case 18:
         if (error) error_line(line - 15, out, len);
         return TEXT_RED;
+    case 30: case 31: {   /* in-game name tags, by port */
+        int mine = (line - 30) == local_port();
+        sis(out, len, mine ? (ui.user_name[0] ? ui.user_name : ui.user_code)
+                           : (ui.opponent_name[0] ? ui.opponent_name : ui.opponent_code));
+        return TEXT_WHITE;
+    }
     case 19: case 20: case 21: case 22: case 23:
         if (error || ui.phase != SLIPPI_PHASE_CONNECTED) return TEXT_WHITE;
         if (ui.chat_page >= 0) {

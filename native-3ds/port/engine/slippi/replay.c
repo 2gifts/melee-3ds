@@ -133,6 +133,7 @@ static int load(void)
             dump_last = v[1];
             mp_platform_free((void*) d);
             mp_platform_slippi_file_write("sdmc:/3ds/melee/slippi/fighter-dump.bin", "", 0, 0);
+            mp_platform_slippi_file_write("sdmc:/3ds/melee/slippi/cpu-trace.bin", "", 0, 0);
         }
     }
     loaded = 1;
@@ -590,6 +591,22 @@ spawn:
         Camera_8002F3AC();
     }
     out_record('P', fp);
+}
+
+/* CPU command trace (dump.txt window): kind 0 = command byte written,
+ * 1 = behaviour dispatch (x18), 2 = interpreter entry (duration). */
+void mp_slippi_replay_cpu_trace(Fighter* fp, int kind, int value)
+{
+    u8 rec[8];
+    if (!mp_slippi_replay_on() || frame_index < dump_first || frame_index > dump_last) {
+        return;
+    }
+    put32(rec, (u32) frame_index);
+    rec[4] = fp->player_id;
+    rec[5] = (u8) (fp->x221F_b4 && fp->kind == Ft_Kind_Nana);
+    rec[6] = (u8) kind;
+    rec[7] = (u8) value;
+    mp_platform_slippi_file_write("sdmc:/3ds/melee/slippi/cpu-trace.bin", rec, 8, 1);
 }
 
 static void dump_fighter(Fighter* fp)

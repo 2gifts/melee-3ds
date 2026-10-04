@@ -89,6 +89,8 @@ def main():
     ap.add_argument('--pick-kind', type=int, default=None, help='SSS: stage kind to pick (default: printed list, first)')
     ap.add_argument('--frozen', action='store_true', help='SSS: press Z (frozen Stadium) before picking')
     ap.add_argument('--vanilla-menus', action='store_true', help='without the Slippi menu files')
+    ap.add_argument('--buttons', action='store_true', help='type the code with the buttons, not touch')
+    ap.add_argument('--title-scan', action='store_true', help='capture the CSS title at frames 0-23')
     ap.add_argument('--games', type=int, default=1, help='2: the 3DS quits game 1 (LRAS), picks the stage, plays game 2')
     ap.add_argument('--mm-port', type=int, default=43113)
     ap.add_argument('--code-encoding', default='fullwidth')
@@ -191,11 +193,28 @@ def main():
         wait_scene(8, 8)
         select.act(frames=60)
         capture('css-idle')
+        if args.title_scan:
+            from PIL import Image
+            tiles = []
+            for f in range(0, 24):
+                patient(set_word, 'mp_slippi_title_frame', f, 'big')
+                patient(select.act, frames=6)
+                capture(f'title{f}')
+                tiles.append(Image.open(OUT / f'title{f}-top.png').crop((40, 0, 140, 45)))
+            sheet = Image.new('RGB', (600, 180))
+            for i, tile in enumerate(tiles):
+                sheet.paste(tile, ((i % 6) * 100, (i // 6) * 45))
+            sheet.save(OUT / 'title-sheet.png')
+            return
         state = select.observe()
         icon = args.icon if args.icon is not None else 2
         bottom.choose(state, 0, icon)
         select.act(frames=30)
         capture('css-selected')
+        if icon == 15:
+            touch(242 + 35, 137 + 9)       # Zelda icon: SHEIK -> ZELDA
+            select.act(frames=20)
+            capture('css-zelda')
         touch(126 + 36, 187 + 11)          # SETTINGS
         touch(276 + 13, 38 + 9 + 13)       # delay +
         capture('settings')
@@ -203,18 +222,38 @@ def main():
         select.act(0x1000, 2)   # START: code entry
         select.act(frames=20)
         capture('keyboard')
-        for ch in USERS['b']['connectCode']:
-            touch(*key_center(ch))
+        if args.buttons:
+            # Physical controls: D-pad right x3, X takes the suggestion
+            # (config.ini's opponent= seeds the history); START later.
+            def press(key, frames=4):
+                patient(set_word, 'mp_test_keys', key)
+                patient(select.act, frames=frames)
+                patient(set_word, 'mp_test_keys', 0)
+                patient(select.act, frames=4)
+            for _ in range(3):
+                press(16)
+            capture('keyboard-moved')
+            press(1024)
+        else:
+            for ch in USERS['b']['connectCode']:
+                touch(*key_center(ch))
         select.act(frames=10)
         capture('keyboard-typed')
         if not args.no_peer:
             peer_dir = OUT / 'b'
-            write_profile(peer_dir, 'b', USERS['a']['connectCode'], args, 2)
+            # No checksums from the fake PC: it does not run the game, and a
+            # desync now ends the match (as in Slippi).
+            write_profile(peer_dir, 'b', USERS['a']['connectCode'], args, 2, ['send_checksum=0'])
             procs['b'] = start([TOOLS / '../build/slippi-tools/slippi_fake_peer.exe', '--dir', peer_dir,
                                 '--frames', 900, '--linger', 5, '--chat', '0x88', '--hold-ms', 25000,
-                                '--games', args.games],
+                                '--games', args.games, '--no-checksum'],
                                OUT / 'peer_b.log')
-        touch(*OK_KEY)
+        if args.buttons:
+            patient(set_word, 'mp_test_keys', 8)
+            patient(select.act, frames=4)
+            patient(set_word, 'mp_test_keys', 0)
+        else:
+            touch(*OK_KEY)
         patient(select.act, frames=30)
         patient(capture, 'searching')
         if not args.no_peer:
@@ -230,6 +269,12 @@ def main():
             touch(126 + 36, 187 + 11)          # CHAT pill
             patient(capture, 'chat-bottom')
             touch(160, 205)                    # outside the pills: back
+            try:
+                wait_scene(32, 8, timeout=120)     # the VS splash
+                patient(select.act, frames=70)
+                patient(capture, 'splash')
+            except TimeoutError as e:
+                print('no splash:', e)
             s = wait_scene(2, 8, timeout=120)
             patient(select.act, frames=200)
             patient(capture, 'match')

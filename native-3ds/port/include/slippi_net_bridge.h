@@ -92,5 +92,7 @@ int mp_platform_slippi_ui_remote(void);
 int mp_platform_slippi_ui_text(int line, char* buf, int len);
 /* Frozen Stadium (alt stage mode): 1 toggles, 0 reads; returns the state. */
 int mp_platform_slippi_ui_alt(int toggle);
+/* ASCII text to SIS-ready bytes (full-width punctuation). */
+void mp_platform_slippi_ui_sis(const char* in, char* out, int len);
 
 #endif

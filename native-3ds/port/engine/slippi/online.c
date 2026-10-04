@@ -22,6 +22,7 @@
 #include <melee/gm/gm_1A45.h>
 #include <melee/gm/gmvs.h>
 #include <melee/gm/types.h>
+#include <melee/lb/lbaudio_ax.h>
 #include <melee/mn/types.h>
 #include <melee/pl/player.h>
 #include <sysdolphin/baselib/cobj.h>
@@ -52,6 +53,10 @@ enum {
     RESP_SKIP = 2,
     RESP_DISCONNECTED = 3,
     BLOCK_SIZE = 0x138,
+    /* Catch-up allowance: 1.6 frames (LAN), up to 5 on a slow link (the PC
+     * rolls back up to 7 frames, so it absorbs the 3DS running behind). */
+    LAG_ALLOW_MIN_US = 16683 + 10000,
+    LAG_ALLOW_MAX_US = 5 * 16683,
 };
 
 typedef struct {
@@ -87,6 +92,8 @@ static struct {
     unsigned load_mark_ms, load_mark_opens, load_mark_open_ms, load_mark_bytes, load_logging;
     int advance_left, advance_gap, advancing, drop_samples, last_drop_frame;
     unsigned advances, dropped;
+    int lag_allow_us;         /* how far behind the PC we may run before catching up */
+    unsigned wait_mark, calm_windows;
 } on;
 
 static void logf_(const char* fmt, int a, int b, int c)
@@ -466,6 +473,7 @@ void mp_slippi_online_frame_begin(void)
     exchange_pads(frame);
     if (on.disconnected && !on.disconnect_shown && !on.game_over) {
         on.disconnect_shown = 1;
+        mp_slippi_hud_message(1);
         mp_slippi_gmvs_end_online(on.remote_index);
     }
     {
@@ -504,6 +512,13 @@ void mp_slippi_online_frame_begin(void)
                     on.desync_shown = 1;
                     logf_("Slippi online: DESYNC at frame %d (ours %08X, theirs %08X)\n", cf, (int) local,
                           (int) remote);
+                    /* StartEngineLoop: "DESYNC DETECTED", error sound, the
+                     * game ends (no contest) like a disconnect. */
+                    mp_slippi_hud_message(2);
+                    lbAudioAx_80024030(3);
+                    if (!on.game_over) {
+                        mp_slippi_gmvs_end_online(on.remote_index);
+                    }
                 }
                 break;
             }
@@ -563,12 +578,42 @@ void mp_slippi_online_frame_end(void)
             }
         }
     }
+    /* A peer that never rolls back needs the PC's pad for a frame when it
+     * plays that frame. On a slow link (high or jittery ping) it arrives
+     * after the PC's input delay has run out, so running level with the PC
+     * means waiting for nearly every frame. Running a little behind it costs
+     * the PC some rollback and the 3DS nothing: when the 3DS keeps waiting,
+     * let it fall further behind before catching up (half a frame per busy
+     * half second, up to 5 frames); give it back slowly once waits stop. */
+    if (frame > 120 && frame % 30 == 0) {
+        unsigned waits = on.waits - on.wait_mark;
+        int before = on.lag_allow_us;
+        on.wait_mark = on.waits;
+        if (waits >= 4) {
+            on.lag_allow_us += 16683 / 2;
+            on.calm_windows = 0;
+        } else if (waits == 0 && ++on.calm_windows >= 10) {
+            on.lag_allow_us -= 16683 / 4;
+            on.calm_windows = 0;
+        }
+        if (on.lag_allow_us > LAG_ALLOW_MAX_US) {
+            on.lag_allow_us = LAG_ALLOW_MAX_US;
+        }
+        if (on.lag_allow_us < LAG_ALLOW_MIN_US) {
+            on.lag_allow_us = LAG_ALLOW_MIN_US;
+        }
+        if (on.lag_allow_us != before && (on.lag_allow_us == LAG_ALLOW_MAX_US || on.lag_allow_us == LAG_ALLOW_MIN_US ||
+                                          frame % 600 == 0)) {
+            logf_("Slippi online: frame %d, may run up to %d us behind the opponent (%d waits)\n", frame,
+                  on.lag_allow_us, (int) waits);
+        }
+    }
     /* As Dolphin: no advancing before frame 120; the PC's own start-up
      * stalls line the two games up first. */
     if (frame > 120 && frame % 30 == 0 && !on.advancing && on.drop_samples == 0) {
         int offset = mp_platform_slippi_net_time_offset_us();
-        if (offset < -(16683 + 10000)) {
-            int n = -offset / 16683;
+        if (offset < -on.lag_allow_us) {
+            int n = (-offset - on.lag_allow_us) / 16683 + 1;
             on.advance_left = n > 3 ? 3 : n;
             on.advance_gap = 0;
             on.advancing = on.advance_left > 0;
@@ -735,6 +780,11 @@ int mp_slippi_online_local_index(void)
     return on.local_index;
 }
 
+int mp_slippi_online_delay(void)
+{
+    return on.delay;
+}
+
 /* ---- InitOnlinePlay (8016E748) ---- */
 
 static void sync_rng_proc(HSD_GObj* gobj)
@@ -784,6 +834,9 @@ void mp_slippi_online_start_melee(StartMeleeData* data)
     on.skips = on.skip_run = on.frames = on.waits = on.wait_ms = on.longest_wait_ms = on.no_sample_bodies = 0;
     on.advance_left = on.advance_gap = on.advancing = on.drop_samples = on.last_drop_frame = 0;
     on.advances = on.dropped = 0;
+    on.lag_allow_us = LAG_ALLOW_MIN_US;
+    on.wait_mark = 0;
+    on.calm_windows = 0;
     *seed_ptr = on.rng_offset;
     /* No transformation from a held A. */
     for (i = 0; i < 4; i++) {

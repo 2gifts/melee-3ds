@@ -60,14 +60,14 @@ void mp_native_pad(void*output){u8*p=output;memset(p,0,48);for(int i=1;i<4;++i)p
     unsigned battle=pad_battle&&!(mp_native_camera_mode&&mp_native_camera_control&&mp_native_camera_match);
     button=mp_native_map_keys(key,battle);
     test_pad(&button,&stick,&sub);
-    u32 down=hidKeysDown();
+    u32 held=key;
 #ifdef MP_SMOKE_TEST
     if(mp_test_keys)button|=mp_native_map_keys(mp_test_keys,battle);
-    {static u32 previous_test;down|=mp_test_keys&~previous_test;previous_test=mp_test_keys;}
+    held|=mp_test_keys;
 #endif
     /* Slippi Direct: the code keyboard takes the controls; locked in, A/B/X/Y
      * cannot unselect or recolour (port/3ds/slippi/slippi_ui.c). */
-    {extern unsigned slippi_ui_pad(unsigned,unsigned,int*);int zero;button=slippi_ui_pad(down,button,&zero);
+    {extern unsigned slippi_ui_pad(unsigned,unsigned,int*);int zero;button=slippi_ui_pad(held,button,&zero);
      if(zero)stick.dx=stick.dy=sub.dx=sub.dy=0;}
     p[0]=button>>8;p[1]=button;p[2]=stick.dx*80/156;p[3]=stick.dy*80/156;p[4]=sub.dx*80/156;p[5]=sub.dy*80/156;p[6]=(button&0x40)?255:0;p[7]=(button&0x20)?255:0;p[8]=(button&0x100)?255:0;p[9]=(button&0x200)?255:0;
     /* Camera Mode: port 4 is the camera controller (bottom.c). */

@@ -34,7 +34,7 @@ static uint32_t crc32_bytes(const unsigned char *p, int n)
 int main(int argc, char **argv)
 {
     const char *dir = ".";
-    int frames = 600, character = 0x14, linger_s = 3, chat = 0, hold_ms = 0, games = 1;
+    int frames = 600, character = 0x14, linger_s = 3, chat = 0, hold_ms = 0, games = 1, no_checksum = 0;
     for (int i = 1; i < argc; ++i) {
         if (!strcmp(argv[i], "--dir") && i + 1 < argc) dir = argv[++i];
         else if (!strcmp(argv[i], "--frames") && i + 1 < argc) frames = atoi(argv[++i]);
@@ -43,6 +43,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--chat") && i + 1 < argc) chat = (int)strtol(argv[++i], NULL, 0);
         else if (!strcmp(argv[i], "--hold-ms") && i + 1 < argc) hold_ms = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--games") && i + 1 < argc) games = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--no-checksum")) no_checksum = 1;
         else { fprintf(stderr, "unknown option %s\n", argv[i]); return 2; }
     }
     setvbuf(stdout, NULL, _IONBF, 0);
@@ -147,7 +148,8 @@ int main(int argc, char **argv)
         }
         unsigned char pad[8];
         slippi_test_pad(mm_index, frame + delay, pad);
-        slippi_send_pad(frame + delay, pad, finalized, slippi_test_checksum(finalized));
+        /* --no-checksum: frame 0, which the other side never compares (UI tests). */
+        slippi_send_pad(frame + delay, pad, no_checksum ? 0 : finalized, no_checksum ? 0 : slippi_test_checksum(finalized));
         if (frame - latest > max_ahead) max_ahead = frame - latest;
         int ping = slippi_ping_us();
         if (ping > 0) { ping_sum += ping; ++ping_n; }
