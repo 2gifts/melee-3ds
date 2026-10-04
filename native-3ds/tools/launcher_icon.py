@@ -10,10 +10,11 @@ import subprocess
 from build import ROOT
 
 TITLES = {
-    'unlocked': ('Melee: Slippi Direct (experimental)', 'Slippi online test build - setup in 3ds/melee/slippi'),
+    'unlocked': ('Super Smash Bros. Melee', 'Everything unlocked - saves in 3ds/melee/saves/unlocked'),
     'fresh': ('Melee: Fresh Save', 'Unlock everything by playing - saves in 3ds/melee/saves/fresh'),
+    'slippi': ('Melee: Slippi Direct beta', 'Online Direct play vs Slippi - setup in 3ds/melee/slippi'),
 }
-COLOURS = {'unlocked': (176, 24, 32), 'fresh': (28, 72, 176)}
+COLOURS = {'unlocked': (176, 24, 32), 'fresh': (28, 72, 176), 'slippi': (24, 150, 60)}
 BANNERS = [
     ROOT / 'assets/GALE01/files/opening.bnr',
     ROOT / 'build/disc/files/opening.bnr',
@@ -60,7 +61,7 @@ def icon_image(profile, banner=None):
     return icon
 
 
-LABELS = {'unlocked': (206, 18, 22), 'fresh': (30, 74, 186)}
+LABELS = {'unlocked': (206, 18, 22), 'fresh': (30, 74, 186), 'slippi': (33, 168, 70)}
 
 
 def disc_icon(profile, size=48):

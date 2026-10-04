@@ -14,7 +14,10 @@ port already uses, flat or in folders) and writes the results to OUT. The
 3DS port loads anything in sdmc:/3ds/melee/slippi/files/ in place of the
 disc file of the same name (port/3ds/file_io.c).
 
-    python tools/slippi/slippi_files.py E:/3ds/melee/files E:/3ds/melee/slippi/files
+    python tools/slippi/slippi_files.py E:/3ds/melee/files E:/3ds/melee/slippi/files [--slpcss PATH]
+
+--slpcss takes slpCSS.dat from PATH (the one-click builder downloads it,
+pinned, from project-slippi/dolphin) instead of tools/slippi/gamefiles/.
 """
 import sys
 from pathlib import Path
@@ -36,9 +39,15 @@ def find(root, name):
 
 
 def main():
-    if len(sys.argv) != 3:
+    args = sys.argv[1:]
+    slpcss = HERE / 'gamefiles' / 'slpCSS.dat'
+    if '--slpcss' in args:
+        i = args.index('--slpcss')
+        slpcss = Path(args[i + 1])
+        del args[i:i + 2]
+    if len(args) != 2:
         raise SystemExit(__doc__)
-    files, out = Path(sys.argv[1]), Path(sys.argv[2])
+    files, out = Path(args[0]), Path(args[1])
     out.mkdir(parents=True, exist_ok=True)
     made = 0
     for name in NAMES:
@@ -58,8 +67,10 @@ def main():
         made += 1
         print(f'{name}: {len(data)} bytes')
     # Slippi's online CSS art (the MELEE mode title), copied as it is.
-    (out / 'slpCSS.dat').write_bytes((HERE / 'gamefiles' / 'slpCSS.dat').read_bytes())
+    (out / 'slpCSS.dat').write_bytes(slpcss.read_bytes())
     print(f'{made} of {len(NAMES)} patched files and slpCSS.dat written to {out}')
+    if made != len(NAMES):
+        raise SystemExit(1)
 
 
 if __name__ == '__main__':

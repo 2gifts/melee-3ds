@@ -13,7 +13,7 @@ def main():
     ap.add_argument('--banner-capture',action='store_true',help='Include offline banner geometry export (development builds only)')
     ap.add_argument('--audio-hle',action='store_true',help='Exercise NDSP using Azahar HLE without DSP firmware (smoke builds only)')
     ap.add_argument('--release',action='store_true',help='Build a separate homebrew package with physical controls')
-    ap.add_argument('--profile',choices=('unlocked','fresh'),default='unlocked',help='Save profile: everything unlocked (melee.3dsx) or a fresh save earned by play (melee-fresh.3dsx); each keeps its own saves')
+    ap.add_argument('--profile',choices=('unlocked','fresh','slippi'),default='unlocked',help='Save profile: everything unlocked (melee.3dsx), a fresh save earned by play (melee-fresh.3dsx), or the Slippi Direct beta (3ds/melee-slippi/melee-slippi.3dsx, everything unlocked); each keeps its own saves')
     ap.add_argument('--skip-engine',action='store_true')
     ap.add_argument('--sanitize',action='store_true',help='Stop with a source location on original-engine null accesses')
     ap.add_argument('--boot',action='store_true',help='Enter Melee original main and scene loop')
@@ -64,7 +64,7 @@ def main():
     if not args.skip_engine: library=compile_engine(sanitize=args.sanitize,output_directory=engine_out,clamped_shade=args.clamped_shade,lto=args.engine_lto,lto_scope=args.engine_lto_scope,material_program=args.material_program,feasibility=args.feasibility,feasibility_console=args.feasibility_console,render_rework=args.render_rework,fpscr_ieee=args.fpscr_ieee)
     out=args.build_dir or ROOT/('build/game-release' if args.release else 'build/game')
     # Native objects differ only by the profile define; keep them apart.
-    if args.profile=='fresh':out=Path(str(out)+'-fresh')
+    if args.profile!='unlocked':out=Path(str(out)+'-'+args.profile)
     if not out.is_absolute():out=ROOT/out
     out.mkdir(parents=True,exist_ok=True)
     cc=local_clang();bin=Path(cc).parent
@@ -144,7 +144,7 @@ def main():
     for src in (ROOT/'port/3ds/game.c',ROOT/'port/3ds/bottom.c',ROOT/'port/3ds/bottom_draw.c',ROOT/'port/3ds/renderer.c',ROOT/'port/3ds/early_queue.c',ROOT/'port/3ds/gx_thread.c',ROOT/'port/3ds/linear_lock.c',ROOT/'port/3ds/gpu_busy.c',ROOT/'port/3ds/citro3d_fix.c',ROOT/'port/3ds/uniform_dispatch.c',ROOT/'port/3ds/services.c',ROOT/'port/3ds/cpu_speed.c',ROOT/'port/3ds/file_io.c',ROOT/'port/3ds/audio.c',ROOT/'port/3ds/command_cache.c',ROOT/'port/3ds/log_io.c',ROOT/'port/3ds/jpeg_still.c',ROOT/'port/3ds/card_storage.c',ROOT/'port/3ds/settings.c',ROOT/'port/3ds/controls.c',*sorted((ROOT/'port/3ds/slippi').glob('*.c')),ROOT/'port/3ds/game_bridge.S',shader_c,*([ROOT/'tests/stereo_bounds_reference.c'] if args.smoke else []),*extra):
         obj=out/(src.stem+'.o')
         run([cc,*arch,*common_flags(),'-fshort-enums','-D__3DS__',
-             *(['-DMP_SMOKE_TEST'] if args.smoke else []),*(['-DMP_AFFINE_IDENTITY_SHADER'] if args.identity_affine else []),*(['-DMP_UNLIT_AFFINE_SHADER'] if args.unlit_affine else []),*(['-DMP_BANNER_CAPTURE'] if args.banner_capture else []),*(['-DMP_AUDIO_HLE_TEST'] if args.audio_hle else []),*(['-DMP_BOOTMODE'] if args.boot else []),*(['-DMP_PROFILE_FRESH'] if args.profile=='fresh' else []),*includes,*(['-I'+str(sdk/'portlibs/3ds/include')] if src.name=='jpeg_still.c' else []),'-c',src,'-o',obj])
+             *(['-DMP_SMOKE_TEST'] if args.smoke else []),*(['-DMP_AFFINE_IDENTITY_SHADER'] if args.identity_affine else []),*(['-DMP_UNLIT_AFFINE_SHADER'] if args.unlit_affine else []),*(['-DMP_BANNER_CAPTURE'] if args.banner_capture else []),*(['-DMP_AUDIO_HLE_TEST'] if args.audio_hle else []),*(['-DMP_BOOTMODE'] if args.boot else []),*(['-DMP_PROFILE_FRESH'] if args.profile=='fresh' else []),*(['-DMP_PROFILE_SLIPPI'] if args.profile=='slippi' else []),*(['-DMP_PROFILE_SLIPPI'] if args.profile=='slippi' else []),*includes,*(['-I'+str(sdk/'portlibs/3ds/include')] if src.name=='jpeg_still.c' else []),'-c',src,'-o',obj])
         objects.append(obj)
     # Slippi experiment: vendored ENet (port/3ds/slippi/enet, MIT); prefixed
     # object names keep its host.c/list.c/... apart from port sources.
@@ -173,8 +173,10 @@ def main():
     run(command)
     from be8_image import prepare as prepare_image
     image_info=prepare_image(linked,elf)
-    name={'unlocked':'melee','fresh':'melee-fresh'}[args.profile]
-    dest=args.output if args.output is not None else ROOT/(f'dist/native-alpha/3ds/melee/{name}.3dsx' if args.release else f'dist/3ds/melee/{name}-development.3dsx')
+    name={'unlocked':'melee','fresh':'melee-fresh','slippi':'melee-slippi'}[args.profile]
+    # The Homebrew Launcher lists one .3dsx per folder: the beta gets its own.
+    folder='melee-slippi' if args.profile=='slippi' else 'melee'
+    dest=args.output if args.output is not None else ROOT/(f'dist/native-alpha/3ds/{folder}/{name}.3dsx' if args.release else f'dist/3ds/melee/{name}-development.3dsx')
     if not dest.is_absolute():dest=ROOT/dest
     dest.parent.mkdir(parents=True,exist_ok=True)
     from launcher_icon import make_smdh

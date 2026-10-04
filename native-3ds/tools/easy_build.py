@@ -14,6 +14,11 @@ made from them, stay on this computer. Each step can be repeated: a build
 that stops (window closed, connection lost) continues the next time.
 
   python tools/easy_build.py --work C:\\MeleeBuild [--iso PATH]
+
+The Slippi Direct beta builder (tools/make_builder_zip.py --slippi, which
+writes BUILDER_VARIANT) builds only the beta: its own HOME Menu title and
+3ds/melee-slippi/ folder next to the regular game, Slippi's menu files made
+from the disc, and, if the user agrees, their Slippi account from this PC.
 """
 import argparse
 import ctypes
@@ -45,6 +50,12 @@ WHEELS = [
 ]
 DISC_BYTES = 1459978240  # a full GameCube disc image
 ENGINE_FILES = 1010      # compiled engine files, for the progress display
+# Slippi's online character-select art (project-slippi/dolphin, GPL-2.0+),
+# pinned like every other download. The builder zip never ships it.
+SLPCSS = ('https://raw.githubusercontent.com/project-slippi/dolphin/41a7a3a110ed52999486ae1901c8fbb9a63d4f13/'
+          'Data/Sys/GameFiles/GALE01/slpCSS.dat',
+          '3b1a3f254b37cf5ce4f56b38d237d9809d0b11e72d05320f0e56fa3abd7a1692')
+VARIANT = (HERE/'BUILDER_VARIANT').read_text().strip() if (HERE/'BUILDER_VARIANT').exists() else 'main'
 # Tool outputs and caches in the builder's folder; never copied as source.
 NOT_SOURCE = {'.toolchain', 'build', 'dist', 'assets', 'upstream', 'references', '__pycache__'}
 
@@ -245,7 +256,8 @@ class Build:
         self.src = work/'source'
         self.python = Path(sys.executable)
         self.git = work/'git'
-        self.out = work/'Melee for 3DS'
+        self.slippi = VARIANT == 'slippi'
+        self.out = work/('Melee Slippi Beta for 3DS' if self.slippi else 'Melee for 3DS')
         self.progress_file = work/'progress.json'
         self.version = (HERE/'BUILDER_VERSION').read_text().strip() if (HERE/'BUILDER_VERSION').exists() else 'dev'
         self.done = self.load_progress()
@@ -295,6 +307,8 @@ class Build:
             archive = download(MINGIT[0], self.work/'downloads/MinGit.zip', MINGIT[1])
             shutil.rmtree(self.git, ignore_errors=True)
             unzip(archive, self.git)
+        if self.slippi:
+            download(SLPCSS[0], self.work/'downloads/slpCSS.dat', SLPCSS[1])
         site = Path(sys.prefix)/'Lib/site-packages'
         for url, sha256, module in WHEELS:
             if not (site/module).exists():
@@ -357,6 +371,11 @@ class Build:
         def progress():
             done = len(list(objects.glob('*.sha256'))) if objects.exists() else 0
             return f', about {min(99, done*100//ENGINE_FILES)}% compiled'
+        if self.slippi:
+            self.tool('tools/build_game.py', '--release', '--profile', 'slippi', progress=progress,
+                      fail='Compiling the game failed.')
+            self.mark('compile')
+            return
         self.tool('tools/build_game.py', '--release', progress=progress,
                   fail='Compiling the game failed.')
         self.tool('tools/build_game.py', '--release', '--profile', 'fresh', '--skip-engine',
@@ -366,6 +385,15 @@ class Build:
     # 7
     def package(self):
         self.tool('tools/package_native.py', '--link', fail='Collecting the game files failed.')
+        if self.slippi:
+            # Slippi's patched menus (Online Play, Direct, the stage select)
+            # from this disc's own files, and its CSS art.
+            self.tool('tools/slippi/slippi_files.py', 'assets/GALE01/files', 'dist/native-alpha/3ds/melee/slippi/files',
+                      '--slpcss', self.work/'downloads/slpCSS.dat',
+                      fail='Making the Slippi menu files from your disc failed.')
+            self.tool('tools/package_cia.py', '--generated-banner', '--profile', 'slippi',
+                      fail='Making the CIA file failed.')
+            return
         for profile in ('unlocked', 'fresh'):
             self.tool('tools/package_cia.py', '--generated-banner', '--profile', profile,
                       fail='Making the CIA file failed.')
@@ -377,14 +405,57 @@ class Build:
         remove_tree(sd)
         melee = dist/'native-alpha/3ds/melee'
         for path in sorted(melee.rglob('*')):
-            if path.is_file() and (path.suffix == '.3dsx' or 'files' in path.relative_to(melee).parts[:1]):
+            parts = path.relative_to(melee).parts
+            # The beta adds Slippi's menu files and never replaces melee.3dsx.
+            wanted = 'files' in parts[:1] or (self.slippi and parts[:2] == ('slippi', 'files'))
+            if path.is_file() and (wanted or (path.suffix == '.3dsx' and not self.slippi)):
                 link_or_copy(path, sd/'3ds/melee'/path.relative_to(melee))
-        for name in ('melee-3ds.cia', 'melee-3ds-fresh.cia'):
-            link_or_copy(dist/'home-menu'/name, sd/'cias'/name)
-        for name in ('THIRD_PARTY_NOTICES.md', 'CITRO3D-LICENSE.txt', 'DOLPHIN-LICENSE.txt'):
+        if self.slippi:
+            link_or_copy(dist/'native-alpha/3ds/melee-slippi/melee-slippi.3dsx', sd/'3ds/melee-slippi/melee-slippi.3dsx')
+            link_or_copy(dist/'home-menu/melee-slippi-beta.cia', sd/'cias/melee-slippi-beta.cia')
+        else:
+            for name in ('melee-3ds.cia', 'melee-3ds-fresh.cia'):
+                link_or_copy(dist/'home-menu'/name, sd/'cias'/name)
+        for name in ('THIRD_PARTY_NOTICES.md', 'CITRO3D-LICENSE.txt', 'DOLPHIN-LICENSE.txt', 'ENET-LICENSE.txt'):
             if (dist/'native-alpha'/name).exists():
                 link_or_copy(dist/'native-alpha'/name, self.out/'Licenses'/name)
-        (self.out/'What to do next.txt').write_text(NEXT_STEPS.format(work=self.work), encoding='utf-8')
+        next_steps = NEXT_STEPS_SLIPPI if self.slippi else NEXT_STEPS
+        (self.out/'What to do next.txt').write_text(next_steps.format(work=self.work), encoding='utf-8')
+        if self.slippi:
+            guide = self.src/'docs/slippi/SLIPPI_BETA.md'
+            if guide.exists():
+                shutil.copyfile(guide, self.out/'Slippi beta guide.txt')
+
+    # 7 (Slippi beta)
+    def account(self):
+        """Offer the Slippi account from this PC's Slippi Launcher. Its login key
+        stays in the SD folder; it is never printed or written to the log."""
+        dest = self.out/'Copy to SD card/3ds/melee/slippi/user.json'
+        appdata = os.environ.get('APPDATA')
+        source = Path(appdata)/'Slippi Launcher/netplay/User/Slippi/user.json' if appdata else None
+        try:
+            user = json.loads(source.read_text(encoding='utf-8')) if source and source.is_file() else None
+        except (OSError, ValueError):
+            user = None
+        if not user or not user.get('playKey') or not user.get('connectCode'):
+            say('   No Slippi Launcher login was found on this PC. Before playing online, copy your')
+            say('   user.json to SD:/3ds/melee/slippi/ (see "What to do next.txt").')
+            return
+        name = str(user.get('displayName') or '').encode('ascii', 'replace').decode()
+        code = str(user.get('connectCode')).encode('ascii', 'replace').decode()
+        say(f'   Found the Slippi account on this PC: {name} ({code}).')
+        say('   The 3DS plays online as this account. Its login key is copied to the SD card only.')
+        try:
+            answer = input('   Put this account on the SD card? Type Y and press Enter (Enter alone skips): ')
+        except EOFError:
+            answer = ''
+        if answer.strip().lower() not in ('y', 'yes'):
+            say('   Skipped. Copy user.json yourself before playing online (see "What to do next.txt").')
+            return
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, dest)
+        log('Slippi account copied to the SD folder')
+        say('   Added. Keep the "Copy to SD card" folder private: user.json is your Slippi login.')
 
 
 def remove_tree(path):
@@ -431,6 +502,45 @@ files in FBI. Your saves are kept.
 
 Problems? The full log is {work}\\build-log.txt. Please attach it when
 asking for help at https://github.com/2gifts/melee-3ds/issues
+"""
+
+NEXT_STEPS_SLIPPI = """Melee for New 3DS - Slippi Direct beta - your build is ready
+============================================================
+
+This is a BETA. It plays Slippi Direct (connect code) matches against a
+friend on Slippi Dolphin (PC). Read "Slippi beta guide.txt" for how it
+works and how it differs from Slippi on a PC.
+
+1. Put your 3DS's SD card in this computer.
+
+2. Open the "Copy to SD card" folder. Select everything inside it (the "3ds"
+   and "cias" folders) and copy it to the SD card. If Windows asks about
+   files that already exist, choose "Replace the files in the destination".
+   This adds the beta next to the regular game; it does not replace it.
+
+3. Your Slippi account. If the builder did not add it, copy user.json from
+   %APPDATA%\\Slippi Launcher\\netplay\\User\\Slippi\\user.json
+   on the PC where you log in to Slippi Launcher, to SD:/3ds/melee/slippi/
+   user.json is your Slippi login: do not share it or post it anywhere.
+
+4. Safely eject the SD card and put it back in your 3DS.
+
+5. On the 3DS, open FBI, then choose: SD > cias, and install
+     melee-slippi-beta.cia     Melee: Slippi Direct beta (green icon)
+   Homebrew Launcher users can start 3ds/melee-slippi/melee-slippi.3dsx.
+
+6. Start it, then choose 1-P Mode > Online Play > Direct. Pick your fighter, press
+   START, type your friend's connect code and confirm. Your friend chooses
+   Direct in Slippi Launcher and types your code.
+
+Keep the 3ds/melee/files folder on the SD card: both the regular game and
+the beta read the game files from there. The beta keeps its own saves in
+3ds/melee/saves/slippi (copied once from the regular game's saves).
+
+Problems? Right after the problem, copy SD:/3ds/melee/game.log and your
+friend's replay (.slp) from the PC, and report it at
+https://github.com/2gifts/melee-3ds/issues (choose "Slippi beta problem").
+The build log is {work}\\build-log.txt.
 """
 
 
@@ -581,7 +691,10 @@ def main():
         check_clock()
         build = Build(work, args.iso)
         extracted = (build.src/'assets/GALE01/manifest.json').exists()
-        say('Step 1 of 7: Checking your disc image')
+        steps = 8 if build.slippi else 7
+        if build.slippi:
+            say('Slippi Direct beta: builds the beta next to the regular game, not instead of it.')
+        say(f'Step 1 of {steps}: Checking your disc image')
         if not extracted:
             if not build.iso:
                 say('   Choose your Melee disc image in the window that opens...')
@@ -597,19 +710,22 @@ def main():
         else:
             say('   Your disc was already read in an earlier run.')
         build.source()
-        say('Step 2 of 7: Downloading build tools (about 500 MB the first time)')
+        say(f'Step 2 of {steps}: Downloading build tools (about 500 MB the first time)')
         build.prerequisites()
         build.tools()
-        say('Step 3 of 7: Reading the game files from your disc (a few minutes)')
+        say(f'Step 3 of {steps}: Reading the game files from your disc (a few minutes)')
         build.extract()
         build.fonts()
-        say('Step 4 of 7: Compiling the game (a few minutes; up to 20 on slower PCs)')
+        say(f'Step 4 of {steps}: Compiling the game (a few minutes; up to 20 on slower PCs)')
         build.compile()
-        say('Step 5 of 7: Making the HOME Menu icons and CIA files')
+        say(f'Step 5 of {steps}: Making the HOME Menu icons and CIA files')
         build.package()
-        say('Step 6 of 7: Collecting everything for your SD card')
+        say(f'Step 6 of {steps}: Collecting everything for your SD card')
         build.collect()
-        say('Step 7 of 7: SD card')
+        if build.slippi:
+            say(f'Step 7 of {steps}: Your Slippi account')
+            build.account()
+        say(f'Step {steps} of {steps}: SD card')
         if args.no_sd:
             say('   Skipped.')
         else:

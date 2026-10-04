@@ -1,0 +1,65 @@
+Melee for New 3DS - Slippi Direct BETA builder
+==============================================
+
+This makes the Slippi Direct beta of Melee for New 3DS from YOUR OWN copy
+of Super Smash Bros. Melee. With it, your New 3DS can play 1v1 online
+against a friend on Slippi Dolphin (PC), using connect codes (Direct).
+Nothing from the game is included in this download.
+
+THIS IS A BETA. It installs NEXT TO the regular Melee for New 3DS (its own
+HOME Menu app with a green icon) and never replaces it. Please read
+"Slippi beta guide.txt" (in this folder): it explains how to play and how
+the experience differs from Slippi on a PC. In short, the 3DS has no
+rollback: it briefly waits when your friend's inputs arrive late.
+
+This is an unofficial fan project, not made or supported by Project Slippi.
+Please do not ask the Slippi team for help with it.
+
+What you need
+-------------
+- A Windows 10 or 11 PC (64-bit) with an internet connection.
+  (Not Mac, Linux, Steam Deck, Wine or a phone.)
+- About 8 GB of free disk space.
+- Your Melee disc image: the US version 1.02, as a plain .iso file (1.4 GB).
+  A .rvz or .gcz file can be turned into an .iso with Dolphin: right-click
+  the game > Convert File... > Uncompressed Disc (ISO).
+- A New 3DS, New 3DS XL or New 2DS XL with custom firmware and FBI.
+- A Slippi account (log in to Slippi Launcher on a PC), and a friend with
+  their OWN Slippi account on Slippi Launcher.
+
+How to build
+------------
+1. Extract this whole zip first: right-click it > Extract All... > Extract.
+   (Do not run the builder from inside the zip.)
+2. Open the extracted folder and double-click "Build Melee Slippi Beta.bat"
+   (or drag your .iso onto it).
+   If Windows says "Windows protected your PC", click "More info", then
+   "Run anyway".
+3. Choose your Melee .iso when asked, then wait. The first build takes
+   10 to 30 minutes. Leave the window open. You can use your PC meanwhile.
+4. If you are logged in to Slippi Launcher on this PC, the builder offers
+   to put that account on the SD card. Type Y to accept. The account file
+   (user.json) is your Slippi login: never share it or post it.
+5. When it finishes, a folder opens with your files. Follow
+   "What to do next.txt" in that folder.
+
+If the build stops
+------------------
+Read the yellow message: it says what to do. Then run the builder again;
+it continues where it stopped. Common fixes:
+- "internet" or "download": check your connection and try again.
+- "certificate" or "date": set your PC's date and time correctly
+  (Settings > Time & language > Date & time > Set time automatically).
+- "space": free up disk space (empty the Recycle Bin).
+- "blocked" or "antivirus": allow the MeleeSlippiBuild folder in your
+  antivirus.
+
+The builder works in C:\MeleeSlippiBuild (or another folder with enough
+space; the window shows where), separate from the regular builder's
+C:\MeleeBuild. You can delete it once your files are on the SD card, or
+keep it to make future updates faster. If you let the builder add your
+Slippi account, that folder contains your login: delete it if others use
+this PC.
+
+Help: https://github.com/2gifts/melee-3ds/issues ("Slippi beta problem")
+Please attach build-log.txt from the MeleeSlippiBuild folder.

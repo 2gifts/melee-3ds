@@ -122,6 +122,51 @@ void sp_log_drain(void)
     }
 }
 
+/* Players post game.log in public bug reports: public IPv4 addresses (the
+ * opponent's home connection) become "public-ip"; private LAN, loopback and
+ * link-local addresses stay, as they tell a LAN match from an internet one. */
+static int ip_octet(const char **s)
+{
+    int v = 0, n = 0;
+    while (**s >= '0' && **s <= '9' && n < 3) { v = v * 10 + (**s - '0'); ++*s; ++n; }
+    return n && v <= 255 ? v : -1;
+}
+
+static void mask_public_ips(char *line, size_t size)
+{
+    char out[256];
+    size_t o = 0;
+    const char *s = line;
+    while (*s && o + 1 < sizeof(out)) {
+        int boundary = s == line || !((s[-1] >= '0' && s[-1] <= '9') || s[-1] == '.');
+        if (boundary && *s >= '0' && *s <= '9') {
+            const char *e = s;
+            int q[4], ok = 1;
+            for (int i = 0; i < 4 && ok; i++) {
+                q[i] = ip_octet(&e);
+                if (q[i] < 0) ok = 0;
+                else if (i < 3) { if (*e == '.') e++; else ok = 0; }
+            }
+            if (ok && !((*e >= '0' && *e <= '9') || (*e == '.' && e[1] >= '0' && e[1] <= '9'))) {
+                int private_ = q[0] == 10 || q[0] == 127 || (q[0] == 192 && q[1] == 168) ||
+                               (q[0] == 172 && q[1] >= 16 && q[1] <= 31) || (q[0] == 169 && q[1] == 254) ||
+                               (q[0] == 0) || (q[0] == 1 && q[1] == 1 && q[2] == 1 && q[3] == 1);
+                const char *text = private_ ? NULL : "public-ip";
+                if (text) {
+                    for (; *text && o + 1 < sizeof(out); text++) out[o++] = *text;
+                } else {
+                    for (const char *c = s; c < e && o + 1 < sizeof(out); c++) out[o++] = *c;
+                }
+                s = e;
+                continue;
+            }
+        }
+        out[o++] = *s++;
+    }
+    out[o] = 0;
+    snprintf(line, size, "%s", out);
+}
+
 void sp_log(const char *fmt, ...)
 {
     char line[256];
@@ -129,6 +174,7 @@ void sp_log(const char *fmt, ...)
     va_start(ap, fmt);
     vsnprintf(line, sizeof(line), fmt, ap);
     va_end(ap);
+    mask_public_ips(line, sizeof(line));
     if (!locks_ready || !sp_on_thread()) {
         sp_log_drain();
         emit(line);

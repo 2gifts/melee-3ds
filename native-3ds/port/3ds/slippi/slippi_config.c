@@ -91,17 +91,17 @@ int slippi_user_load(slippi_user *user, const char *path, char *err, int errlen)
     memset(user, 0, sizeof(*user));
     size_t len = 0;
     char *text = sp_read_file(path, &len);
-    if (!text) { snprintf(err, errlen, "No Slippi user file (%s)", path); return -1; }
+    if (!text) { (void) path; snprintf(err, errlen, "No Slippi account. Copy user.json from Slippi Launcher to SD:/3ds/melee/slippi/"); return -1; }
     sj_node *root = sj_parse(text, len);
     free(text);
-    if (!root || root->type != SJ_OBJECT) { sj_free(root); snprintf(err, errlen, "Cannot parse %s", path); return -1; }
+    if (!root || root->type != SJ_OBJECT) { sj_free(root); snprintf(err, errlen, "user.json is damaged. Copy it again from Slippi Launcher"); return -1; }
     copy(user->uid, sizeof(user->uid), sj_get_str(root, "uid", ""));
     copy(user->play_key, sizeof(user->play_key), sj_get_str(root, "playKey", ""));
     copy(user->connect_code, sizeof(user->connect_code), sj_get_str(root, "connectCode", ""));
     copy(user->display_name, sizeof(user->display_name), sj_get_str(root, "displayName", ""));
     copy(user->latest_version, sizeof(user->latest_version), sj_get_str(root, "latestVersion", ""));
     sj_free(root);
-    if (!user->uid[0] || !user->play_key[0]) { snprintf(err, errlen, "%s lacks uid/playKey", path); return -1; }
+    if (!user->uid[0] || !user->play_key[0]) { snprintf(err, errlen, "user.json has no login. Log in to Slippi Launcher, then copy it again"); return -1; }
     user->loaded = 1;
     return 0;
 }

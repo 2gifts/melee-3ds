@@ -82,6 +82,9 @@ static void load_user(void)
     if (slippi_user_load(&user, USER_PATH, err, sizeof err) == 0) {
         copy(ui.user_name, sizeof ui.user_name, user.display_name);
         copy(ui.user_code, sizeof ui.user_code, user.connect_code);
+    } else {
+        copy(ui.user_name, sizeof ui.user_name, "No Slippi account");
+        copy(ui.user_code, sizeof ui.user_code, "See user.json");
     }
     memset(&user, 0, sizeof user);   /* the play key stays out of memory dumps */
     load_settings();

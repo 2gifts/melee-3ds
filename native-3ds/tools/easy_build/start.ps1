@@ -11,6 +11,11 @@ $PythonSha256 = '46A4DA5529A92D18FF894911F6E6033A8253198D705B8161BF28C9123C87D46
 $NeedBytes = 8GB
 $Builder = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $Issues = 'https://github.com/2gifts/melee-3ds/issues'
+# The Slippi Direct beta builder (BUILDER_VARIANT) works in its own folder,
+# so it never disturbs a regular build.
+$VariantFile = Join-Path $Builder 'BUILDER_VARIANT'
+$Slippi = (Test-Path $VariantFile) -and ((Get-Content $VariantFile -Raw).Trim() -eq 'slippi')
+$Folder = if ($Slippi) { 'MeleeSlippiBuild' } else { 'MeleeBuild' }
 
 function Stop-Build($Message) {
     Write-Host ''
@@ -87,8 +92,13 @@ function Test-Python($Python) {
 }
 
 try {
-    Write-Host 'Melee for New 3DS - CIA builder'
-    Write-Host '==============================='
+    if ($Slippi) {
+        Write-Host 'Melee for New 3DS - Slippi Direct BETA builder'
+        Write-Host '=============================================='
+    } else {
+        Write-Host 'Melee for New 3DS - CIA builder'
+        Write-Host '==============================='
+    }
     Write-Host 'This builds the game from your own Melee disc image. The first build takes'
     Write-Host '10 to 30 minutes and needs an internet connection and about 8 GB of free space.'
     Write-Host 'You can close this window at any time; running the builder again continues.'
@@ -114,19 +124,19 @@ try {
         $drives = @(Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3' |
             Sort-Object @{ Expression = { $_.DeviceID -ne 'C:' } }, DeviceID)
         foreach ($d in $drives) {
-            if (Test-Path "$($d.DeviceID)\MeleeBuild\source") { $Work = "$($d.DeviceID)\MeleeBuild"; break }
+            if (Test-Path "$($d.DeviceID)\$Folder\source") { $Work = "$($d.DeviceID)\$Folder"; break }
         }
         if (-not $Work) {
             foreach ($d in $drives) {
-                if ($d.FreeSpace -ge $NeedBytes -and (Test-Writable "$($d.DeviceID)\MeleeBuild")) {
-                    $Work = "$($d.DeviceID)\MeleeBuild"; break
+                if ($d.FreeSpace -ge $NeedBytes -and (Test-Writable "$($d.DeviceID)\$Folder")) {
+                    $Work = "$($d.DeviceID)\$Folder"; break
                 }
             }
         }
         # Some PCs do not allow folders at the top of a drive. The shared
         # Public folder has a plain path; a user folder may contain spaces or
         # accented letters (in the user's name).
-        foreach ($candidate in @("$env:PUBLIC\MeleeBuild", "$env:LOCALAPPDATA\MeleeBuild")) {
+        foreach ($candidate in @("$env:PUBLIC\$Folder", "$env:LOCALAPPDATA\$Folder")) {
             if ($Work -or -not $candidate -or $candidate.StartsWith('\')) { continue }
             if (Test-Writable $candidate) {
                 $free = (Get-PSDrive ($candidate.Substring(0, 1))).Free

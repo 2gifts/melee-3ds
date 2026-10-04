@@ -8,13 +8,19 @@
  * Each card file is one Dolphin-compatible .gci in the profile's folder:
  *   sdmc:/3ds/melee/saves/unlocked/  (everything unlocked build)
  *   sdmc:/3ds/melee/saves/fresh/     (fresh save build)
- * The two builds never share saves. Writes go to a temporary file that
+ *   sdmc:/3ds/melee/saves/slippi/    (Slippi Direct beta, everything unlocked)
+ * The builds never share saves. The Slippi beta's folder starts as a copy of
+ * the unlocked build's saves (name tags, rules), which it never writes. Writes go to a temporary file that
  * replaces the previous one, which is kept as .bak; deletions keep a
  * .deleted copy. A save interrupted mid-write therefore never replaces the
  * last good one, and an orphaned .bak is restored at the next listing. */
 #ifdef MP_PROFILE_FRESH
 #define MP_PROFILE 1
 #define MP_SAVE_DIR "sdmc:/3ds/melee/saves/fresh/"
+#elif defined(MP_PROFILE_SLIPPI)
+#define MP_PROFILE 0
+#define MP_SAVE_DIR "sdmc:/3ds/melee/saves/slippi/"
+#define MP_SEED_DIR "sdmc:/3ds/melee/saves/unlocked/"
 #else
 #define MP_PROFILE 0
 #define MP_SAVE_DIR "sdmc:/3ds/melee/saves/unlocked/"
@@ -23,6 +29,46 @@ extern void mp_native_log(const char* text);
 
 unsigned mp_native_profile(void) { return MP_PROFILE; }
 
+#ifdef MP_SEED_DIR
+/* First start of the Slippi beta: copy the unlocked build's .gci saves. */
+static void seed_saves(void) {
+    DIR* dir = opendir(MP_SEED_DIR);
+    struct dirent* entry;
+    unsigned copied = 0;
+    char text[96];
+    if (!dir)
+        return;
+    while ((entry = readdir(dir)) != NULL) {
+        size_t n = strlen(entry->d_name);
+        char from[160], to[160];
+        FILE *in, *out;
+        long size;
+        unsigned char* data;
+        if (n < 5 || n > 95 || strcmp(entry->d_name + n - 4, ".gci") != 0)
+            continue;
+        snprintf(from, sizeof from, "%s%s", MP_SEED_DIR, entry->d_name);
+        snprintf(to, sizeof to, "%s%s", MP_SAVE_DIR, entry->d_name);
+        in = fopen(from, "rb");
+        if (!in)
+            continue;
+        fseek(in, 0, SEEK_END);
+        size = ftell(in);
+        fseek(in, 0, SEEK_SET);
+        data = size > 0 && size <= 4 * 1024 * 1024 ? malloc((size_t) size) : NULL;
+        if (data && fread(data, 1, (size_t) size, in) == (size_t) size && (out = fopen(to, "wb")) != NULL) {
+            if (fwrite(data, 1, (size_t) size, out) == (size_t) size)
+                copied++;
+            fclose(out);
+        }
+        free(data);
+        fclose(in);
+    }
+    closedir(dir);
+    snprintf(text, sizeof text, "Saves: copied %u from saves/unlocked to saves/slippi\n", copied);
+    mp_native_log(text);
+}
+#endif
+
 static void ensure_directory(void) {
     static int made;
     if (made)
@@ -30,7 +76,12 @@ static void ensure_directory(void) {
     mkdir("sdmc:/3ds", 0777);
     mkdir("sdmc:/3ds/melee", 0777);
     mkdir("sdmc:/3ds/melee/saves", 0777);
+#ifdef MP_SEED_DIR
+    if (mkdir(MP_SAVE_DIR, 0777) == 0)
+        seed_saves();
+#else
     mkdir(MP_SAVE_DIR, 0777);
+#endif
     made = 1;
 }
 

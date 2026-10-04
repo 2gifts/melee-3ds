@@ -16,6 +16,8 @@ package=ROOT/'dist/native-alpha'
 # Either or both save profiles: melee.3dsx (everything unlocked) and
 # melee-fresh.3dsx (fresh save, built with --profile fresh).
 binaries=[package/'3ds/melee'/name for name in ('melee.3dsx','melee-fresh.3dsx') if (package/'3ds/melee'/name).is_file()]
+binaries+=[p for p in [package/'3ds/melee-slippi/melee-slippi.3dsx'] if p.is_file()]  # the Slippi Direct beta
+binaries+=[p for p in [package/'3ds/melee-slippi/melee-slippi.3dsx'] if p.is_file()]  # the Slippi Direct beta
 if not binaries:raise SystemExit('Build with tools/build_game.py --release [--profile fresh] first')
 source=ROOT/'assets/GALE01/files';dest=package/'3ds/melee/files'
 manifest=json.loads((source.parent/'manifest.json').read_text())
@@ -52,6 +54,7 @@ report={'built_utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),
 (package/'build.json').write_text(json.dumps(report,indent=2)+'\n')
 for source,name in [(ROOT/'docs/THIRD_PARTY_NOTICES.md','THIRD_PARTY_NOTICES.md'),
                     (ROOT/'port/3ds/vendor/CITRO3D-LICENSE.txt','CITRO3D-LICENSE.txt'),
-                    (ROOT/'port/engine/vendor/DOLPHIN-LICENSE.txt','DOLPHIN-LICENSE.txt')]:
+                    (ROOT/'port/engine/vendor/DOLPHIN-LICENSE.txt','DOLPHIN-LICENSE.txt'),
+                    (ROOT/'port/3ds/slippi/enet/LICENSE','ENET-LICENSE.txt')]:
     shutil.copy2(source,package/name)
 print(f'Verified {", ".join(b.name for b in binaries)} and {count} game files ({total:,} bytes) in {package}')

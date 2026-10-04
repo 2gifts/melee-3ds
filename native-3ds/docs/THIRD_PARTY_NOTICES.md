@@ -70,6 +70,12 @@ redistribute it freely, subject to the following restrictions:
 3. This notice may not be removed or altered from any source
    distribution.
 
+## Slippi Direct beta
+
+The Slippi Direct beta (`port/3ds/slippi/`, `port/engine/slippi/`, `tools/slippi/`, `tools/slippi_edits/`) reimplements, for the 3DS, the netplay behaviour of [Project Slippi's Dolphin](https://github.com/project-slippi/dolphin) (matchmaking and peer-to-peer messages, the online match setup, chat and the online menus) and its online gameplay codes from [slippi-ssbm-asm](https://github.com/project-slippi/slippi-ssbm-asm). It was written from their source and is distributed under the same terms: Slippi Dolphin is GPL-2.0-or-later and slippi-ssbm-asm GPL-3.0. `tools/slippi/gamefiles/*.usd.diff` are Slippi's menu patches (VCDIFF) from project-slippi/dolphin `Data/Sys/GameFiles/GALE01` at commit `41a7a3a110ed52999486ae1901c8fbb9a63d4f13`; they are applied to the user's own disc files. Slippi's online character-select art, `slpCSS.dat`, from the same commit, is downloaded by the builder (pinned by SHA-256) and is not part of the builder download. This is not an official Slippi product and is not endorsed by Project Slippi.
+
+The beta uses [ENet](http://enet.bespin.org/) 1.3 (`port/3ds/slippi/enet/`, with a 3DS socket backend in `ctru.c`). Copyright (c) 2002-2015 Lee Salzman, MIT license; packages include `ENET-LICENSE.txt`.
+
 ## Additional provenance
 
 The port adapts Dolphin Emulator's PowerPC reciprocal-square-root estimate

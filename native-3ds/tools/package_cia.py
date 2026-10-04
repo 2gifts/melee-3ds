@@ -23,6 +23,10 @@ PROFILES = {
     'fresh': dict(elf='build/game-release-fresh/melee.elf', output='dist/home-menu/melee-3ds-fresh.cia',
                   short='Melee: Fresh Save', long='Melee - Fresh save, unlock everything by playing',
                   name='Melee3DSFresh', product='CTR-P-M3LF', unique=0xF4D46),
+    # The Slippi Direct beta (tools/build_game.py --release --profile slippi).
+    'slippi': dict(elf='build/game-release-slippi/melee.elf', output='dist/home-menu/melee-slippi-beta.cia',
+                   short='Melee: Slippi Direct beta', long='Melee - Slippi Direct netplay beta (online vs Slippi)',
+                   name='MeleeSlippi', product='CTR-P-M3LS', unique=0xF4D47),
 }
 
 

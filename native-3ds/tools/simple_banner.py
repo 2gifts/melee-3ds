@@ -45,7 +45,8 @@ def white(image, colour=(255, 255, 255)):
 
 
 def banner_image(profile):
-    top, bottom = {'unlocked': ((170, 26, 36), (40, 6, 10)), 'fresh': ((34, 80, 190), (8, 16, 52))}[profile]
+    top, bottom = {'unlocked': ((170, 26, 36), (40, 6, 10)), 'fresh': ((34, 80, 190), (8, 16, 52)),
+                   'slippi': ((30, 150, 64), (6, 36, 14))}[profile]
     image = Image.new('RGBA', (256, 128))
     for y in range(128):
         t = y/127
