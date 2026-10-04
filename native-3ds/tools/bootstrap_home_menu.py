@@ -3,11 +3,11 @@ import argparse
 import hashlib
 import io
 import json
-import urllib.request
 import zipfile
 from pathlib import Path
 
 from assets import ROOT
+from fetch import fetch as download
 
 BASE = ROOT/'.toolchain/home-menu'
 TOOLS = [
@@ -38,14 +38,17 @@ WHEELS = [
 
 
 def fetch(url, digest, archive):
-    if not archive.exists():
-        request = urllib.request.Request(url, headers={'User-Agent': 'melee-3ds-local-builder'})
-        with urllib.request.urlopen(request, timeout=90) as response:
-            data = response.read()
-        assert hashlib.sha256(data).hexdigest() == digest, archive.name+' checksum mismatch'
-        archive.write_bytes(data)
-    data = archive.read_bytes()
-    assert hashlib.sha256(data).hexdigest() == digest, archive.name+' cached checksum mismatch'
+    if archive.exists():
+        data = archive.read_bytes()
+        if hashlib.sha256(data).hexdigest() == digest:
+            return data
+        # Damaged (an interrupted copy, a disk error): fetch it again.
+        print(f'Downloading {archive.name} again: the saved copy is damaged')
+        archive.unlink()
+    data = download(url, {'User-Agent': 'melee-3ds-local-builder'}, timeout=90)
+    if hashlib.sha256(data).hexdigest() != digest:
+        raise RuntimeError(archive.name+' checksum mismatch')
+    archive.write_bytes(data)
     return data
 
 
