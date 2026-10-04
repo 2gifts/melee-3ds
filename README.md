@@ -57,7 +57,7 @@ The game logic runs at full speed (60 updates per second) almost everywhere; in 
 2. Double-click **`Build Melee CIA.bat`** and choose your Melee `.iso` (US v1.02).
 3. Wait 30–60 minutes. A folder opens with everything for your SD card, both CIA files, and a short "What to do next" guide.
 
-The builder downloads its own tools, so there is nothing to install. It needs 64-bit Windows 10 or 11, an internet connection, and about 8 GB of free space. Its CIAs use a simple HOME Menu banner made from your disc. For other systems or the full options, use the [build guide](native-3ds/README.md).
+The builder downloads its own tools, so there is nothing to install. It needs 64-bit Windows 10 or 11, an internet connection, and about 8 GB of free space. Its CIAs get the 3D HOME Menu banner (two Foxes on Final Destination, the title logo and the announcer's call) and a disc icon, all made from your disc. For other systems or the full options, use the [build guide](native-3ds/README.md).
 
 ## Install with FBI
 

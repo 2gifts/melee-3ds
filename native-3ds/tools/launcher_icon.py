@@ -60,6 +60,50 @@ def icon_image(profile, banner=None):
     return icon
 
 
+LABELS = {'unlocked': (206, 18, 22), 'fresh': (30, 74, 186)}
+
+
+def disc_icon(profile, size=48):
+    """A Melee disc drawn from the game's title lettering (GmTitle.usd): the
+    label in the profile colour behind the Smash emblem, silver hub and rim."""
+    from PIL import Image, ImageDraw, ImageFilter
+    from banner_assets import Archive, texture
+    title = Archive(ROOT/'assets/GALE01/files/GmTitle.usd')
+    n, c = 1024, 512
+    icon = Image.new('RGBA', (n, n), (238, 240, 244, 255))
+    pen = ImageDraw.Draw(icon)
+    pen.ellipse((c-500, c-500, c+500, c+500), fill=(196, 199, 205, 255))
+    pen.ellipse((c-488, c-488, c+488, c+488), fill=(226, 228, 232, 255))
+    label = Image.new('RGBA', (n, n), LABELS[profile]+(255,))
+    art = ImageDraw.Draw(label)
+    # The emblem: a disc cut by a vertical and a horizontal bar.
+    # Below its horizontal bar the printed emblem is a dark half-tone.
+    shade = tuple(v*2//5 for v in LABELS[profile])+(255,)
+    art.ellipse((c-372, 92, c+372, 836), fill=(14, 14, 16, 255))
+    art.rectangle((0, 530, n, n), fill=LABELS[profile]+(255,))
+    art.pieslice((c-372, 92, c+372, 836), 0, 180, fill=shade)
+    art.rectangle((0, 470, n, 530), fill=LABELS[profile]+(255,))
+    art.rectangle((c-236, 0, c-170, 470), fill=LABELS[profile]+(255,))
+    art.rectangle((0, 626, n, n), fill=(14, 14, 16, 255))
+    mask = Image.new('L', (n, n))
+    ImageDraw.Draw(mask).ellipse((c-478, c-478, c+478, c+478), fill=255)
+    icon.paste(label, (0, 0), mask)
+
+    def lettering(descriptor, width, top, colour, edge):
+        image = texture(title, descriptor).convert('L')
+        image = image.resize((width, round(image.height*width/image.width)), Image.Resampling.LANCZOS)
+        outline = image.filter(ImageFilter.MaxFilter(15))
+        x = c-width//2
+        icon.paste(Image.new('RGBA', image.size, edge+(255,)), (x, top), outline)
+        icon.paste(Image.new('RGBA', image.size, colour+(255,)), (x, top), image)
+    lettering(0x2724, 700, 96, (244, 244, 246), (20, 20, 24))
+    lettering(0x28b0, 330, 318, (30, 30, 34), (226, 228, 232))
+    pen = ImageDraw.Draw(icon)
+    pen.ellipse((c-150, c-150, c+150, c+150), fill=(214, 216, 222, 255), outline=(150, 152, 160, 255), width=8)
+    pen.ellipse((c-104, c-104, c+104, c+104), fill=(238, 240, 244, 255), outline=(170, 172, 180, 255), width=6)
+    return icon.convert('RGB').resize((size, size), Image.Resampling.LANCZOS)
+
+
 def make_smdh(out, profile):
     bannertool = ROOT / '.toolchain/home-menu/bannertool/windows-x86_64/bannertool.exe'
     try:

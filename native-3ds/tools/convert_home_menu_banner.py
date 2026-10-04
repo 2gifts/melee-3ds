@@ -12,16 +12,19 @@ ROOT = Path(__file__).resolve().parents[1]
 ART = ROOT / 'build/home-menu/art'
 
 
-def main():
-    sys.path[:0] = [str(ROOT / '.toolchain/home-menu/python'),
-                    str(ROOT / '.toolchain/home-menu/pycgfx')]
+def convert(art=ART, require_outward=False):
+    """Write ART/banner.cgfx from ART/scene.gltf; return the conversion report."""
+    art = Path(art)
+    for path in (ROOT / '.toolchain/home-menu/python', ROOT / '.toolchain/home-menu/pycgfx'):
+        if str(path) not in sys.path:
+            sys.path.insert(0, str(path))
     import main as converter
     import gltflib
     from cgfx.mtob import ColorFloat, FragmentLightingFlags
     from cgfx.primitives import DataType, VertexAttributeUsage as Usage
     from cgfx.sobj import BillboardMode
 
-    source = gltflib.GLTF.load(str(ART / 'scene.gltf'), load_file_resources=True)
+    source = gltflib.GLTF.load(str(art / 'scene.gltf'), load_file_resources=True)
     assert not source.model.skins, 'Soft skins can crash physical HOME Menu'
     assert all(n.skin is None for n in source.model.nodes)
     # Follow the reference converter's two-sided geometry and render state.
@@ -62,15 +65,19 @@ def main():
                     assert attr.components_count == 3
     raw = converter.write(banner)
     from verify_home_banner import verify_banner
-    validation = verify_banner(raw)
+    validation = verify_banner(raw, require_outward=require_outward)
     if len(raw) > 0x80000:
         raise RuntimeError(f'HOME Menu CGFX exceeds 512 KiB: {len(raw)}')
-    (ART / 'banner.cgfx').write_bytes(raw)
+    (art / 'banner.cgfx').write_bytes(raw)
     report = dict(cgfx_bytes=len(raw), limit_bytes=0x80000,
                   vertex_profile='float RGB, rigid grouped meshes',
                   validation=validation)
-    (ART / 'conversion-report.json').write_text(json.dumps(report, indent=2)+'\n')
-    print(json.dumps(report))
+    (art / 'conversion-report.json').write_text(json.dumps(report, indent=2)+'\n')
+    return report
+
+
+def main():
+    print(json.dumps(convert()))
 
 
 if __name__ == '__main__':

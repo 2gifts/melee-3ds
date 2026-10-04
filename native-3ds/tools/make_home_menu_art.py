@@ -13,6 +13,7 @@ from banner_capture_read import read_capture
 from home_banner_texture import prepare_logo
 
 OUT=ROOT/'build/home-menu/art'
+LIGHT=math.sqrt(.3*.3+.75*.75+.6*.6)
 
 def logo_and_icon(disc_image):
     logo=Image.new('RGBA',(512,256))
@@ -60,9 +61,10 @@ class Scene:
     def mesh(self,name,pos,norm,uv,color,ix,material,joints=None,weights=None,skin=None,node=None):
         if name != 'Melee logo':
             # Bake gentle shape shading once, independent of HOME's light set.
-            light=np.array([-.3,.75,.6]);light/=np.linalg.norm(light)
+            # Plain float arithmetic (no BLAS): the same bytes on every CPU.
+            light=[-.3/LIGHT,.75/LIGHT,.6/LIGHT]
             color=np.asarray(color,dtype=float).copy()
-            color[:,:3]*=(.68+.32*np.maximum(0,np.asarray(norm)@light))[:,None]
+            color[:,:3]*=(.68+.32*np.maximum(0,dot3(norm,light)))[:,None]
         # Collapse repeated GX vertices before encoding seven attribute streams.
         arrays=[np.asarray(x) for x in (pos,norm,uv,color)]
         if joints is not None:arrays += [np.asarray(joints),np.asarray(weights)]
@@ -134,7 +136,80 @@ def mesh_key(d):
     # Native geometry IDs can change after visibility/animation invalidation.
     return hashlib.sha256(d['v'][:,[0,1,2,3,8,9,13]].tobytes()+d['indices'].tobytes()).hexdigest()
 
+def dot3(a,b):
+    """Row-wise dot products without BLAS, identical on every CPU."""
+    a=np.asarray(a,dtype=float);b=np.asarray(b,dtype=float)
+    return a[...,0]*b[...,0]+a[...,1]*b[...,1]+a[...,2]*b[...,2]
+
+def assemble_scene(stage,fighters,center,ground_normal,plane,logo,out=None,atlas_height=None):
+    """Write the diorama glTF from view-space parts.
+
+    stage: [dict(positions,normals,uv,indices,tint,image=None,material=None)].
+    fighters: two lists of dict(positions,normals,uv,colors,indices,image).
+    center/ground_normal/plane: the stage's bounding-box centre and the
+    platform's top plane (unit normal n, n.p == plane). logo: 512x256 image.
+    """
+    global OUT
+    if out is not None:OUT=Path(out)
+    s=Scene();ground=(plane-center[0]*ground_normal[0]-center[2]*ground_normal[2])/ground_normal[1]
+    # Stage below the logo, with room for stereoscopic depth and spinning.
+    root=np.eye(4);root[:3,:3]*=.10;root[:3,3]=[-center[0]*.10,-1.8-ground*.10,-center[2]*.10]
+    s.nodes[0]['matrix']=root.T.ravel().tolist()
+    metrics=dict(stage_draws=len(stage),fox_draws=[len(g) for g in fighters],animation_samples=0)
+    def material(image,name=None,double=False):
+        if name is not None:mi=s.material(name=name)
+        else:
+            key=hashlib.sha256(image.tobytes()).hexdigest()[:12] if image else 'stage-color'
+            mi=s.material(image,key,image is not None and image.getextrema()[3][0]<200)
+        if double:s.materials[mi]['doubleSided']=True
+        return mi
+    stage_node=None
+    for part in stage:
+        mi=material(part.get('image'),part.get('material'),True)
+        p=part['positions']
+        stage_node=s.mesh('Final Destination',p,part['normals'],part['uv'],np.tile(part['tint'],(len(p),1)),part['indices'],mi,node=stage_node)
+    # Bake complete poses, then animate each material part with the same
+    # rigid transform. Physical HOME Menu cannot safely animate soft skins.
+    # Keeping the whole fighter rigid avoids cracks between envelopes.
+    times=[0,3.2]
+    metrics['poses']=[]
+    for player,parts in enumerate(fighters):
+        pos=np.concatenate([d['positions'] for d in parts])
+        foot=np.array([np.median(pos[:,0]),pos[:,1].min(),np.median(pos[:,2])])
+        desired=np.array([center[0]+(-22 if player==0 else 22),ground,center[2]+15])
+        # Place the lowest point against the actual tilted platform plane.
+        # A percentile of stage Y ignored depth and left both figures hovering.
+        local=(pos-foot)*2.3
+        clearance=float(np.min(dot3(local,ground_normal)))
+        desired[1]=(plane-clearance-desired[0]*ground_normal[0]-desired[2]*ground_normal[2])/ground_normal[1]
+        transform=np.eye(4);transform[:3,3]=desired
+        transforms=[transform.copy() for _ in times]
+        gap=dot3(local+desired,ground_normal)-plane
+        assert abs(gap.min())<.001 and gap.max()>0
+        metrics['poses'].append(dict(player=player+1,pose='taunt' if player==0 else 'idle',
+                                    minimum_surface_gap=float(gap.min())))
+        # One transform/animation per fighter, regardless of material count.
+        # Creating a bone for each draw needlessly balloons HOME's matrices.
+        node=None
+        for d in parts:
+            p=(d['positions']-foot)*2.3
+            node=s.mesh(f'Fox {player+1}',p,d['normals'],d['uv'],d['colors'],d['indices'],material(d['image']),node=node)
+        s.nodes[node]['translation']=desired.tolist()
+        s.animation(node,times,transforms)
+    # Logo sits above and slightly in front of the stage. Put it outside the
+    # scaled diorama hierarchy so its original aspect ratio stays exact.
+    mi=s.material(logo,'Logo',True)
+    n=s.mesh('Melee logo',[[-9.25,1,2],[9.25,1,2],[9.25,10.25,2],[-9.25,10.25,2]],[[0,0,1]]*4,[[0,1],[1,1],[1,0],[0,0]],[[1,1,1,1]]*4,[0,1,2,0,2,3],mi)
+    # Y-axis billboarding requires an identity logo node beside the world.
+    s.nodes[0]['children'].remove(n)
+    from home_banner_atlas import compact_scene
+    metrics['atlas'] = compact_scene(s, OUT, min_height=atlas_height)
+    metrics.update(nodes=len(s.nodes),materials=len(s.materials),skins=len(s.skins),animation_samples=len(times),triangles=sum(s.accessors[p['indices']]['count']//3 for m in s.meshes for p in m['primitives']))
+    s.save();(OUT/'art-report.json').write_text(json.dumps(metrics,indent=2)+'\n')
+    return metrics
+
 def build_scene():
+    """The authoring path: the original emulator captures (capture_banner_scene.py)."""
     captures=[read_capture(ROOT/f'build/home-menu/capture/banner-{i:04d}.bin') for i in range(45)]
     taunt=ROOT/'build/home-menu/capture-taunt'
     pose=json.loads((taunt/'pose.json').read_text())
@@ -168,87 +243,50 @@ def build_scene():
             image_groups=[{d['d']['image'] for d in p} for p in f]
             assert not image_groups[0]&image_groups[1]
         stages.append(stage);groups.append(f);reference.append(matrix(stage[0]))
-    s=Scene();stage0=stages[0];base=reference[0]
+    stage0=stages[0];base=reference[0]
     allp=np.concatenate([d['positions'] for d in stage0]);center=(allp.min(0)+allp.max(0))/2
     surface=stage0[-1]['positions'];surface_center=surface.mean(0)
     _,_,vectors=np.linalg.svd(surface-surface_center)
     ground_normal=vectors[-1];ground_normal*=1 if ground_normal[1]>0 else -1
     assert np.max(abs((surface-surface_center)@ground_normal))<.01
     plane=float(surface_center@ground_normal)
-    ground=(plane-center[0]*ground_normal[0]-center[2]*ground_normal[2])/ground_normal[1]
-    # Stage below the logo, with room for stereoscopic depth and spinning.
-    root=np.eye(4);root[:3,:3]*=.10;root[:3,3]=[-center[0]*.10,-1.8-ground*.10,-center[2]*.10]
-    s.nodes[0]['matrix']=root.T.ravel().tolist()
-    metrics=dict(stage_draws=len(stage0),fox_draws=[len(g) for g in groups[0]],animation_samples=0)
-    def material(d,textures):
-        im=textures.get(d['texture']);key=hashlib.sha256(im.tobytes()).hexdigest()[:12] if im else 'stage-color'
-        return s.material(im,key,im is not None and im.getextrema()[3][0]<200)
+    stage=[]
+    for i,d in enumerate(stage0):
+        norm=d['v'][:,10:13]@np.linalg.inv(matrix(d)[:3,:3]);norm/=np.maximum(1e-6,np.linalg.norm(norm,axis=1))[:,None]
+        # The gameplay diet material omits GX multipass surface effects.
+        # Give the original platform a compact purple-metal banner finish.
+        tint=([.32,.24,.78,1] if i==0 else [.10,.07,.20,1] if i==1 else [.22,.16,.34,1]) if not d['texture'] else [.45,.44,.95,1]
+        stage.append(dict(positions=d['positions'],normals=norm,uv=d['v'][:,8:10],indices=d['indices'],tint=tint,
+                          image=captures[0][1].get(d['texture'])))
+    # Fill the original top surface beneath its animated GX overlay. The
+    # game renders this base through its CPU path, outside the GPU export.
+    d=stage0[-1];p=d['positions'].copy();p[:,1]-=.05
+    stage.append(dict(positions=p,normals=[[0,1,0]]*len(p),uv=d['v'][:,8:10],indices=d['indices'],
+                      tint=[.075,.025,.16,1],material='Platform surface'))
     def color(d):
         if d['flat']:return np.tile(np.clip(d['u'][84],0,1),(len(d['v']),1))
         c=d['v'][:,4:8].copy();m=d['material'];c=np.where(m>=0,m,c)
         # Texture materials get restrained ambient/directional illumination
         # from the HOME Menu, rather than baking a view-dependent highlight.
         return np.clip(c,0,1)
-    stage_node=None
-    for i,d in enumerate(stage0):
-        p=d['positions'];norm=d['v'][:,10:13]@np.linalg.inv(matrix(d)[:3,:3]);norm/=np.maximum(1e-6,np.linalg.norm(norm,axis=1))[:,None]
-        mi=material(d,captures[0][1]);s.materials[mi]['doubleSided']=True
-        # The gameplay diet material omits GX multipass surface effects.
-        # Give the original platform a compact purple-metal banner finish.
-        tint=([.32,.24,.78,1] if i==0 else [.10,.07,.20,1] if i==1 else [.22,.16,.34,1]) if not d['texture'] else [.45,.44,.95,1]
-        stage_node=s.mesh('Final Destination',p,norm,d['v'][:,8:10],np.tile(tint,(len(p),1)),d['indices'],mi,node=stage_node)
-    # Fill the original top surface beneath its animated GX overlay. The
-    # game renders this base through its CPU path, outside the GPU export.
-    d=stage0[-1];mi=s.material(name='Platform surface');s.materials[mi]['doubleSided']=True
-    p=d['positions'].copy();p[:,1]-=.05
-    s.mesh('Final Destination',p,[[0,1,0]]*len(p),d['v'][:,8:10],np.tile([.075,.025,.16,1],(len(p),1)),d['indices'],mi,node=stage_node)
-    # Bake complete captured poses, then animate each material part with the
-    # same rigid transform. Physical HOME Menu cannot safely animate soft
-    # skins. Keeping the whole fighter rigid avoids cracks between envelopes.
-    times=[0,3.2]
-    metrics['poses']=[]
+    fighters=[]
     for player in range(2):
         frame=45 if player==0 else idle_frame
         normalize=base@np.linalg.inv(reference[frame])
-        parts=[d for d in groups[frame][player] if d['d']['geometry_id']]
-        pos=np.concatenate([(normalize@np.c_[d['positions'],np.ones(len(d['v']))].T).T[:,:3] for d in parts])
-        foot=np.array([np.median(pos[:,0]),pos[:,1].min(),np.median(pos[:,2])])
-        desired=np.array([center[0]+(-22 if player==0 else 22),ground,center[2]+15])
-        # Place the lowest point against the actual tilted platform plane.
-        # A percentile of stage Y ignored depth and left both figures hovering.
-        local=(pos-foot)*2.3
-        clearance=float(np.min(local@ground_normal))
-        desired[1]=(plane-clearance-desired[0]*ground_normal[0]-desired[2]*ground_normal[2])/ground_normal[1]
-        transform=np.eye(4);transform[:3,3]=desired
-        transforms=[transform.copy() for _ in times]
-        gap=(local+desired)@ground_normal-plane
-        assert abs(gap.min())<.001 and gap.max()>0
-        metrics['poses'].append(dict(player=player+1,pose='taunt' if player==0 else 'idle',
-                                    minimum_surface_gap=float(gap.min())))
-        # One transform/animation per fighter, regardless of material count.
-        # Creating a bone for each draw needlessly balloons HOME's matrices.
-        node=None
-        for j,d in enumerate(parts):
+        parts=[]
+        for d in groups[frame][player]:
+            if not d['d']['geometry_id']:continue
             p=(normalize@np.c_[d['positions'],np.ones(len(d['v']))].T).T[:,:3]
-            p=(p-foot)*2.3
             norm=np.empty((len(p),3))
             for row in np.unique(d['v'][:,13].astype(int)):
                 mask=d['v'][:,13].astype(int)==row
                 norm[mask]=d['v'][mask,10:13]@np.linalg.inv((normalize@matrix(d,int(row)))[:3,:3])
             norm/=np.maximum(1e-6,np.linalg.norm(norm,axis=1))[:,None]
-            node=s.mesh(f'Fox {player+1}',p,norm,d['v'][:,8:10],color(d),captured_indices(d),material(d,captures[frame][1]),node=node)
-        s.nodes[node]['translation']=desired.tolist()
-        s.animation(node,times,transforms)
-    # Logo sits above and slightly in front of the stage. Put it outside the
-    # scaled diorama hierarchy so its original aspect ratio stays exact.
-    im=Image.open(OUT/'logo.png');mi=s.material(im,'Logo',True)
-    n=s.mesh('Melee logo',[[-9.25,1,2],[9.25,1,2],[9.25,10.25,2],[-9.25,10.25,2]],[[0,0,1]]*4,[[0,1],[1,1],[1,0],[0,0]],[[1,1,1,1]]*4,[0,1,2,0,2,3],mi)
-    # Y-axis billboarding requires an identity logo node beside the world.
-    s.nodes[0]['children'].remove(n)
-    from home_banner_atlas import compact_scene
-    metrics['atlas'] = compact_scene(s, OUT)
-    metrics.update(nodes=len(s.nodes),materials=len(s.materials),skins=len(s.skins),animation_samples=len(times),triangles=sum(s.accessors[p['indices']]['count']//3 for m in s.meshes for p in m['primitives']))
-    s.save();(OUT/'art-report.json').write_text(json.dumps(metrics,indent=2)+'\n');print(json.dumps(metrics))
+            parts.append(dict(positions=p,normals=norm,uv=d['v'][:,8:10],colors=color(d),indices=captured_indices(d),
+                              image=captures[frame][1].get(d['texture'])))
+        fighters.append(parts)
+    metrics=assemble_scene(stage,fighters,center,ground_normal,plane,Image.open(OUT/'logo.png'))
+    print(json.dumps(metrics))
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser(description=__doc__)

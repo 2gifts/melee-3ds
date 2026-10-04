@@ -9,10 +9,10 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import shutil
 import subprocess
-import urllib.request
 import zipfile
+
+from fetch import fetch, fetch_to
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -41,14 +41,15 @@ def download(url, dest, sha256, headers=None):
         with dest.open("rb") as f:
             if hashlib.file_digest(f,"sha256").hexdigest() == sha256.lower():
                 return
-        raise RuntimeError(f"Existing download has wrong checksum: {dest}")
+        # Damaged (an interrupted copy, a disk error): fetch it again.
+        print(f"Downloading {dest.name} again: the saved copy is damaged")
+        dest.unlink()
     dest.parent.mkdir(parents=True,exist_ok=True)
     tmp = dest.with_suffix(dest.suffix+".partial")
-    request = urllib.request.Request(url,headers=headers or {})
-    with urllib.request.urlopen(request,timeout=60) as src, tmp.open("wb") as dst:
-        shutil.copyfileobj(src,dst,1024*1024)
+    fetch_to(url,tmp,headers,timeout=60)
     with tmp.open("rb") as f:
         if hashlib.file_digest(f,"sha256").hexdigest() != sha256.lower():
+            tmp.unlink()
             raise RuntimeError(f"Download checksum mismatch: {dest.name}")
     tmp.replace(dest)
 
@@ -83,8 +84,7 @@ def main():
     layer = local/"downloads/devkitarm-layer.tar.gz"
     if not layer.exists():
         request = "https://auth.docker.io/token?service=registry.docker.io&scope=repository:devkitpro/devkitarm:pull"
-        with urllib.request.urlopen(request,timeout=30) as response:
-            token = json.load(response)["token"]
+        token = json.loads(fetch(request,timeout=30))["token"]
         download("https://registry-1.docker.io/v2/devkitpro/devkitarm/blobs/"+lock["sdk_layer"],
                  layer,lock["sdk_layer"].split(":")[1],{"Authorization":"Bearer "+token})
     run(os.sys.executable,ROOT/"tools/extract_sdk.py",layer,local/"devkitpro")

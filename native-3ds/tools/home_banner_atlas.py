@@ -33,7 +33,7 @@ def split_clamped_triangle(vertices):
     return [np.asarray((p[0], p[i], p[i+1])) for p in polygons for i in range(1, len(p)-1)]
 
 
-def compact_scene(scene, output):
+def compact_scene(scene, output, min_height=None):
     def read(index):
         accessor = scene.accessors[index]
         view = scene.views[accessor['bufferView']]
@@ -60,6 +60,8 @@ def compact_scene(scene, output):
         tiles[index] = (x+gutter, y+gutter, w, h)
         x += w+gutter*2; row = max(row, h+gutter*2)
     height = 1 << (y+row-1).bit_length()
+    # A fixed atlas size keeps the HOME Menu texture budget of package 5.
+    height = max(height, min_height or 0)
     assert height <= 256, 'Diorama texture atlas exceeded its authoring budget'
     atlas = Image.new('RGBA', (width, height))
     for index, (x, y, w, h) in tiles.items():

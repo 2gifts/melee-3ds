@@ -25,9 +25,10 @@ import subprocess
 import sys
 import time
 import traceback
-import urllib.request
 import zipfile
 from pathlib import Path
+
+from fetch import fetch_to
 
 HERE = Path(__file__).resolve().parents[1]  # the builder's copy of native-3ds
 ISSUES = 'https://github.com/2gifts/melee-3ds/issues'
@@ -50,6 +51,11 @@ NOT_SOURCE = {'.toolchain', 'build', 'dist', 'assets', 'upstream', 'references',
 
 class Stop(Exception):
     """A problem the user can fix; the message says how."""
+    footer = True  # "run again / ask for help"; not for messages complete in themselves
+
+
+class AlreadyRunning(Stop):
+    footer = False
 
 
 # --- console and log --------------------------------------------------------------
@@ -95,19 +101,65 @@ def last_log_lines(count=12):
     return [line for line in lines if line.strip()][-count:]
 
 
+# Plain advice for the failures people actually hit, found in a tool's output.
+HINTS = [
+    (('CERTIFICATE_VERIFY_FAILED', 'certificate has expired', 'certificate is not yet valid', 'SEC_E_'),
+     'Your PC could not check a download site\'s security certificate. Make sure the date, time\n'
+     'and time zone on your PC are correct (Windows Settings > Time & language > Date & time,\n'
+     'turn on "Set time automatically"), then run the builder again.'),
+    (('getaddrinfo failed', '[Errno 11001]', '[Errno 11002]', 'Could not resolve host', 'Name or service not known',
+      'Network is unreachable', '[WinError 10051]', '[WinError 10065]'),
+     'Your PC could not reach the internet. Check your connection (Wi-Fi or cable), then run the\n'
+     'builder again. School and work networks sometimes block downloads; try a home network.'),
+    (('timed out', '[WinError 10060]', 'Connection reset', '[WinError 10054]', 'Connection aborted',
+      'RemoteDisconnected', 'IncompleteRead', 'early EOF', 'Operation too slow'),
+     'The internet connection dropped or was too slow. Run the builder again; it continues where\n'
+     'it stopped.'),
+    (('HTTP Error 429', 'Too Many Requests', 'toomanyrequests'),
+     'A download server is busy right now. Wait about an hour, then run the builder again.'),
+    (('No space left', '[Errno 28]', 'There is not enough space', '[WinError 112]', 'disk full'),
+     'Your disk is full. Free up at least 8 GB (empty the Recycle Bin, delete big files you do\n'
+     'not need), then run the builder again.'),
+    (('Access is denied', '[WinError 5]', 'PermissionError', 'Permission denied', '[WinError 32]',
+      'being used by another process', 'Operation did not complete successfully because the file contains a virus'),
+     'Windows blocked a file. Close other programs that might use the MeleeBuild folder (File\n'
+     'Explorer windows, editors). If you use antivirus software, it may have blocked one of the\n'
+     'build tools: allow the MeleeBuild folder in it, then run the builder again.'),
+]
+
+
+def hint_for(text):
+    for patterns, advice in HINTS:
+        if any(p.lower() in text.lower() for p in patterns):
+            return advice
+    return None
+
+
+def log_hint():
+    """Advice for the most recent failure in the log, if one is recognised."""
+    LOG.flush()
+    text = Path(LOG.name).read_text(encoding='utf-8', errors='replace')
+    return hint_for(text[text.rfind('\n$ '):])
+
+
+def failure(message):
+    """A Stop for a failed tool: advice for its error if known, then the log's end."""
+    advice = log_hint()
+    return Stop((advice or message)+'\n\nLast lines of the log (for a bug report):\n  ' +
+                '\n  '.join(last_log_lines()))
+
+
 # --- downloads ----------------------------------------------------------------------
 def download(url, dest, sha256):
     if dest.exists() and hashlib.sha256(dest.read_bytes()).hexdigest() == sha256:
         return dest
     dest.parent.mkdir(parents=True, exist_ok=True)
     partial = dest.with_suffix(dest.suffix + '.partial')
-    request = urllib.request.Request(url, headers={'User-Agent': 'melee-3ds-easy-build'})
     try:
-        with urllib.request.urlopen(request, timeout=120) as response, partial.open('wb') as out:
-            shutil.copyfileobj(response, out, 1 << 20)
+        fetch_to(url, partial, {'User-Agent': 'melee-3ds-easy-build'})
     except OSError as error:
-        raise Stop(f'Could not download {url.rsplit("/", 1)[-1]} ({error}).\n'
-                   'Check your internet connection, then run the builder again.')
+        raise Stop(f'Could not download {url.rsplit("/", 1)[-1]} ({error}).\n' +
+                   (hint_for(str(error)) or 'Check your internet connection, then run the builder again.'))
     if hashlib.sha256(partial.read_bytes()).hexdigest() != sha256:
         partial.unlink()
         raise Stop(f'The download of {url.rsplit("/", 1)[-1]} was damaged. Run the builder again.')
@@ -144,17 +196,31 @@ def pick_iso():
 def check_iso(iso):
     """Plain-language checks before anything is downloaded; assets.py then
     verifies the disc fully while extracting."""
+    if iso.is_dir():
+        raise Stop(f'"{iso}" is a folder. Choose the Melee .iso file itself.')
     if not iso.is_file():
-        raise Stop(f'The file "{iso}" was not found.')
+        raise Stop(f'The file "{iso}" was not found. If it is on a USB drive, plug it in and try again.')
     name = iso.name.lower()
     if name.endswith(('.rvz', '.wia', '.gcz', '.ciso', '.wbfs', '.nkit.iso', '.nkit.gcz', '.zip', '.7z', '.rar')):
         raise Stop('This disc image is compressed or packed. The builder needs a plain .iso file.\n'
                    'If it is a .zip/.7z/.rar, extract it first. For .rvz, .gcz or .wia, open Dolphin,\n'
                    'right-click the game, choose "Convert File...", and pick "Uncompressed Disc (ISO)".')
-    with iso.open('rb') as f:
-        header = f.read(0x440)
-        f.seek(0x200)
-        nkit = f.read(4) == b'NKIT'
+    try:
+        with iso.open('rb') as f:
+            header = f.read(0x440)
+            f.seek(0x200)
+            nkit = f.read(4) == b'NKIT'
+            # Read across the whole image: a cloud-only (OneDrive) or damaged
+            # file fails here, not halfway through extraction.
+            for offset in range(0, iso.stat().st_size, 64 << 20):
+                f.seek(offset)
+                f.read(4096)
+    except OSError as error:
+        raise Stop(f'Windows could not read "{iso.name}" ({error.strerror or error}).\n'
+                   'If it is in OneDrive or on a USB drive, copy it to a normal folder on this PC\n'
+                   '(for example Downloads) and choose that copy.')
+    if len(header) < 0x440:
+        raise Stop('This file is far too small to be a Melee disc image. Please choose your Melee .iso file.')
     if header[:4] in (b'RVZ\x01', b'WIA\x01', b'WBFS', b'CISO') or header[:4] == b'\x01\xc0\x0b\xb1':
         raise Stop('This disc image is compressed. In Dolphin, right-click the game, choose\n'
                    '"Convert File...", and pick "Uncompressed Disc (ISO)". Then use that .iso file.')
@@ -202,7 +268,7 @@ class Build:
     def tool(self, *args, progress=None, fail='A build step failed.'):
         code = run([self.python, *args], self.src, self.env, progress)
         if code:
-            raise Stop(fail + '\n\nLast lines of the log:\n  ' + '\n  '.join(last_log_lines()))
+            raise failure(fail)
 
     # 1
     def source(self):
@@ -238,7 +304,7 @@ class Build:
     def tools(self):
         if 'tools' in self.done:
             return
-        for attempt in range(2):
+        for attempt in range(3):
             code = run([self.python, 'tools/bootstrap.py', '--portable-windows'], self.src, self.env)
             if not code:
                 break
@@ -246,13 +312,20 @@ class Build:
             text = '\n'.join(last_log_lines(40))
             broken = [p for p in ('upstream/melee', 'references/citro3d', 'references/3dstools', 'references/picasso')
                       if str(Path(p)) in text or p in text]
-            if attempt or not broken:
-                raise Stop('Downloading the build tools failed. Check your internet connection and run the builder again.'
-                           '\n\nLast lines of the log:\n  ' + '\n  '.join(last_log_lines()))
+            dropped = hint_for(text) is not None and 'connection dropped' in hint_for(text)
+            if attempt == 2 or not (broken or dropped):
+                raise failure('Downloading the build tools failed. Check your internet connection and run '
+                              'the builder again.')
+            say('   The download was interrupted; trying again...')
             for p in broken:
                 remove_tree(self.src/p)
+            time.sleep(10)
         self.tool('tools/bootstrap_home_menu.py', '--cia-only',
                   fail='Downloading the CIA tools failed. Check your internet connection and run the builder again.')
+        # The 3D HOME Menu banner's converter. Optional: without it the CIAs
+        # get the 2D banner (tools/package_cia.py falls back by itself).
+        if run([self.python, 'tools/bootstrap_home_menu.py', '--diorama-only'], self.src, self.env):
+            say('  (The 3D banner tools did not download; the CIAs will use the 2D banner.)')
         self.mark('tools')
 
     # 4
@@ -445,6 +518,47 @@ def offer_sd_copy(build):
     say(f'   Done. Safely eject the SD card ({card}) before removing it, then install the CIA files with FBI.')
 
 
+# --- guards against common mistakes --------------------------------------------------
+def no_click_pause():
+    """Turn off the console's QuickEdit mode. With it, one click in the window
+    starts a text selection that silently pauses the build until Esc."""
+    try:
+        kernel = ctypes.windll.kernel32
+        handle = kernel.GetStdHandle(-10)  # STD_INPUT_HANDLE
+        mode = ctypes.c_uint32()
+        if kernel.GetConsoleMode(handle, ctypes.byref(mode)):
+            kernel.SetConsoleMode(handle, (mode.value & ~0x40) | 0x80)  # -QUICK_EDIT, +EXTENDED_FLAGS
+    except (AttributeError, OSError):
+        pass
+
+
+def single_instance(work):
+    """Hold a lock for the whole run; a second window would overwrite the files
+    this one is making."""
+    import msvcrt
+    lock = (work/'builder.lock').open('a+b')
+    try:
+        msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+    except OSError:
+        raise AlreadyRunning('The builder is already running in another window. Use that window, or close it\n'
+                   'and start the builder again.')
+    return lock
+
+
+def check_clock():
+    """Secure downloads fail with a wrong date; catch it before they do."""
+    if time.localtime().tm_year < 2026:
+        raise Stop(f'Your PC\'s date is set to {time.strftime("%d %B %Y")}, which is wrong. Downloads cannot\n'
+                   'work until it is correct. In Windows Settings > Time & language > Date & time, turn\n'
+                   'on "Set time automatically" (or set the right date), then run the builder again.')
+
+
+def explain_os_error(error):
+    """Plain words for disk, permission and file-lock problems outside the tools."""
+    text = f'{type(error).__name__}: {error}'
+    return hint_for(text) or f'Windows reported a problem with a file: {error}'
+
+
 # --- main ---------------------------------------------------------------------------
 def main():
     global LOG
@@ -461,7 +575,10 @@ def main():
     started = time.monotonic()
     # Keep the PC from sleeping while this window runs (ES_CONTINUOUS|ES_SYSTEM_REQUIRED).
     ctypes.windll.kernel32.SetThreadExecutionState(0x80000001)
+    no_click_pause()
     try:
+        lock = single_instance(work)  # noqa: F841 - held until the process exits
+        check_clock()
         build = Build(work, args.iso)
         extracted = (build.src/'assets/GALE01/manifest.json').exists()
         say('Step 1 of 7: Checking your disc image')
@@ -506,15 +623,25 @@ def main():
         return 0
     except Stop as problem:
         say('')
-        say('The build stopped:')
+        say('The build stopped:' if problem.footer else 'The builder did not start:')
         say(str(problem))
+        if not problem.footer:
+            return 1
     except KeyboardInterrupt:
         say('\nStopped. Run the builder again to continue where it stopped.')
+    except OSError as error:
+        log(traceback.format_exc())
+        say('')
+        say('The build stopped:')
+        say(explain_os_error(error))
     except Exception:  # noqa: BLE001 - a bug; keep the details
         log(traceback.format_exc())
         say('')
         say('The build stopped because of an unexpected error:')
         say('   ' + traceback.format_exc().strip().splitlines()[-1])
+        advice = hint_for(traceback.format_exc())
+        if advice:
+            say(advice)
     say('')
     say(f'The full log is {work}\\build-log.txt')
     say('Run the builder again to retry; finished steps are not repeated.')

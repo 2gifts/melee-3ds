@@ -7,29 +7,40 @@ included in this download.
 
 What you need
 -------------
-- A Windows 10 or 11 PC (64-bit) with an internet connection
-- About 8 GB of free disk space
+- A Windows 10 or 11 PC (64-bit) with an internet connection.
+  (Not Mac, Linux, Steam Deck, Wine or a phone.)
+- About 8 GB of free disk space.
 - Your Melee disc image: the US version 1.02, as a plain .iso file (1.4 GB).
   A .rvz or .gcz file can be turned into an .iso with Dolphin: right-click
   the game > Convert File... > Uncompressed Disc (ISO).
-- A New 3DS or New 3DS XL with custom firmware and FBI
+- A New 3DS, New 3DS XL or New 2DS XL with custom firmware and FBI.
 
 How to build
 ------------
-1. Extract this whole zip first (right-click it > Extract All...).
-2. Double-click "Build Melee CIA.bat" (or drag your .iso onto it).
+1. Extract this whole zip first: right-click it > Extract All... > Extract.
+   (Do not run the builder from inside the zip.)
+2. Open the extracted folder and double-click "Build Melee CIA.bat"
+   (or drag your .iso onto it).
    If Windows says "Windows protected your PC", click "More info", then
    "Run anyway".
 3. Choose your Melee .iso when asked, then wait. The first build takes
-   10 to 30 minutes. Leave the window open.
+   10 to 30 minutes. Leave the window open. You can use your PC meanwhile.
 4. When it finishes, a folder opens with your files. Follow
    "What to do next.txt" in that folder.
 
-If the build stops, run it again: it continues where it stopped.
+If the build stops
+------------------
+Read the yellow message: it says what to do. Then run the builder again;
+it continues where it stopped. Common fixes:
+- "internet" or "download": check your connection and try again.
+- "certificate" or "date": set your PC's date and time correctly
+  (Settings > Time & language > Date & time > Set time automatically).
+- "space": free up disk space (empty the Recycle Bin).
+- "blocked" or "antivirus": allow the MeleeBuild folder in your antivirus.
 
-The builder works in C:\MeleeBuild (or another drive with enough space; the
-window shows where). You can delete that folder once your files are on the
-SD card, or keep it to make future updates faster.
+The builder works in C:\MeleeBuild (or another folder with enough space;
+the window shows where). You can delete that folder once your files are on
+the SD card, or keep it to make future updates faster.
 
 Help: https://github.com/2gifts/melee-3ds/issues
 Please attach build-log.txt from the MeleeBuild folder.
