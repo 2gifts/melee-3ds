@@ -83,4 +83,5 @@ Thanks to Project Slippi (Fizzi and contributors) for Slippi, its protocol, menu
    Afterwards, confirm that `gh release view --repo 2gifts/melee-3ds` still shows v1.3.1 as Latest.
 5. **Create the `slippi-beta` issue label**, which the form uses.
 6. **Optional soft launch:** share the release link in a small community first, for a week, before announcing it widely.
-7. **Merge into `3ds` later**, once the beta has settled. The README section and the issue form only appear on the default branch after that merge. Until then, link people to the guide on the `slippi-beta` branch, or copy its text into the release body.
+7. **Each new beta version:** update the version and download link at the top of `SLIPPI_BETA.md` and in the README callout (on `3ds`). Then use a new tag (`slippi-beta-v0.2.0`, ...), again with `--prerelease --latest=false`.
+8. **Merge into `3ds` later**, once the beta has settled. The README section and the issue form only appear on the default branch after that merge. Until then, link people to the guide on the `slippi-beta` branch, or copy its text into the release body.

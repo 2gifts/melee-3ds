@@ -2,6 +2,8 @@
 
 Play Melee on your New 3DS against a friend on **Slippi Dolphin (PC)**, using Slippi's **Direct** mode. Each of you types the other's connect code, and you play 1v1 online.
 
+**[Download the beta (v0.1.0, pre-release)](https://github.com/2gifts/melee-3ds/releases/tag/slippi-beta-v0.1.0)**: `Melee-3DS-Slippi-Beta-Builder-v0.1.0.zip`.
+
 **This is a beta.** It works well in testing, but it is new, and you may hit bugs. It installs **next to** the regular Melee for New 3DS and never replaces it. Please read "How it differs from Slippi on a PC" below before your first match.
 
 This is an unofficial fan project. It is **not made, endorsed or supported by Project Slippi**, so please do not ask the Slippi team for help with it. Report problems here instead (see [Reporting a problem](#reporting-a-problem)).
@@ -71,7 +73,7 @@ The beta only uses Direct, between two people who choose to play each other. It 
 
 The beta has its own one-click builder, **`Melee-3DS-Slippi-Beta-Builder`**. It works exactly like the regular builder.
 
-1. Download the Slippi beta builder zip from the release page and **extract it** (right-click → Extract All).
+1. Download **`Melee-3DS-Slippi-Beta-Builder-v0.1.0.zip`** from the [beta release page](https://github.com/2gifts/melee-3ds/releases/tag/slippi-beta-v0.1.0) and **extract it** (right-click → Extract All).
 2. Double-click **`Build Melee Slippi Beta.bat`** and choose your Melee `.iso`.
 3. Wait. The first build takes 10–30 minutes, and you can keep using your PC.
 4. **Slippi account step.** The builder looks for a Slippi Launcher login on this PC.
