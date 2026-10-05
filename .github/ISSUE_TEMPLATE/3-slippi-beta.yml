@@ -1,0 +1,95 @@
+name: Slippi beta problem
+description: A problem with the Slippi Direct beta (online play against Slippi Dolphin).
+title: "[Slippi beta] "
+labels: ["slippi-beta"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The Slippi Direct beta is new and experimental, and this is a free hobby project. Please read the
+        [Slippi beta guide](https://github.com/2gifts/melee-3ds/blob/3ds/native-3ds/docs/slippi/SLIPPI_BETA.md)
+        first, especially "How it differs from Slippi on a PC". **Brief freezes on a slow connection are
+        expected**: the 3DS has no rollback. Please do not ask the Slippi team about this beta.
+
+        **Get the files first.** Right after the problem, turn the 3DS off (do not start the game again),
+        then copy `SD:/3ds/melee/game.log`. Ask your opponent for the match's replay (`.slp`, in their
+        `Documents\Slippi` folder). The log never contains your login, and public IP addresses in it are
+        hidden. **Never attach `user.json`**: it is your Slippi login.
+  - type: dropdown
+    id: problem
+    attributes:
+      label: Kind of problem
+      options:
+        - DESYNC DETECTED, or the two screens showed different things
+        - Could not find or connect to my opponent
+        - Disconnected during a match
+        - Very laggy or freezing (please include both players' ping or connection type)
+        - Menus, character select, stage select or chat
+        - Crash or freeze of the 3DS
+        - Something else
+    validations:
+      required: true
+  - type: dropdown
+    id: console
+    attributes:
+      label: Console
+      options:
+        - New 3DS
+        - New 3DS XL
+        - New 2DS XL
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Slippi beta builder version
+      placeholder: v0.1.0
+    validations:
+      required: true
+  - type: input
+    id: dolphin
+    attributes:
+      label: Your opponent's Slippi Dolphin version
+      description: In Slippi Launcher, Settings > About (or the Dolphin window's title).
+      placeholder: for example 3.x.x
+    validations:
+      required: true
+  - type: dropdown
+    id: network
+    attributes:
+      label: Connection
+      options:
+        - Same home network (LAN)
+        - Different homes, over the internet
+        - Phone hotspot or mobile data on either side
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: What you did and what happened
+      description: Fighters, stage, which game of the set, what you saw on the 3DS and what your opponent saw on the PC.
+      placeholder: |
+        1. Game 3, Fox (3DS) vs Marth (PC), Pokemon Stadium
+        2. About a minute in, the 3DS showed DESYNC DETECTED; the PC kept playing
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: game.log and the replay
+      description: Required. Drag SD:/3ds/melee/game.log and the opponent's .slp replay into this box (zip them if GitHub refuses the .slp).
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: My beta was made with the newest Slippi beta builder.
+          required: true
+        - label: I read "How it differs from Slippi on a PC" in the beta guide.
+          required: true
+        - label: I did NOT attach user.json, game files, firmware or memory dumps.
+          required: true

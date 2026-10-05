@@ -4,6 +4,9 @@ Super Smash Bros. Melee, running natively on a homebrewed **New Nintendo 3DS**. 
 
 Play Versus against CPUs, practice in Training, and explore Melee on a different kind of handheld. The port aims to preserve the original mechanics while adapting the presentation to the 3DS. **Development is complete for now at a playable community milestone. Performance varies, and this is not a locked-60-FPS or fully compatible replacement for the GameCube game.**
 
+> **New: Slippi Direct beta (pre-release).** Play your New 3DS online, 1v1, against a friend on Slippi (PC) with connect codes. It installs next to the regular game.
+> **[Download the beta](https://github.com/2gifts/melee-3ds/releases/tag/slippi-beta-v0.1.0)** · **[Read the beta guide first](native-3ds/docs/slippi/SLIPPI_BETA.md)**
+
 <table>
   <tr>
     <th align="center">Your match at a glance</th>
@@ -97,13 +100,27 @@ In the everything-unlocked build, Versus starts with **4 stocks, 8 minutes, item
 
 The touch-screen controls guide does not pause a match.
 
+## Slippi Direct beta (online play)
+
+A separate **beta** lets your New 3DS play **1v1 online against a friend on Slippi Dolphin (PC)** using Slippi's **Direct** mode (connect codes):
+- Slippi's online menus and character select;
+- quick chat;
+- loser-picks stages and frozen Pokémon Stadium;
+- rematches.
+
+It has its own one-click builder, **`Melee-3DS-Slippi-Beta-Builder`** ([download the pre-release](https://github.com/2gifts/melee-3ds/releases/tag/slippi-beta-v0.1.0)), and installs as its own HOME Menu app next to the regular game.
+
+**The 3DS has no rollback:** it waits briefly when your opponent's inputs arrive late, so a good Wi-Fi connection matters. Ranked, Unranked, Teams and spectating are not supported. This is an unofficial fan project, not made or supported by Project Slippi.
+
+Read the **[Slippi beta guide](native-3ds/docs/slippi/SLIPPI_BETA.md)** for setup (including your Slippi account), how to play, and how it differs from Slippi on a PC.
+
 ## Reporting problems
 
 This is a free hobby project. Bug reports need facts: **builder problems need `build-log.txt`** (in the folder the builder window shows), and **game problems need steps to reproduce and `SD:/3ds/melee/game.log`**, copied right after the problem. Use the [issue forms](https://github.com/2gifts/melee-3ds/issues/new/choose); ideas and questions go in [Discussions](https://github.com/2gifts/melee-3ds/discussions). Reports without logs, requests for prebuilt CIA files, and complaints are closed. More in [getting help](.github/SUPPORT.md).
 
 ## Scope and credits
 
-This is an unofficial homebrew port. There is **no multiplayer connection, Slippi rollback, or replay recording**. Optional movies are skipped, some graphics are simplified or approximate, and single-player modes have less coverage than Versus and Training. Bugs may remain. See [project status](native-3ds/docs/PORT_STATUS.md).
+This is an unofficial homebrew port. The regular builds have **no multiplayer connection or replay recording**; the separate [Slippi Direct beta](native-3ds/docs/slippi/SLIPPI_BETA.md) adds 1v1 online play against Slippi Dolphin, without rollback on the 3DS. Optional movies are skipped, some graphics are simplified or approximate, and single-player modes have less coverage than Versus and Training. Bugs may remain. See [project status](native-3ds/docs/PORT_STATUS.md).
 
 Thanks to **doldecomp/melee and its contributors**, devkitPro, Diet Melee, the UCF authors and Project Slippi, and the Mario 64 3DS ports used as references. Development used OpenAI Codex alongside repeated testing on a physical New 3DS.
 
