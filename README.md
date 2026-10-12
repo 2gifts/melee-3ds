@@ -122,7 +122,7 @@ This is a free hobby project. Bug reports need facts: **builder problems need `b
 
 This is an unofficial homebrew port. The regular builds have **no multiplayer connection or replay recording**; the separate [Slippi Direct beta](native-3ds/docs/slippi/SLIPPI_BETA.md) adds 1v1 online play against Slippi Dolphin, without rollback on the 3DS. Optional movies are skipped, some graphics are simplified or approximate, and single-player modes have less coverage than Versus and Training. Bugs may remain. See [project status](native-3ds/docs/PORT_STATUS.md).
 
-Thanks to **doldecomp/melee and its contributors**, devkitPro, Diet Melee, the UCF authors and Project Slippi, and the Mario 64 3DS ports used as references. Development used OpenAI Codex alongside repeated testing on a physical New 3DS.
+Thanks to **doldecomp/melee and its contributors**, devkitPro, Diet Melee, the UCF authors and Project Slippi, and the Mario 64 3DS ports used as references. Development used OpenAI Codex Astra 6 for the initial build and then Claude Opus 5.5 for optimization and debugging + online support alongside repeated testing on a physical New 3DS.
 
 The original decompilation source and history are preserved; the port lives in **`native-3ds/` on the `3ds` branch**. Community forks and contributions are welcome, although further development is not currently planned.
 
