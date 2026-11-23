@@ -386,6 +386,22 @@ void mp_slippi_record_online_inputs(const unsigned char* port0, const unsigned c
     out_len += 40;
 }
 
+/* Ports 3 and 4 of a local wireless match: a 'J' record beside the 'I' of the same frame. */
+void mp_slippi_record_online_inputs_ports23(const unsigned char* port2, const unsigned char* port3)
+{
+    u8* b;
+    if (!online_rec || out_len + 40 > out_cap) {
+        return;
+    }
+    b = out_buf + out_len;
+    memset(b, 0, 40);
+    b[0] = 'J';
+    put32(b + 4, (u32) frame_index);
+    memcpy(b + 16, port2, 8);
+    memcpy(b + 24, port3, 8);
+    out_len += 40;
+}
+
 void mp_slippi_record_online_end(void)
 {
     if (!online_rec) {

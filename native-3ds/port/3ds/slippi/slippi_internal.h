@@ -48,6 +48,9 @@ typedef struct {
     char mm_host[128];
     int mm_port;
     int local_port;           /* 0 = random 41000..50999 like Dolphin */
+    int local_timeout_ms;     /* disconnect timeout, default 2000; tests under emulation raise it */
+    int local_udp;            /* development 3DS build: use the loopback UDP link instead of UDS (tests) */
+    int local_players;        /* local wireless: consoles in the match, 2..4 (host's setting; joiners learn it) */
     char lan_ip[32];          /* forced LAN IP (Dolphin Slippi.LanIP) */
     char app_version[32];
     int code_fullwidth;       /* 1: send the opponent code as the game's full-width Shift-JIS */
@@ -66,6 +69,7 @@ typedef struct {
     int selftest_character;
     int selftest_allow_real_mm;
     int selftest_exit;
+    int selftest_crash_frame;   /* local wireless test: vanish without a goodbye at this frame */
 } slippi_config;
 
 typedef struct {
@@ -112,13 +116,8 @@ typedef struct {
     char error[160];
     int initialized;
     /* Local wireless (3DS UDS): opponent=@host / @join in config.ini. No account,
-     * matchmaking or ENet; slippi_local.c carries the same packets over UDS. */
+     * matchmaking or ENet; slippi_local.c adapts the localwireless module (port/3ds/localwireless). */
     int local_mode, local_host;
-    int sel_resend_pending;         /* selections are re-sent until the peer's pads arrive */
-    uint64_t sel_resend_us;
-    uint8_t sel_pkt[14];            /* the selections packet re-sent (a new game clears local_sel) */
-    uint8_t last_remote_sel[14];    /* duplicate selections (re-sends) are ignored */
-    int last_remote_sel_valid;
 
     slippi_config cfg;
     slippi_user user;
@@ -207,16 +206,23 @@ void slippi_p2p_send_chat(int id);
 int32_t slippi_p2p_time_offset(void);
 void slippi_p2p_disconnect(void);
 void slippi_p2p_clear(void);
-/* Local wireless entry points (slippi_local.c calls these). */
-void slippi_p2p_local_connected(const char *peer_name);
-void slippi_p2p_on_data(const uint8_t *d, size_t len);
-void slippi_p2p_resend_selections(void);
 
-/* slippi_local.c (lock held) */
+/* slippi_local.c: Slippi's side of local wireless (lock held) */
 void slippi_local_start(int host);
 void slippi_local_service(void);
-void slippi_local_send(const uint8_t *data, size_t len);
 void slippi_local_close(void);
+void slippi_local_publish_selections(void);        /* our selections to the host */
+void slippi_local_game_begin(void);                /* frame 1: the start blob is consumed */
+int slippi_local_checksum(unsigned *value);        /* newest remote desync checksum: frame (and value) */
+int slippi_local_ping_us(void);
+int slippi_local_stat(int which);
+int slippi_local_players(void);
+const char *slippi_local_player_name(int idx);
+int slippi_local_start_blob(unsigned char *out, int cap);   /* the match block when it is here, else 0 */
+int slippi_local_host_ready(slippi_selections sel[4]);       /* host: every console chose; fills the selections (0 if not) */
+int slippi_local_host_start(const unsigned char *blk);
+int slippi_local_submit(int frame, const unsigned char *pad8, int cf, unsigned ck);
+int slippi_local_bundle(int frame, unsigned char pads[4][8], unsigned char *cpu_mask);
 
 /* net.c (lock held) */
 int slippi_send_pad_locked(int frame, const unsigned char *pad, int checksum_frame, unsigned checksum);
@@ -238,6 +244,8 @@ const char *slippi_net_error(void);
 void slippi_net_poll(void);
 void slippi_net_stop(void);
 int slippi_net_local_index(void);
+int slippi_net_local_players(void);
+int slippi_net_player_name(int idx, char *out, int len);
 void slippi_net_set_selections(int char_id, int color, int stage_id, int stage_selected);
 int slippi_net_remote_ready(void);
 int slippi_net_match_block(unsigned char *out);

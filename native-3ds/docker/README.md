@@ -57,6 +57,9 @@ MELEE_VARIANT=slippi MELEE_VOLUME=melee3ds-slippi-work docker/build.sh "<disc>" 
 MELEE_VOLUME=melee3ds-slippi-work docker/emu-test.sh build-dev   # the development build the tests need
 docker/emu-test.sh pair --games 1 --end-frame 600
 docker/emu-test.sh net pc-pair
+docker/emu-test.sh net local-quad --players 4 --drop 50          # local wireless through the Slippi provider, PC loopback
+docker/emu-test.sh run tools/localwireless/lw_test.py --players 4 --drop 50   # the localwireless module alone
+docker/emu-test.sh run tools/slippi/online_quad_test.py --players 3 --end-frame 600 --kill 3:60 --timeout-ms 20000   # engine, Azahar
 ```
 
 Results land in `native-3ds/build/emu-test/` (set `MELEE_TEST_OUT` to change it).

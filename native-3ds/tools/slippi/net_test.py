@@ -5,6 +5,7 @@ credentials.
     python tools/slippi/net_test.py pc-pair      # fake MM + two Dolphin-like fake peers
     python tools/slippi/net_test.py pc-client    # fake MM + fake peer + PC build of the 3DS self-test
     python tools/slippi/net_test.py local-pair   # two PC self-tests over the local wireless stand-in (loopback UDP)
+    python tools/slippi/net_test.py local-quad --players 4 [--crash 3:200] [--drop 50]   # host + 1..3 clients; --crash PLAYER:FRAME makes that client vanish
     python tools/slippi/net_test.py azahar DSX   # fake MM + fake peer + the 3DS self-test in Azahar
 Options: --frames N, --drop PCT (fake peer drops that share of its pad
 packets), --delay-a/--delay-b, --mm-port, --seconds (emulator run time),
@@ -108,9 +109,57 @@ def local_pair(args, out):
     return 0 if ok else 1
 
 
+def local_quad(args, out):
+    """Host plus players-1 clients over the loopback stand-in. --crash N:F makes client N (2..4) vanish without a
+    goodbye at frame F (or N:F for the host as 1:F); the others must agree on every bundle and the CPU frame."""
+    n = args.players
+    crash = {}
+    if args.crash:
+        who, frame = args.crash.split(':')
+        crash[int(who)] = int(frame)
+    procs = {}
+    try:
+        for i in range(n):
+            folder = out / f'p{i + 1}'
+            folder.mkdir(parents=True)
+            lines = [f'opponent={"@host" if i == 0 else "@join"}', f'delay={args.delay_a}', 'selftest=1',
+                     f'selftest_frames={args.frames}', f'local_port={args.mm_port + 3000}', f'local_players={n}']
+            if args.drop:
+                lines.append(f'test_drop_pct={args.drop}')
+            if i + 1 in crash:
+                lines.append(f'selftest_crash_frame={crash[i + 1]}')
+            (folder / 'config.ini').write_text('\n'.join(lines) + '\n', encoding='utf-8')
+        for i in range(n):
+            procs[f'p{i + 1}'] = start([TOOLS / ('slippi_client' + EXE), '--dir', out / f'p{i + 1}'], out / f'player{i + 1}.log')
+            time.sleep(0.5)
+        codes = finish(procs, 180)
+    finally:
+        for p, f in procs.values():
+            if p.poll() is None:
+                p.kill()
+                p.wait()
+            if not f.closed:
+                f.close()
+    print('exit codes:', codes)
+    hashes = {}
+    for path in sorted(out.glob('player*.log')):
+        text = path.read_text(encoding='utf-8', errors='replace')
+        print(f'---- {path.name}')
+        print(tail(path, 'selftest:', 4))
+        for line in text.splitlines():
+            if 'bundle hash' in line:
+                hashes[path.name] = line.split('bundle hash')[1].split(',')[0].strip()
+    survivors = [f'player{i + 1}.log' for i in range(n) if i + 1 not in crash]
+    ok = all(codes[f'p{i + 1}'] == 0 for i in range(n) if i + 1 not in crash)
+    ok = ok and len({hashes.get(x) for x in survivors}) == 1 and None not in {hashes.get(x) for x in survivors}
+    print('bundle hashes:', hashes)
+    print('RESULT:', 'PASS' if ok else 'FAIL', '->', out)
+    return 0 if ok else 1
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('mode', choices=('pc-pair', 'pc-client', 'azahar', 'local-pair'))
+    ap.add_argument('mode', choices=('pc-pair', 'pc-client', 'azahar', 'local-pair', 'local-quad'))
     ap.add_argument('dsx', nargs='?')
     ap.add_argument('--frames', type=int, default=600)
     ap.add_argument('--drop', type=int, default=0)
@@ -121,6 +170,8 @@ def main():
     ap.add_argument('--second-is-host', action='store_true')
     ap.add_argument('--code-encoding', default='fullwidth')
     ap.add_argument('--label', default='')
+    ap.add_argument('--players', type=int, default=4)
+    ap.add_argument('--crash', default='')
     args = ap.parse_args()
 
     out = OUT / (args.mode + (('-' + args.label) if args.label else ''))
@@ -129,6 +180,8 @@ def main():
     out.mkdir(parents=True)
     if args.mode == 'local-pair':
         return local_pair(args, out)
+    if args.mode == 'local-quad':
+        return local_quad(args, out)
     mm_cmd = [TOOLS / ('slippi_fake_mm' + EXE), '--port', args.mm_port] + (['--second-is-host'] if args.second_is_host else [])
     procs = {'mm': start(mm_cmd, out / 'fake_mm.log')}
     time.sleep(0.5)

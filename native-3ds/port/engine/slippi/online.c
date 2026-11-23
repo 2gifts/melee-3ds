@@ -77,6 +77,8 @@ static struct {
     u8 block[BLOCK_SIZE + 8];
     int active;
     u8 local_index, remote_index, delay;
+    int nplayers;             /* local wireless: consoles in the match, 0 for online play */
+    unsigned cpu_applied;     /* local wireless: slots already switched to a CPU */
     u32 rng_offset;
     int frame;
     u8 last_local[PAD_SIZE];
@@ -365,12 +367,26 @@ static void test_pad(PADStatus* pad, int frame)
     }
 }
 
+/* A dropped console's fighter becomes a level 3 CPU (the host decides, in the bundle, so every console does
+ * this at the same frame). */
+static void take_over_slot(int slot)
+{
+    Player_SetSlottype(slot, Gm_PKind_Cpu);
+    Player_SetPlayerAndEntityCpuType(slot, 4);
+    Player_SetPlayerAndEntityCpuLevel(slot, 3);
+}
+
+static int end_pauser(void)
+{
+    return on.nplayers > 0 ? 0 : on.remote_index;   /* local wireless: a lost link is the host's */
+}
+
 static void exchange_pads(int frame)
 {
     PadLibData* p = &HSD_PadLibData;
     PADStatus* stat;
     PADStatus* source;
-    u8 remote[PAD_SIZE];
+    u8 remote[64];
     int i, result, waited = 0;
 
     if (p->qcount == 0 || p->queue == NULL) {
@@ -431,16 +447,45 @@ static void exchange_pads(int frame)
         on.disconnected = 1;
         memset(remote, 0, sizeof remote);
     }
-    /* The local player's pad is the one from `delay` frames ago. */
-    wire_to_pad(&stat[on.local_index], on.delay_buffer[on.delay_index]);
-    memcpy(on.delay_buffer[on.delay_index], on.last_local, PAD_SIZE);
-    on.delay_index = (u8) ((on.delay_index + 1) % on.delay);
-    wire_to_pad(&stat[on.remote_index], remote);
+    if (on.nplayers > 0) {
+        /* Local wireless: the host's bundle holds every slot's pad for this frame, ours
+         * included (the pad we sent `delay` frames ago). */
+        unsigned mask = remote[48];
+        for (i = 0; i < 4; i++) {
+            if (i < on.nplayers) {
+                wire_to_pad(&stat[i], remote + 12 * i);
+            } else {
+                memset(&stat[i], 0, sizeof stat[i]);
+            }
+        }
+        if (result == RESP_NORMAL && (mask & (1u << on.local_index))) {
+            /* The host has given up on us (it is waiting no more): leave the match. */
+            logf_("Slippi online: the host made this console a CPU at frame %d\n", frame, 0, 0);
+            on.disconnected = 1;
+        }
+        for (i = 0; i < on.nplayers; i++) {
+            if (i != on.local_index && (mask & (1u << i)) && !(on.cpu_applied & (1u << i))) {
+                on.cpu_applied |= 1u << i;
+                take_over_slot(i);
+                logf_("Slippi online: player %d dropped; a level 3 CPU plays from frame %d\n", i + 1, frame, 0);
+            }
+        }
+    } else {
+        /* The local player's pad is the one from `delay` frames ago. */
+        wire_to_pad(&stat[on.local_index], on.delay_buffer[on.delay_index]);
+        memcpy(on.delay_buffer[on.delay_index], on.last_local, PAD_SIZE);
+        on.delay_index = (u8) ((on.delay_index + 1) % on.delay);
+        wire_to_pad(&stat[on.remote_index], remote);
+    }
     {
-        u8 w0[PAD_SIZE], w1[PAD_SIZE];
-        pad_to_wire(w0, &stat[0]);
-        pad_to_wire(w1, &stat[1]);
-        mp_slippi_record_online_inputs(w0, w1, on.tx_checksum);
+        u8 w[4][PAD_SIZE];
+        for (i = 0; i < 4; i++) {
+            pad_to_wire(w[i], &stat[i]);
+        }
+        mp_slippi_record_online_inputs(w[0], w[1], on.tx_checksum);
+        if (on.nplayers > 2) {
+            mp_slippi_record_online_inputs_ports23(w[2], w[3]);
+        }
     }
     on.finalized = frame;
     on.frames++;
@@ -474,7 +519,7 @@ void mp_slippi_online_frame_begin(void)
     if (on.disconnected && !on.disconnect_shown && !on.game_over) {
         on.disconnect_shown = 1;
         mp_slippi_hud_message(1);
-        mp_slippi_gmvs_end_online(on.remote_index);
+        mp_slippi_gmvs_end_online(end_pauser());
     }
     {
         int v = frame > on.finalized ? on.finalized : frame;
@@ -517,7 +562,7 @@ void mp_slippi_online_frame_begin(void)
                     mp_slippi_hud_message(2);
                     lbAudioAx_80024030(3);
                     if (!on.game_over) {
-                        mp_slippi_gmvs_end_online(on.remote_index);
+                        mp_slippi_gmvs_end_online(end_pauser());
                     }
                 }
                 break;
@@ -733,7 +778,11 @@ int mp_slippi_online_wait_match(void)
         }
         if (status == 3 && !on.selections_sent) {
             on.selections_sent = 1;
-            mp_platform_slippi_net_set_selections(on.character, on.color, on.stage, on.stage_select);
+            /* Local wireless: a different fighter per console, so four are not identical. */
+            mp_platform_slippi_net_set_selections(mp_platform_slippi_net_local_players() > 0
+                                                      ? (on.character + mp_platform_slippi_net_local_index()) % 26
+                                                      : on.character,
+                                                  on.color, on.stage, on.stage_select);
             logf_("Slippi online: connected as player %d, ping %d ms; selections sent\n",
                   mp_platform_slippi_net_local_index() + 1, mp_platform_slippi_net_ping_ms(), 0);
         }
@@ -807,8 +856,10 @@ void mp_slippi_online_start_melee(StartMeleeData* data)
     on.rng_offset = be32(on.block + BLOCK_SIZE);
     on.local_index = on.block[BLOCK_SIZE + 4] & 3;
     on.remote_index = on.local_index == 0 ? 1 : 0;
-    /* Online-only gameplay codes (LGL, GAME! hold) and the frozen Stadium choice. */
-    mp_slippi_rules_set_online(2 /* DIRECT */, on.local_index);
+    on.nplayers = mp_platform_slippi_net_local_players();
+    on.cpu_applied = 0;
+    /* Online-only gameplay codes (LGL, GAME! hold) and the frozen Stadium choice; local wireless is mode 5 (no LGL). */
+    mp_slippi_rules_set_online(on.nplayers > 0 ? 5 : 2 /* DIRECT */, on.local_index);
     mp_slippi_rules_set_frozen_stadium(on.block[BLOCK_SIZE + 6]);
     delay = on.block[BLOCK_SIZE + 5];
     if (delay < MIN_DELAY) {

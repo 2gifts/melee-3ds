@@ -37,6 +37,11 @@ void mp_platform_slippi_net_poll(void);           /* every tick and while waitin
 void mp_platform_slippi_net_stop(void);
 
 /* match setup (after connected) */
+/* Local wireless (2 to 4 consoles, slippi_star.c): 0 for online play, else the number of consoles.
+ * local_index is then this console's player index 0..3 (the host is 0). player_name copies a console's
+ * name (the 3DS system name) into buf, "" when unknown; returns its length. */
+int mp_platform_slippi_net_local_players(void);
+int mp_platform_slippi_net_player_name(int idx, char* buf, int len);
 /* 0 or 1: decider (MM isHost) = 0, like Dolphin's m_local_player_idx. */
 int mp_platform_slippi_net_local_index(void);
 /* Sends 0x82 with is_character_selected=1, team 0, alt_stage_mode 0 and a
@@ -67,6 +72,9 @@ void mp_platform_slippi_net_new_game(void);
  *  3 DISCONNECTED (also after 420 consecutive skips, Dolphin's 7 s stall rule). */
 int mp_platform_slippi_net_send_inputs(int frame, int delay, int finalized_frame, unsigned checksum,
                                        const unsigned char *local_pad12, unsigned char *remote_pad12_out);
+/* Local wireless: instead the answer is the host's bundle for 'frame': remote_pad12_out (64 bytes) =
+ * 4 x 12 pad bytes (the four slots, our own included; 8 wire bytes + 4 zero), [48] = CPU mask (bit n: slot n
+ * is a CPU from this frame, its pad is zero), [49] = number of consoles. */
 /* Legacy: returns the remote checksum frame; the pointer is ignored. */
 int mp_platform_slippi_net_remote_checksum(int *unused_must_be_null);
 int mp_platform_slippi_net_remote_checksum_frame(void);

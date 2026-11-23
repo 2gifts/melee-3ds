@@ -119,7 +119,6 @@ static void service_locked(void)
     if (!g->initialized) return;
     if (g->local_mode) {
         slippi_local_service();
-        slippi_p2p_tick();
         return;
     }
     if (g->mm_state == MM_RESOLVE) slippi_mm_tick();
@@ -402,7 +401,8 @@ void slippi_set_selections(int character, int color, int stage, int flags)
     if (stage >= 0) { l->stage_id = (uint16_t)stage; l->is_stage_selected = 1; l->alt_stage_mode = (uint8_t)(flags >> 8); }
     if (character >= 0) { l->character_id = (uint8_t)character; l->character_color = (uint8_t)color; l->team_id = (uint8_t)flags; l->is_character_selected = 1; }
     l->player_idx = (uint8_t)(g->match.local_index < 0 ? 0 : g->match.local_index);
-    if (g->status == SLIPPI_STATUS_CONNECTED) slippi_p2p_send_selections();
+    if (g->status == SLIPPI_STATUS_CONNECTED && g->local_mode) slippi_local_publish_selections();
+    else if (g->status == SLIPPI_STATUS_CONNECTED) slippi_p2p_send_selections();
     sp_unlock();
 }
 
@@ -439,6 +439,7 @@ void slippi_start_game_locked(void)
     l->stage_id = 0; l->is_stage_selected = 0; l->rng_offset = 0;
     r->character_id = r->character_color = r->is_character_selected = r->team_id = 0;
     r->stage_id = 0; r->is_stage_selected = 0; r->rng_offset = 0;
+    if (g_slippi.local_mode) slippi_local_game_begin();
 }
 
 void slippi_start_game(void)
@@ -489,6 +490,7 @@ int slippi_send_pad(int frame, const unsigned char *pad, int checksum_frame, uns
 int slippi_remote_pad_locked(int frame, unsigned char *out)
 {
     slippi_state *g = &g_slippi;
+    if (g->local_mode) return -1;   /* local wireless has bundles, not one remote pad (slippi_local.c) */
     if (frame <= 0) return -1;
     if (frame > g->remote_head_frame) return 0;
     int slot = frame & (REMOTE_RING - 1);
@@ -507,8 +509,13 @@ int slippi_remote_pad(int frame, unsigned char *out)
 }
 
 int slippi_latest_remote_frame(void) { return g_slippi.remote_head_frame; }
-int slippi_remote_checksum_frame(void) { return g_slippi.remote_checksum_frame; }
-unsigned slippi_remote_checksum(void) { return g_slippi.remote_checksum; }
+int slippi_remote_checksum_frame(void) { return g_slippi.local_mode ? slippi_local_checksum(NULL) : g_slippi.remote_checksum_frame; }
+unsigned slippi_remote_checksum(void)
+{
+    unsigned ck = g_slippi.remote_checksum;
+    if (g_slippi.local_mode) slippi_local_checksum(&ck);
+    return ck;
+}
 
 int slippi_time_offset_us(void)
 {
@@ -519,7 +526,7 @@ int slippi_time_offset_us(void)
     return v;
 }
 
-int slippi_ping_us(void) { return (int)g_slippi.ping_us; }
+int slippi_ping_us(void) { return g_slippi.local_mode ? slippi_local_ping_us() : (int)g_slippi.ping_us; }
 
 int slippi_chat_poll(void)
 {
@@ -541,6 +548,7 @@ void slippi_send_chat(int message_id)
 
 int slippi_stat(int which)
 {
+    if (g_slippi.local_mode && which >= 0 && which < SLIPPI_STAT_COUNT) return slippi_local_stat(which);
     slippi_state *g = &g_slippi;
     if (which < 0 || which >= SLIPPI_STAT_COUNT) return 0;
     if (!lock_ready) return 0;

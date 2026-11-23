@@ -12,6 +12,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef _WIN32
+#include <unistd.h>
+#endif
 
 int slippi_selftest_requested(void)
 {
@@ -72,12 +75,13 @@ int slippi_selftest_run(void)
     slippi_info(SLIPPI_INFO_NAME, name, sizeof(name));
     slippi_info(SLIPPI_INFO_CODE, code, sizeof(code));
     int local_index = slippi_net_local_index();
-    int mm_index = slippi_local_index();
+    const int nplayers = slippi_net_local_players();
+    int mm_index = g_slippi.local_mode ? local_index : slippi_local_index();
     sp_log("selftest: connected in %.1f s to '%s' (%s); game index %d, MM index %d", (double)(sp_time_us() - t0) / 1e6, name, code,
            local_index, mm_index);
 
     /* Decider picks Battlefield; the other side leaves the stage open. */
-    slippi_net_set_selections(cfg.selftest_character, local_index, 0x1F, local_index == 0);
+    slippi_net_set_selections((cfg.selftest_character + local_index) % 26, local_index, 0x1F, local_index == 0);
     if (!wait_for(block_ready, 20000, &last)) {
         sp_log("selftest: FAIL no remote selections: %s", slippi_net_error());
         slippi_net_stop();
@@ -92,6 +96,8 @@ int slippi_selftest_run(void)
     const int remote_port = mm_index == 0 ? 1 : 0;
     int frame = 1, ticks = 0, skips = 0, bad_pads = 0, bad_checksums = 0, checked_checksums = 0, worst_skip_run = 0, skip_run = 0;
     int last_checked_cf = 0;
+    uint32_t bundle_hash = 2166136261u;
+    unsigned seen_cpu = 0;
     long long ping_sum = 0, ping_n = 0, ping_max = 0;
     int result = 0;
     uint64_t start = sp_time_us(), next = start;
@@ -101,7 +107,7 @@ int slippi_selftest_run(void)
         if (now < next) { slippi_net_poll(); sp_sleep_us((uint32_t)(next - now > 2000 ? 2000 : next - now)); continue; }
         next += SLIPPI_FRAME_US;
         ++ticks;
-        uint8_t local[12] = {0}, remote[12];
+        uint8_t local[12] = {0}, remote[64];
         slippi_test_pad(mm_index, frame + delay, local);
         int finalized = frame - 1;
         int rc = slippi_net_send_inputs(frame, delay, finalized, slippi_test_checksum(finalized), local, remote);
@@ -112,7 +118,24 @@ int slippi_selftest_run(void)
             continue;
         }
         skip_run = 0;
-        if (!slippi_test_pad_ok(remote_port, frame, remote)) {
+        if (g_slippi.local_mode) {
+            unsigned mask = remote[48];
+            for (int i = 0; i < nplayers; ++i) {
+                if (mask & (1u << i)) {
+                    if (!(seen_cpu & (1u << i))) { seen_cpu |= 1u << i; sp_log("selftest: player %d is a CPU from frame %d", i + 1, frame); }
+                    static const uint8_t zero[8];
+                    if (memcmp(remote + 12 * i, zero, 8)) ++bad_pads;
+                } else if (!slippi_test_pad_ok(i, frame, remote + 12 * i)) {
+                    if (bad_pads++ < 5) sp_log("selftest: bundle pad mismatch for player %d at frame %d", i + 1, frame);
+                }
+            }
+            if ((seen_cpu & ~mask) != 0) { ++bad_pads; sp_log("selftest: CPU bit cleared at frame %d", frame); }
+            uint8_t tmp[56];
+            memcpy(tmp, &frame, 4);
+            tmp[4] = (uint8_t)mask;
+            for (int i = 0; i < 4; ++i) memcpy(tmp + 5 + 8 * i, remote + 12 * i, 8);
+            for (int i = 0; i < 37; ++i) bundle_hash = (bundle_hash ^ tmp[i]) * 16777619u;
+        } else if (!slippi_test_pad_ok(remote_port, frame, remote)) {
             if (bad_pads++ < 5)
                 sp_log("selftest: remote pad mismatch at frame %d: %02x %02x %02x %02x %02x %02x %02x %02x", frame, remote[0], remote[1],
                        remote[2], remote[3], remote[4], remote[5], remote[6], remote[7]);
@@ -132,6 +155,12 @@ int slippi_selftest_run(void)
                    slippi_stat(SLIPPI_STAT_PAD_PACKETS_RECEIVED), slippi_stat(SLIPPI_STAT_PAD_PACKETS_STALE), slippi_stat(SLIPPI_STAT_PAD_GAPS),
                    slippi_stat(SLIPPI_STAT_PAD_PACKETS_SENT), slippi_stat(SLIPPI_STAT_RESENDS), slippi_stat(SLIPPI_STAT_ENET_RTT_MS),
                    slippi_stat(SLIPPI_STAT_ENET_LOSS));
+        if (cfg.selftest_crash_frame && frame == cfg.selftest_crash_frame) {
+            sp_log("selftest: vanishing at frame %d", frame);
+#ifndef _WIN32
+            _exit(0);
+#endif
+        }
         ++frame;
     }
     double seconds = (double)(sp_time_us() - start) / 1e6;
@@ -147,6 +176,7 @@ int slippi_selftest_run(void)
            slippi_stat(SLIPPI_STAT_PAD_PACKETS_RECEIVED), slippi_stat(SLIPPI_STAT_PAD_PACKETS_STALE), slippi_stat(SLIPPI_STAT_PAD_GAPS),
            slippi_stat(SLIPPI_STAT_RESENDS), slippi_stat(SLIPPI_STAT_DROPPED_TEST), slippi_stat(SLIPPI_STAT_ACKS_SENT),
            slippi_stat(SLIPPI_STAT_ACKS_RECEIVED));
+    if (g_slippi.local_mode) sp_log("selftest: bundle hash %08x, %d consoles, cpu mask %x, block crc local", (unsigned)bundle_hash, nplayers, seen_cpu);
     int pass = result == 0 && done == frames && bad_pads == 0 && bad_checksums == 0 && checked_checksums > 0;
     sp_log("selftest: %s", pass ? "PASS" : "FAIL");
     slippi_net_stop();

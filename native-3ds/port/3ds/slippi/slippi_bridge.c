@@ -40,7 +40,21 @@ const char *slippi_net_error(void)
 void slippi_net_poll(void) { slippi_poll(); }
 void slippi_net_stop(void) { slippi_shutdown(); }
 
-int slippi_net_local_index(void) { return g_slippi.match.is_host ? 0 : 1; }
+int slippi_net_local_index(void) { return g_slippi.local_mode ? (g_slippi.match.local_index < 0 ? 0 : g_slippi.match.local_index) : (g_slippi.match.is_host ? 0 : 1); }
+
+/* 0 for online play, else the number of consoles in the local wireless match. */
+int slippi_net_local_players(void) { return g_slippi.local_mode ? slippi_local_players() : 0; }
+
+/* A console's name by player index (local wireless), "" when unknown. */
+int slippi_net_player_name(int idx, char *out, int len)
+{
+    if (len <= 0) return 0;
+    out[0] = 0;
+    sp_lock();
+    if (g_slippi.local_mode) snprintf(out, (size_t)len, "%s", slippi_local_player_name(idx));
+    sp_unlock();
+    return (int)strlen(out);
+}
 
 void slippi_net_set_selections(int char_id, int color, int stage_id, int stage_selected)
 {
@@ -87,27 +101,23 @@ static const unsigned char match_block_template[0x138] = {
  * Starting from the pristine template each time gives the same bytes as
  * Dolphin's persistent static for 1v1 Direct: every field it writes is
  * rewritten here, the rest never changes. Lock held. */
-static void build_match_block(unsigned char *b, unsigned *rng_out, unsigned *alt_out)
+static void build_match_block(unsigned char *b, unsigned *rng_out, unsigned *alt_out, const slippi_selections *ordered[4], int nplayers,
+                              unsigned rng_offset)
 {
     slippi_state *g = &g_slippi;
     memcpy(b, match_block_template, sizeof(match_block_template));
-    const slippi_selections *lps = &g->local_sel, *rps = &g->remote_sel;
-    const slippi_selections *ordered[2] = {NULL, NULL};
-    if (lps->player_idx < 2) ordered[lps->player_idx] = lps;
-    if (rps->player_idx < 2) ordered[rps->player_idx] = rps;
 
     /* Stage: first player in port order with a stage selection, else Battlefield. */
     unsigned stage_id = 0x1F, alt_stage_mode = 0;
-    for (int i = 0; i < 2; ++i) {
+    for (int i = 0; i < nplayers; ++i) {
         if (!ordered[i] || !ordered[i]->is_stage_selected) continue;
         stage_id = ordered[i]->stage_id;
         alt_stage_mode = ordered[i]->alt_stage_mode;
         break;
     }
-    unsigned rng_offset = g->match.is_host ? lps->rng_offset : rps->rng_offset;
 
     /* Characters (team_id is 0 outside Teams). */
-    for (int i = 0; i < 2; ++i) {
+    for (int i = 0; i < nplayers; ++i) {
         const slippi_selections *s = ordered[i];
         if (!s || !s->is_character_selected) continue;
         b[0x60 + s->player_idx * 0x24] = s->character_id;
@@ -131,8 +141,10 @@ static void build_match_block(unsigned char *b, unsigned *rng_out, unsigned *alt
         counts[k] += 1;
     }
     b[0x8] = 0;                       /* not Teams */
-    b[0x61 + 2 * 0x24] = 3;           /* p3/p4: no player */
-    b[0x61 + 3 * 0x24] = 3;
+    for (int i = 0; i < 4; ++i) {
+        b[0x61 + i * 0x24] = i < nplayers ? 0 : 3;     /* human, or no player */
+        if (i < nplayers) b[0x65 + i * 0x24] = (unsigned char)i;   /* spawn point */
+    }
     b[0xE] = (unsigned char)(stage_id >> 8);
     b[0xF] = (unsigned char)stage_id;
     b[2] &= 0xF7;                     /* DIRECT: vanilla pause allowed */
@@ -165,14 +177,55 @@ static uint32_t crc32_bytes(const unsigned char *p, int n)
     return ~c;
 }
 
+/* Local wireless: the host builds the block once from every console's selections and the module sends it. */
+static int local_match_block(unsigned char *out)
+{
+    slippi_state *g = &g_slippi;
+    unsigned char blk[0x140];
+    if (g->status != SLIPPI_STATUS_CONNECTED) return 0;
+    if (!slippi_local_start_blob(blk, sizeof(blk))) {
+        slippi_selections sel[4];
+        const slippi_selections *ordered[4];
+        int n = slippi_local_players();
+        if (!g->match.is_host || !slippi_local_host_ready(sel)) return 0;
+        for (int i = 0; i < 4; ++i) ordered[i] = i < n ? &sel[i] : NULL;
+        unsigned rng, alt;
+        build_match_block(blk, &rng, &alt, ordered, n, g->local_sel.rng_offset);
+        blk[0x138] = (unsigned char)(rng >> 24);
+        blk[0x139] = (unsigned char)(rng >> 16);
+        blk[0x13A] = (unsigned char)(rng >> 8);
+        blk[0x13B] = (unsigned char)rng;
+        blk[0x13C] = 0;
+        blk[0x13D] = (unsigned char)g->cfg.delay;
+        blk[0x13E] = (unsigned char)alt;
+        blk[0x13F] = 0;
+        slippi_local_host_start(blk);
+    }
+    sp_log("match block crc32 0x%08x: %d players, stage 0x%02x%02x, chars %u/%u/%u/%u, delay %u", (unsigned)crc32_bytes(blk, 0x138),
+           slippi_local_players(), blk[0xE], blk[0xF], blk[0x60], blk[0x84], blk[0xA8], blk[0xCC], blk[0x13D]);
+    if (out) {
+        memcpy(out, blk, sizeof(blk));
+        out[0x13C] = (unsigned char)g->match.local_index;
+    }
+    return 1;
+}
+
 int slippi_net_match_block(unsigned char *out)
 {
     slippi_state *g = &g_slippi;
     sp_lock();
+    if (g->local_mode) {
+        int r = local_match_block(out);
+        sp_unlock();
+        return r;
+    }
     int ready = g->status == SLIPPI_STATUS_CONNECTED && g->local_sel.is_character_selected && g->remote_sel.is_character_selected;
     if (ready && out) {
         unsigned rng, alt;
-        build_match_block(out, &rng, &alt);
+        const slippi_selections *lps = &g->local_sel, *rps = &g->remote_sel, *ordered[4] = {NULL, NULL, NULL, NULL};
+        if (lps->player_idx < 2) ordered[lps->player_idx] = lps;
+        if (rps->player_idx < 2) ordered[rps->player_idx] = rps;
+        build_match_block(out, &rng, &alt, ordered, 2, g->match.is_host ? lps->rng_offset : rps->rng_offset);
         out[0x138] = (unsigned char)(rng >> 24);
         out[0x139] = (unsigned char)(rng >> 16);
         out[0x13A] = (unsigned char)(rng >> 8);
@@ -241,12 +294,58 @@ static int should_skip(int frame, int *disconnect)
     return 0;
 }
 
+/* Local wireless: our pad goes to the host, the answer is the host's bundle for this frame (all four pads and
+ * the CPU mask). out: 4 x 12 pad bytes (8 on the wire, 4 zero), out[48] = CPU mask, out[49] = number of consoles. */
+static int local_send_inputs(int frame, int delay, int finalized_frame, unsigned checksum, const unsigned char *local_pad12,
+                             unsigned char *out)
+{
+    slippi_state *g = &g_slippi;
+    if (frame == 1 && g->last_queued_frame != 1 + delay) {
+        slippi_start_game_locked();
+        stall_frames = frames_to_skip = is_currently_skipping = 0;
+    }
+    int cf = g->cfg.send_checksum ? finalized_frame : 0;
+    unsigned ck = g->cfg.send_checksum ? checksum : 0;
+    if (frame + delay > g->last_queued_frame) {
+        /* Dolphin handleSendInputs: zero pads for the delay frames at the start. */
+        if (g->last_queued_frame == 0)
+            for (int f = 1; f < frame + delay; ++f) slippi_local_submit(f, NULL, 0, 0);
+        slippi_local_submit(frame + delay, local_pad12, cf, ck);
+        g->last_queued_frame = frame + delay;
+    }
+    unsigned char pads[4][8], mask = 0;
+    if (!slippi_local_bundle(frame, pads, &mask)) {
+        if (stall_frames++ == 0) stall_since_us = sp_time_us();
+        if (sp_time_us() - stall_since_us > 5000000ull + (uint64_t)g->cfg.local_timeout_ms * 1000ull) {   /* backstop: past the host's own drop timeout */
+            sp_log("force-disconnecting after a long stall (frame %d)", frame);
+            slippi_set_status(SLIPPI_STATUS_DISCONNECTED);
+            snprintf(g->error, sizeof(g->error), "No inputs from the host");
+            stall_frames = 0;
+            return 3;
+        }
+        return 2;
+    }
+    stall_frames = 0;
+    if (out) {
+        memset(out, 0, 50);
+        for (int i = 0; i < 4; ++i) memcpy(out + 12 * i, pads[i], 8);
+        out[48] = mask;
+        out[49] = (unsigned char)slippi_local_players();
+    }
+    return 1;
+}
+
 int slippi_net_send_inputs(int frame, int delay, int finalized_frame, unsigned checksum, const unsigned char *local_pad12,
                            unsigned char *remote_pad12_out)
 {
     slippi_state *g = &g_slippi;
     sp_lock();
     if (g->status != SLIPPI_STATUS_CONNECTED) { sp_unlock(); return 3; }
+    if (g->local_mode) {
+        int rc = local_send_inputs(frame, delay, finalized_frame, checksum, local_pad12, remote_pad12_out);
+        sp_unlock();
+        return rc;
+    }
     /* Dolphin runs StartSlippiGame on every frame-1 call; nothing is queued yet then. */
     /* A new game: frame 1 again (the first call queues frames 1..1+delay,
      * so retries of frame 1 see last_queued_frame == 1 + delay). The old

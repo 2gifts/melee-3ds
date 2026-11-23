@@ -24,7 +24,6 @@ static int same_addr(const ENetPeer *a, const ENetPeer *b) { return a->address.h
 
 static slippi_conn *find_conn(ENetPeer *peer)
 {
-    if (!peer) return NULL;
     for (int i = 0; i < MAX_PEERS; ++i)
         if (g_slippi.conns[i].peer == peer) return &g_slippi.conns[i];
     return NULL;
@@ -42,7 +41,6 @@ static slippi_conn *add_conn(ENetPeer *peer)
 static int live_conn_count(void)
 {
     int n = 0;
-    if (g_slippi.local_mode) return g_slippi.status == SLIPPI_STATUS_CONNECTED;
     for (int i = 0; i < MAX_PEERS; ++i) if (g_slippi.conns[i].peer && !g_slippi.conns[i].disconnected) ++n;
     return n;
 }
@@ -60,7 +58,6 @@ void slippi_p2p_clear(void)
     memset(&g->local_sel, 0, sizeof(g->local_sel));
     memset(&g->remote_sel, 0, sizeof(g->remote_sel));
     g->remote_sel_count = 0;
-    g->last_remote_sel_valid = g->sel_resend_pending = 0;
     g->chat_received = 0;
     g->ping_us = 0;
     g->offset_count = g->offset_idx = 0;
@@ -112,7 +109,6 @@ void slippi_p2p_start(void)
 static void send_packet(const uint8_t *data, size_t len)
 {
     slippi_state *g = &g_slippi;
-    if (g->local_mode) { slippi_local_send(data, len); return; }
     ENetPeer *target = g->primary;
     slippi_conn *c = target ? find_conn(target) : NULL;
     if (c && c->disconnected) {
@@ -143,19 +139,12 @@ static void write_selections(uint8_t out[14], const slippi_selections *s)
     out[13] = s->alt_stage_mode;
 }
 
-void slippi_p2p_resend_selections(void) { send_packet(g_slippi.sel_pkt, sizeof(g_slippi.sel_pkt)); }
-
 void slippi_p2p_send_selections(void)
 {
     uint8_t pkt[14];
     write_selections(pkt, &g_slippi.local_sel);
     send_packet(pkt, sizeof(pkt));
-    if (g_slippi.host) enet_host_flush(g_slippi.host);
-    if (g_slippi.local_mode && g_slippi.local_sel.is_character_selected) {
-        memcpy(g_slippi.sel_pkt, pkt, sizeof(pkt));
-        g_slippi.sel_resend_pending = 1;
-        g_slippi.sel_resend_us = sp_time_us();
-    }
+    enet_host_flush(g_slippi.host);
     sp_log("p2p: sent selections char %u color %u sel %u stage %u sel %u rng 0x%x", pkt[1], pkt[2], pkt[3],
            g_slippi.local_sel.stage_id, pkt[7], (unsigned)g_slippi.local_sel.rng_offset);
 }
@@ -167,7 +156,7 @@ void slippi_p2p_send_chat(int id)
     put32(pkt + 1, (uint32_t)id);
     pkt[5] = (uint8_t)g_slippi.match.local_index;
     send_packet(pkt, sizeof(pkt));
-    if (g_slippi.host) enet_host_flush(g_slippi.host);
+    enet_host_flush(g_slippi.host);
 }
 
 /* SendSlippiPad(nullptr) body: prune acked pads and send the rest. */
@@ -202,7 +191,7 @@ void slippi_p2p_send_pads(void)
         ++g->stats[SLIPPI_STAT_DROPPED_TEST];   /* test hook: pretend the datagram was lost */
     else {
         send_packet(pkt, len);
-        if (g->host) enet_host_flush(g->host);
+        enet_host_flush(g->host);
     }
     ++g->stats[SLIPPI_STAT_PAD_PACKETS_SENT];
     uint64_t t = sp_time_us();
@@ -222,7 +211,6 @@ void slippi_p2p_send_pads(void)
 void slippi_p2p_disconnect(void)
 {
     slippi_state *g = &g_slippi;
-    if (g->local_mode) { slippi_local_close(); return; }
     for (int i = 0; i < MAX_PEERS; ++i)
         if (g->conns[i].peer && !g->conns[i].disconnected) {
             enet_peer_disconnect(g->conns[i].peer, g->disconnect_reason);
@@ -266,7 +254,7 @@ static void on_pad(const uint8_t *d, size_t len, ENetPeer *peer)
     /* Several live connections to the same player: the lower port keeps this one. */
     slippi_conn *self = find_conn(peer);
     int live = 0;
-    for (int i = 0; peer && i < MAX_PEERS; ++i)
+    for (int i = 0; i < MAX_PEERS; ++i)
         if (g->conns[i].peer && !g->conns[i].disconnected && same_addr(g->conns[i].peer, peer)) ++live;
     if (self && !self->disconnected && live > 1 && g->match.local_index < port) {
         g->primary = peer;
@@ -297,8 +285,6 @@ static void on_pad(const uint8_t *d, size_t len, ENetPeer *peer)
     if (inputs_to_copy > SLIPPI_MAX_PAD_FRAMES_IN) { sp_log("p2p: pad packet with too many frames (%lld)", (long long)inputs_to_copy); return; }
     ++g->stats[SLIPPI_STAT_PAD_PACKETS_RECEIVED];
     g->last_receive_us = now;
-    /* The peer is playing, so it has our selections. */
-    if (g->has_game_started) g->sel_resend_pending = 0;
     if (inputs_to_copy > 1 && g->remote_head_frame > 0) ++g->stats[SLIPPI_STAT_PAD_GAPS];
     if (inputs_to_copy <= 0) ++g->stats[SLIPPI_STAT_PAD_PACKETS_STALE];
     for (int64_t i = inputs_to_copy - 1; i >= 0; --i) {
@@ -316,11 +302,8 @@ static void on_pad(const uint8_t *d, size_t len, ENetPeer *peer)
         ack[0] = SLIPPI_MSG_PAD_ACK;
         put32(ack + 1, (uint32_t)frame);
         ack[5] = (uint8_t)g->match.local_index;
-        if (!peer) slippi_local_send(ack, sizeof(ack));
-        else {
-            ENetPacket *p = enet_packet_create(ack, sizeof(ack), ENET_PACKET_FLAG_UNSEQUENCED);
-            if (p && enet_peer_send(peer, 2, p) != 0) enet_packet_destroy(p);
-        }
+        ENetPacket *p = enet_packet_create(ack, sizeof(ack), ENET_PACKET_FLAG_UNSEQUENCED);
+        if (p && enet_peer_send(peer, 2, p) != 0) enet_packet_destroy(p);
         ++g->stats[SLIPPI_STAT_ACKS_SENT];
     }
 }
@@ -348,14 +331,6 @@ static void on_selections(const uint8_t *d, size_t len)
 {
     slippi_state *g = &g_slippi;
     if (len < 14) { sp_log("p2p: invalid selections packet (%u bytes)", (unsigned)len); return; }
-    /* Local wireless re-sends selections until the peer's pads arrive; a repeat
-     * must not reset the input queues. (rng_offset is fresh per call, so a real
-     * update never matches.) */
-    if (g->local_mode) {
-        if (g->last_remote_sel_valid && !memcmp(g->last_remote_sel, d, 14)) return;
-        memcpy(g->last_remote_sel, d, 14);
-        g->last_remote_sel_valid = 1;
-    }
     slippi_selections s;
     s.character_id = d[1];
     s.character_color = d[2];
@@ -409,20 +384,6 @@ static void on_data(const uint8_t *d, size_t len, ENetPeer *peer)
         case SLIPPI_MSG_COMPLETE_STEP: case SLIPPI_MSG_SYNCED_STATE: break; /* ranked only */
         default: sp_log("p2p: unknown message 0x%02x (%u bytes)", d[0], (unsigned)len); break;
     }
-}
-
-void slippi_p2p_on_data(const uint8_t *d, size_t len) { on_data(d, len, NULL); }
-
-void slippi_p2p_local_connected(const char *peer_name)
-{
-    slippi_state *g = &g_slippi;
-    snprintf(g->match.remote_name, sizeof(g->match.remote_name), "%s", peer_name);
-    g->match.remote_code[0] = 0;
-    g->p2p_connected = 1;
-    slippi_set_status(SLIPPI_STATUS_CONNECTED);
-    g->last_receive_us = sp_time_us();
-    sp_log("local: connected to '%s'; we are player index %d, decider %d", peer_name, g->match.local_index, g->match.is_host);
-    slippi_p2p_send_selections();
 }
 
 static void became_connected(void)

@@ -59,6 +59,7 @@ void mp_slippi_online_match_exit(void);
 void mp_slippi_record_online_begin(void);
 void mp_slippi_record_online_frame(int engine_frame);
 void mp_slippi_record_online_inputs(const unsigned char* port0, const unsigned char* port1, unsigned checksum);
+void mp_slippi_record_online_inputs_ports23(const unsigned char* port2, const unsigned char* port3);
 void mp_slippi_record_online_end(void);
 /* The menu flow (online_mode.c): take the negotiated match block (1 = ready),
  * this console's port index in it, the files a match needs. */
