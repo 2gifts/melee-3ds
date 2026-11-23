@@ -8,6 +8,7 @@
  * All functions run with the global lock held. */
 #include "slippi_internal.h"
 #include "localwireless.h"
+#include "slippi_lobby.h"
 #include "lw_platform.h"
 #include <stdarg.h>
 #include <stdio.h>
@@ -29,6 +30,16 @@ void lw_platform_log(const char *fmt, ...)
 
 #define PAD_BYTES 8
 #define SELECTIONS_BYTES 13
+
+/* ---- the group lobby (cfg.local_lobby): the host's state, or the host's snapshot on a client ---- */
+static lobby_host host_lobby;       /* host: the truth */
+static lobby_state view;            /* everyone: what the lobby looks like now (the host's own copy included) */
+static int view_valid;
+static unsigned view_version;       /* lw_lobby_version of `view` (clients) */
+static int match_pending;           /* host: the stage was picked; start the game once the module is free */
+static int sudden_pending;          /* host: unused until sudden death */
+
+static int lobby_mode(void) { return g_slippi.local_mode && g_slippi.cfg.local_lobby; }
 
 void slippi_local_start(int host)
 {
@@ -59,6 +70,14 @@ void slippi_local_start(int host)
 #endif
     c.port = g->cfg.local_port;
     c.test_drop_pct = g->cfg.test_drop_pct;
+    if (g->cfg.local_lobby) {
+        c.lobby = 1;
+        c.browse = !host;
+        match_pending = sudden_pending = 0;
+        view_valid = 0;
+        view_version = 0;
+        if (host) lobby_host_init(&host_lobby, 1);
+    }
     sp_log("local: %s", host ? "creating a game" : "looking for a game");
     if (lw_open(&c, err, sizeof(err)) != 0) {
         slippi_fail("%s", err[0] ? err : "Local wireless is unavailable");
@@ -68,7 +87,152 @@ void slippi_local_start(int host)
     slippi_set_status(SLIPPI_STATUS_SEARCHING);
 }
 
-void slippi_local_close(void) { lw_close(); }
+void slippi_local_close(void)
+{
+    lw_close();
+    view_valid = 0;
+    match_pending = 0;
+}
+
+/* ---- the group lobby ---- */
+
+/* The host's lobby state goes to every console, and into the beacon (so a console browsing sees who is here). */
+static void lobby_publish(void)
+{
+    uint8_t b[LW_MAX_LOBBY];
+    int n = lobby_encode(&host_lobby.st, b, sizeof(b));
+    if (n <= 0) return;
+    lw_host_set_lobby(b, n);
+    lw_host_set_beacon(b, n);
+    view = host_lobby.st;
+    view_valid = 1;
+}
+
+/* Host: the stage is picked, so build the block from the lobby and start the game (once the module is free). */
+static int lobby_start_match(void)
+{
+    slippi_state *g = &g_slippi;
+    unsigned char blk[LOBBY_BLOCK_SIZE];
+    lobby_build_block(blk, &host_lobby.st, sp_random() & 0xFFFF, g->cfg.delay);
+    if (lw_host_start(blk, sizeof(blk)) != 0) return 0;        /* -2: the last game is still ending; try again */
+    lobby_host_match_began(&host_lobby);
+    sp_log("local: starting a match: stage 0x%02x, %d consoles present", host_lobby.st.stage, __builtin_popcount(lw_present()));
+    lobby_publish();
+    return 1;
+}
+
+static void lobby_service(void)
+{
+    slippi_state *g = &g_slippi;
+    if (g->match.is_host) {
+        int flags = lobby_host_sync(&host_lobby, lw_present());
+        uint8_t cmd[LW_MAX_COMMAND];
+        int from, n;
+        while ((n = lw_poll_command(&from, cmd, sizeof(cmd))) > 0) flags |= lobby_host_command(&host_lobby, from, cmd, n);
+        if (flags & LOBBY_START_MATCH) match_pending = 1;
+        if (flags & LOBBY_CHANGED) lobby_publish();
+        if (match_pending && lobby_start_match()) match_pending = 0;
+        if (!view_valid) lobby_publish();
+    } else {
+        unsigned v = lw_lobby_version();
+        if (v != view_version || !view_valid) {
+            uint8_t b[LW_MAX_LOBBY];
+            int n = lw_get_lobby(b, sizeof(b));
+            if (n > 0 && lobby_decode(&view, b, n) == 0) view_valid = 1;
+            view_version = v;
+        }
+    }
+}
+
+/* The match is over on this console (back to the CSS). */
+void slippi_local_game_end(void)
+{
+    lw_game_end();
+    if (lobby_mode() && g_slippi.match.is_host) {
+        lobby_host_match_over(&host_lobby);
+        lobby_publish();
+    }
+}
+
+int slippi_local_lobby_view(lobby_state *out)
+{
+    if (!lobby_mode() || !view_valid) return 0;
+    if (out) *out = view;
+    return 1;
+}
+unsigned slippi_local_present(void) { return lw_present(); }
+int slippi_local_signal(int idx) { return lw_signal(idx); }
+int slippi_local_in_match(void) { return lw_in_match(); }
+int slippi_local_match_running(void) { return lw_match_running(); }
+
+/* What this console does to the lobby: the host edits its own state, a client asks the host. */
+void slippi_local_set_door(int slot, const lobby_slot *l)
+{
+    if (!lobby_mode()) return;
+    if (g_slippi.match.is_host) {
+        if (lobby_host_set_door(&host_lobby, slot, l)) lobby_publish();
+        return;
+    }
+    uint8_t c[LW_MAX_COMMAND];
+    lw_send_command(c, lobby_cmd_door(c, slot, l));
+}
+
+void slippi_local_press_start(void)
+{
+    if (!lobby_mode()) return;
+    if (g_slippi.match.is_host) {
+        if (lobby_host_start(&host_lobby, g_slippi.match.local_index < 0 ? 0 : g_slippi.match.local_index)) lobby_publish();
+        return;
+    }
+    uint8_t c[LW_MAX_COMMAND];
+    lw_send_command(c, lobby_cmd_start(c));
+}
+
+void slippi_local_pick_stage(int stage, int alt_stage)
+{
+    if (!lobby_mode()) return;
+    if (g_slippi.match.is_host) {
+        int f = lobby_host_pick_stage(&host_lobby, stage, alt_stage);
+        if (f & LOBBY_START_MATCH) match_pending = 1;
+        if (f) lobby_publish();
+        return;
+    }
+    uint8_t c[LW_MAX_COMMAND];
+    lw_send_command(c, lobby_cmd_stage(c, stage, alt_stage));
+}
+
+void slippi_local_stage_back(void)
+{
+    if (!lobby_mode()) return;
+    uint8_t c[LW_MAX_COMMAND];
+    int n = lobby_cmd_back(c);
+    if (g_slippi.match.is_host) {
+        if (lobby_host_command(&host_lobby, 0, c, n)) lobby_publish();
+        return;
+    }
+    lw_send_command(c, n);
+}
+
+void slippi_local_set_rules(const lobby_rules *r)
+{
+    if (!lobby_mode() || !g_slippi.match.is_host) return;     /* only the host sets the rules */
+    if (lobby_host_set_rules(&host_lobby, r)) lobby_publish();
+}
+
+/* ---- the games nearby (a console that is not hosting) ---- */
+int slippi_local_scan_count(void) { return lobby_mode() ? lw_scan_count() : 0; }
+
+int slippi_local_scan_get(int i, char *host, int host_len, int *players, lobby_state *out)
+{
+    lw_net n;
+    if (!lobby_mode() || lw_scan_get(i, &n) != 0) return -1;
+    if (host && host_len > 0) snprintf(host, (size_t)host_len, "%s", n.host);
+    if (players) *players = n.players;
+    if (out && lobby_decode(out, n.data, n.len) != 0) memset(out, 0, sizeof(*out));
+    return 0;
+}
+
+int slippi_local_join(int i) { return lobby_mode() ? lw_join(i) : -1; }
 
 void slippi_local_service(void)
 {
@@ -84,6 +248,7 @@ void slippi_local_service(void)
         slippi_set_status(SLIPPI_STATUS_DISCONNECTED);
         return;
     }
+    if (lobby_mode() && g->status == SLIPPI_STATUS_CONNECTED) lobby_service();
     if (g->status == SLIPPI_STATUS_SEARCHING && st == LW_CONNECTED) {
         g->match.local_index = lw_my_index();
         g->match.player_count = lw_players();

@@ -6,6 +6,7 @@ credentials.
     python tools/slippi/net_test.py pc-client    # fake MM + fake peer + PC build of the 3DS self-test
     python tools/slippi/net_test.py local-pair   # two PC self-tests over the local wireless stand-in (loopback UDP)
     python tools/slippi/net_test.py local-quad --players 4 [--crash 3:200] [--drop 50]   # host + 1..3 clients; --crash PLAYER:FRAME makes that client vanish
+    python tools/slippi/net_test.py local-lobby --players 3 [--games 2] [--drop 30]   # the Melee group lobby: join, doors, Start, stage, two games
     python tools/slippi/net_test.py azahar DSX   # fake MM + fake peer + the 3DS self-test in Azahar
 Options: --frames N, --drop PCT (fake peer drops that share of its pad
 packets), --delay-a/--delay-b, --mm-port, --seconds (emulator run time),
@@ -109,7 +110,7 @@ def local_pair(args, out):
     return 0 if ok else 1
 
 
-def local_quad(args, out):
+def local_quad(args, out, lobby=False):
     """Host plus players-1 clients over the loopback stand-in. --crash N:F makes client N (2..4) vanish without a
     goodbye at frame F (or N:F for the host as 1:F); the others must agree on every bundle and the CPU frame."""
     n = args.players
@@ -124,6 +125,10 @@ def local_quad(args, out):
             folder.mkdir(parents=True)
             lines = [f'opponent={"@host" if i == 0 else "@join"}', f'delay={args.delay_a}', 'selftest=1',
                      f'selftest_frames={args.frames}', f'local_port={args.mm_port + 3000}', f'local_players={n}']
+            if lobby:
+                lines += ['local_lobby=1', f'selftest_games={args.games}']
+                if args.group:
+                    lines.append('local_group=1')   # join through the Melee -> Group menu code, not opponent=@...
             if args.drop:
                 lines.append(f'test_drop_pct={args.drop}')
             if i + 1 in crash:
@@ -148,7 +153,7 @@ def local_quad(args, out):
         print(tail(path, 'selftest:', 4))
         for line in text.splitlines():
             if 'bundle hash' in line:
-                hashes[path.name] = line.split('bundle hash')[1].split(',')[0].strip()
+                hashes[path.name] = (hashes.get(path.name, '') + ' ' + line.split('bundle hash')[1].split(',')[0].strip()).strip()
     survivors = [f'player{i + 1}.log' for i in range(n) if i + 1 not in crash]
     ok = all(codes[f'p{i + 1}'] == 0 for i in range(n) if i + 1 not in crash)
     ok = ok and len({hashes.get(x) for x in survivors}) == 1 and None not in {hashes.get(x) for x in survivors}
@@ -159,7 +164,7 @@ def local_quad(args, out):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('mode', choices=('pc-pair', 'pc-client', 'azahar', 'local-pair', 'local-quad'))
+    ap.add_argument('mode', choices=('pc-pair', 'pc-client', 'azahar', 'local-pair', 'local-quad', 'local-lobby'))
     ap.add_argument('dsx', nargs='?')
     ap.add_argument('--frames', type=int, default=600)
     ap.add_argument('--drop', type=int, default=0)
@@ -172,6 +177,8 @@ def main():
     ap.add_argument('--label', default='')
     ap.add_argument('--players', type=int, default=4)
     ap.add_argument('--crash', default='')
+    ap.add_argument('--games', type=int, default=2, help='local-lobby: games played back to back')
+    ap.add_argument('--group', action='store_true', help='local-lobby: meet through the Melee -> Group menu (slippi_group.c)')
     args = ap.parse_args()
 
     out = OUT / (args.mode + (('-' + args.label) if args.label else ''))
@@ -182,6 +189,8 @@ def main():
         return local_pair(args, out)
     if args.mode == 'local-quad':
         return local_quad(args, out)
+    if args.mode == 'local-lobby':
+        return local_quad(args, out, lobby=True)
     mm_cmd = [TOOLS / ('slippi_fake_mm' + EXE), '--port', args.mm_port] + (['--second-is-host'] if args.second_is_host else [])
     procs = {'mm': start(mm_cmd, out / 'fake_mm.log')}
     time.sleep(0.5)

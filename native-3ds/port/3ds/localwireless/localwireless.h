@@ -32,6 +32,10 @@
 #define LW_MAX_SETUP 32
 #define LW_MAX_START 400
 #define LW_NAME_MAX 12
+#define LW_MAX_LOBBY 96        /* bytes of the host's lobby blob */
+#define LW_MAX_COMMAND 24      /* bytes of one console->host command */
+#define LW_MAX_BEACON 200      /* bytes of the host's beacon blob (what a console browsing for games sees) */
+#define LW_MAX_NETS 8
 
 enum { LW_IDLE = 0, LW_SEARCHING, LW_CONNECTED, LW_FAILED, LW_DISCONNECTED };
 
@@ -46,6 +50,9 @@ typedef struct {
     int timeout_ms;        /* silence after which a console has dropped (0 = 2000) */
     int use_udp, port;     /* loopback UDP link instead of UDS (PC tools, development builds); port: host's */
     int test_drop_pct;     /* tests: lose this % of outgoing packets */
+    int browse;            /* 1 (a lobby client): do not join by itself; list the games nearby (lw_scan_*) and join one with lw_join */
+    int lobby;             /* 1: an open lobby (see "lobby" below); `players` is ignored, up to 4 consoles join and leave
+                              at any time, and a host may be alone. 0: the fixed roster of `players` consoles. */
 } lw_config;
 
 /* 0 on success; on failure err holds the text. */
@@ -56,11 +63,48 @@ int lw_poll(void);
 int lw_status(void);
 const char *lw_error(void);           /* why the status is FAILED or DISCONNECTED */
 
-/* Valid once CONNECTED (the roster is complete). Index 0 is the host. */
+/* Valid once CONNECTED. Index 0 is the host. In a lobby, the index is the console's network node minus one and
+ * stays the same while it is connected ("console n is port n"); lw_players() is then the highest present index + 1
+ * and lw_present() says which of those are there. */
 int lw_players(void);
 int lw_my_index(void);
 const char *lw_player_name(int idx);  /* the console's name (3DS system name), "" if unknown */
 const char *lw_local_name(void);      /* this console's name, "" before open */
+
+/* ---- browsing for games (cfg.browse, a lobby client) ----
+ * lw_poll keeps a list of the lobbies in range. It keeps its order (new games last; one that goes quiet leaves after a few
+ * scans). lw_join(i) starts joining that game (UDS: blocks for a moment); the status stays SEARCHING until the lobby
+ * arrives, or turns FAILED ("Could not join the game") if it does not within a few seconds. */
+typedef struct {
+    char host[LW_NAME_MAX];     /* the host console's name */
+    int players, max;           /* consoles in the lobby / most it takes */
+    int len;
+    uint8_t data[LW_MAX_BEACON];
+} lw_net;
+int lw_scan_count(void);
+int lw_scan_get(int i, lw_net *out);    /* 0 ok, -1 no such game */
+int lw_join(int i);                     /* 0: joining; -1: failed (lw_error says why), still browsing */
+int lw_browsing(void);                  /* 1 until lw_join succeeds */
+void lw_host_set_beacon(const uint8_t *blob, int len);   /* host: what browsing consoles see of this lobby (<= LW_MAX_BEACON) */
+
+/* ---- the lobby (cfg.lobby) ----
+ * Before and between games the host owns a small opaque blob (the game's lobby state) that is sent to every console,
+ * together with who is present, their names and a 0..3 signal level (how recently the host heard each console).
+ * Everyone sees the same snapshot (blob, present mask, names, signals) once it arrives; a snapshot is never mixed from
+ * two versions. Consoles send the host commands (reliable, in order, one at a time). While a game runs, only consoles
+ * that are not in it (late joiners) keep receiving the lobby, so the host can show them a status. */
+unsigned lw_present(void);                        /* bit i: console i is here (all of them in a fixed-roster session) */
+int lw_signal(int idx);                           /* 0..3, 3 = good; 0 if absent */
+void lw_host_set_lobby(const uint8_t *blob, int len);    /* host: the lobby blob; sent when it changes */
+int lw_get_lobby(uint8_t *out, int cap);          /* everyone: the newest blob (the host's own included); its length, 0 if none */
+unsigned lw_lobby_version(void);                  /* changes whenever the snapshot (blob, present, names, signals) does */
+int lw_match_running(void);                       /* a game is running (host) / the host says so (clients) */
+int lw_in_match(void);                            /* this console takes part in the running game */
+int lw_send_command(const uint8_t *cmd, int len); /* client: queue a command for the host; 0 ok, -1 if the queue is full */
+int lw_poll_command(int *from, uint8_t *out, int cap);  /* host: the next command (in order per console); its length, 0 if none */
+/* Both: the running game is over on this console. The host keeps re-sending the last bundles until every console has
+ * them (or a few seconds pass), then everyone is back in the lobby. */
+void lw_game_end(void);
 
 /* ---- before the match ---- */
 /* This console's setup blob. A client sends it to the host (re-sent until the start blob arrives); the host
@@ -69,7 +113,8 @@ void lw_set_setup(const uint8_t *blob, int len);
 /* Host: console idx's latest setup blob (idx 0 = the host's own); its length, 0 if none yet. */
 int lw_get_setup(int idx, uint8_t *out, int cap);
 /* Host: start a game with this blob (e.g. the match description). Resets all per-game state, so no input
- * from an earlier game is used, and sends the blob to every client until it has started. */
+ * from an earlier game is used, and sends the blob to every console that is present until it has started.
+ * (A lobby: consoles that join later cannot take part in this game.) */
 int lw_host_start(const uint8_t *blob, int len);
 /* Everyone: the current game's start blob (the host's included); its length, 0 if not here yet. */
 int lw_get_start(uint8_t *out, int cap);

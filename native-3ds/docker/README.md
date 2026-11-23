@@ -70,3 +70,51 @@ The PC tools (`slippi_fake_mm`, `slippi_fake_peer`) are compiled with the image'
 gcc into the container's `/tmp` on every run.
 `docker/emu-test.sh --clean` removes the image. The emulator profiles live in the
 container's `/tmp`, so nothing else is left behind.
+
+## Play in the browser (Azahar over localhost)
+
+Interactive testing of the development build, no emulator installed on the host.
+
+    docker/build.sh ...            # once, as above (the work volume has the disc extract and toolchain)
+    docker/emu-test.sh build-dev   # after every code change: rebuilds melee-development.3dsx into the work volume
+    docker/emu-web.sh              # (re)starts the container on the latest build; open http://localhost:3188
+    docker/emu-web.sh stop         # removes it (the profile and saves live in the container and go with it)
+
+Two consoles in one desktop, for testing the Melee group lobby (they reach each other over the loopback link, which
+needs one network namespace): `MELEE_WEB_INSTANCES=2 MELEE_WEB_RES=1600x900 docker/emu-web.sh`. Console A opens in the
+right half and console B in the left; each has its own save. Host from one (Melee -> Group -> Host) and join from the
+other. Do not run an `emu-test.sh` test at the same time (CPU).
+
+Restart `emu-web.sh` after each `build-dev`: Azahar loads the `.3dsx` when it starts. The game takes about a minute to
+boot. `docker/emu-web.sh logs` shows the container log.
+
+What it is: the stock `linuxserver/azahar` image (a Selkies web desktop on Wayland) with Azahar launched on
+`melee-development.3dsx` from the read-only work volume. Bound to 127.0.0.1 only. At each start the session script
+(`docker/emu-web-session.sh`) writes `slippi/config.ini` (`local_group=1`, `local_udp=1`, `local_port=44100`,
+`prefetch=0`, `delay=2`) and links the builder's Slippi menu files.
+
+Controls (click the page first so it captures the keyboard): the mouse is the touch screen; arrows = circle pad
+(Shift = half tilt); T / G / F / H = D-pad up / down / left / right; A S Z X = A B X Y; Q / W = L / R; M / N = Start /
+Select; 1 / 2 = ZL / ZR. Rebind with `MELEE_KEYS="A=Space,B=Left" docker/emu-web.sh` (buttons are listed in the script
+header).
+
+Speed (learned the hard way, 2026-11-24): **it must use the OpenGL renderer** (the script's default,
+`MELEE_GRAPHICS=opengl`, Azahar's `graphics_api=1`). With `MELEE_GRAPHICS=software` the game ran at about 1.4 engine
+frames a second (2% of full speed) because every pixel is rasterized on the CPU under x86 emulation; it is not a
+resource limit (the Docker VM already has all 8 cores, Rosetta is on, the container uses about 1 GB) and not the game
+(the release build was just as slow). The headless tests (`docker/emu-test.sh`) deliberately use the software renderer
+because they only need correctness, not speed.
+
+Other options (environment variables of `emu-web.sh`):
+- `MELEE_WEB_DSX=/path/to/melee.3dsx` runs another build instead (for example the release `.3dsx` from
+  `melee-3ds-build/out/.../3ds/melee/`, to compare).
+- `MELEE_WEB_GDB=1` opens Azahar's GDB stub inside the container (port 24861) so a script can read the game's memory.
+  To measure speed, copy `tools/gdb_probe.py` into the container and read the `engine_frames` counter twice, a few
+  seconds apart (60 per second is full speed). `docker/emu-test.sh run tools/slippi/emu_speed.py` does the same
+  against a headless instance.
+- `MELEE_WEB_PORT`, `MELEE_WEB_NAME` (to run a second container for two consoles), `MELEE_WEB_RES`, `MELEE_VOLUME`.
+
+Two consoles in the browser: start a second container with another port and name, for example
+`MELEE_WEB_NAME=melee3ds-emu-web2 MELEE_WEB_PORT=3189 docker/emu-web.sh`. UDS between separate emulators does not work
+headless; with `local_udp=1` the consoles meet over the loopback link, which is **not shared between containers**, so
+use one container (or the PC tools) for lobby tests.

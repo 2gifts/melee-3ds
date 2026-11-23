@@ -1,6 +1,7 @@
 /* Native side of the engine bridge (port/include/slippi_net_bridge.h).
  * mp_platform_slippi_net_X (engine, big-endian) -> slippi_net_X (here). */
 #include "slippi_internal.h"
+#include "slippi_lobby.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -51,7 +52,9 @@ int slippi_net_player_name(int idx, char *out, int len)
     if (len <= 0) return 0;
     out[0] = 0;
     sp_lock();
-    if (g_slippi.local_mode) snprintf(out, (size_t)len, "%s", slippi_local_player_name(idx));
+    /* The 3DS name of the console on that port (a group lobby: none where no console is, whatever the door holds). */
+    if (g_slippi.local_mode && (!g_slippi.cfg.local_lobby || (idx >= 0 && idx < 4 && (slippi_local_present() >> idx & 1))))
+        snprintf(out, (size_t)len, "%s", slippi_local_player_name(idx));
     sp_unlock();
     return (int)strlen(out);
 }
@@ -68,33 +71,6 @@ int slippi_net_remote_ready(void)
     return s[2] != 0;
 }
 
-/* Bytes 8 and 9 are 0 as in Slippi Ishiiruka (what Slippi Launcher ships;
- * mainline has 1, 1 there): the PC's replays record 0 at 0x9. */
-/* CEXISlippi::prepareOnlineMatchState's static block: "a VS match with P1 Red
- * Falco vs P2 Red Bowser vs P3 Young Link vs P4 Young Link on Battlefield". */
-static const unsigned char match_block_template[0x138] = {
-    0x32, 0x01, 0x86, 0x4C, 0xC3, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0x6E, 0x00,
-    0x1F, 0x00, 0x00, 0x01, 0xE0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x3F,
-    0x80, 0x00, 0x00, 0x3F, 0x80, 0x00, 0x00, 0x3F, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x14, 0x00, 0x04, 0x01, 0x00, 0x00, 0x00, 0x00, 0x09,
-    0x00, 0x78, 0x00, 0xC0, 0x00, 0x04, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x3F, 0x80, 0x00, 0x00, 0x3F, 0x80, 0x00, 0x00, 0x3F, 0x80, 0x00, 0x00, 0x05, 0x00, 0x04,
-    0x01, 0x00, 0x01, 0x00, 0x00, 0x09, 0x00, 0x78, 0x00, 0xC0, 0x00, 0x04, 0x01, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x3F, 0x80, 0x00, 0x00, 0x3F, 0x80, 0x00, 0x00, 0x3F,
-    0x80, 0x00, 0x00, 0x15, 0x03, 0x04, 0x00, 0x00, 0xFF, 0x00, 0x00, 0x09, 0x00, 0x78, 0x00,
-    0xC0, 0x00, 0x04, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x3F, 0x80, 0x00,
-    0x00, 0x3F, 0x80, 0x00, 0x00, 0x3F, 0x80, 0x00, 0x00, 0x15, 0x03, 0x04, 0x00, 0x00, 0xFF,
-    0x00, 0x00, 0x09, 0x00, 0x78, 0x00, 0xC0, 0x00, 0x04, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x3F, 0x80, 0x00, 0x00, 0x3F, 0x80, 0x00, 0x00, 0x3F, 0x80, 0x00, 0x00,
-    0x21, 0x03, 0x04, 0x00, 0x00, 0xFF, 0x00, 0x00, 0x09, 0x00, 0x78, 0x00, 0x40, 0x00, 0x04,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x3F, 0x80, 0x00, 0x00, 0x3F, 0x80,
-    0x00, 0x00, 0x3F, 0x80, 0x00, 0x00, 0x21, 0x03, 0x04, 0x00, 0x00, 0xFF, 0x00, 0x00, 0x09,
-    0x00, 0x78, 0x00, 0x40, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x3F, 0x80, 0x00, 0x00, 0x3F, 0x80, 0x00, 0x00, 0x3F, 0x80, 0x00, 0x00,
-};
 
 /* Builds the DIRECT 1v1 block exactly as prepareOnlineMatchState does once
  * local and remote are ready (no desync recovery, no overwrite selections).
@@ -105,7 +81,7 @@ static void build_match_block(unsigned char *b, unsigned *rng_out, unsigned *alt
                               unsigned rng_offset)
 {
     slippi_state *g = &g_slippi;
-    memcpy(b, match_block_template, sizeof(match_block_template));
+    memcpy(b, slippi_match_block_template, sizeof(slippi_match_block_template));
 
     /* Stage: first player in port order with a stage selection, else Battlefield. */
     unsigned stage_id = 0x1F, alt_stage_mode = 0;
@@ -187,7 +163,8 @@ static int local_match_block(unsigned char *out)
         slippi_selections sel[4];
         const slippi_selections *ordered[4];
         int n = slippi_local_players();
-        if (!g->match.is_host || !slippi_local_host_ready(sel)) return 0;
+        /* A group lobby starts from the stage pick (slippi_local.c); only the fixed pairing starts here. */
+        if (g->cfg.local_lobby || !g->match.is_host || !slippi_local_host_ready(sel)) return 0;
         for (int i = 0; i < 4; ++i) ordered[i] = i < n ? &sel[i] : NULL;
         unsigned rng, alt;
         build_match_block(blk, &rng, &alt, ordered, n, g->local_sel.rng_offset);
@@ -246,6 +223,14 @@ int slippi_net_match_block(unsigned char *out)
     }
 #endif
     return ready;
+}
+
+/* The match is over (or left) on this console: a group goes back to its lobby. */
+void slippi_net_game_end(void)
+{
+    sp_lock();
+    if (g_slippi.local_mode) slippi_local_game_end();
+    sp_unlock();
 }
 
 void slippi_net_new_game(void)
@@ -401,4 +386,72 @@ int slippi_net_time_offset_us(void)
     int v = slippi_p2p_time_offset();
     sp_unlock();
     return v;
+}
+
+/* ---- the group lobby, for the engine's character select (slippi_lobby.h) ----
+ * One flat buffer, all single bytes, so endianness never matters:
+ *   [0] valid  [1] my console index  [2] this console hosts  [3] consoles present (mask)  [4] phase  [5] starter
+ *   [6] stage picked  [7] mode  [8..9] stage (hi, lo)  [10] alt stage  [11] time mode  [12] stocks  [13] minutes
+ *   [14] items  [15] teams  [16] friendly fire  [17..20] signal 0..3 per console  [21] version (bumps on a change)
+ *   [24 + 16*i ..] door i: kind, fighter, color, team, level, chosen, tag[8], 2 spare */
+#define LOBBY_FLAT 88
+int slippi_lobby_get(unsigned char *out)
+{
+    static unsigned char last[LOBBY_FLAT];
+    static unsigned char version;
+    lobby_state v;
+    memset(out, 0, LOBBY_FLAT);
+    sp_lock();
+    if (!g_slippi.local_mode || !g_slippi.cfg.local_lobby || !slippi_local_lobby_view(&v)) {
+        sp_unlock();
+        return 0;
+    }
+    out[0] = 1;
+    out[1] = (unsigned char)(g_slippi.match.local_index < 0 ? 0 : g_slippi.match.local_index);
+    out[2] = g_slippi.match.is_host ? 1 : 0;
+    out[3] = (unsigned char)slippi_local_present();
+    out[4] = v.phase; out[5] = v.starter; out[6] = v.stage_picked; out[7] = v.mode;
+    out[8] = (unsigned char)(v.stage >> 8); out[9] = (unsigned char)v.stage; out[10] = v.alt_stage;
+    out[11] = v.rules.time_mode; out[12] = v.rules.stocks; out[13] = v.rules.minutes; out[14] = v.rules.items;
+    out[15] = v.rules.teams; out[16] = v.rules.friendly_fire;
+    for (int i = 0; i < 4; ++i) {
+        const lobby_slot *l = &v.slot[i];
+        unsigned char *p = out + 24 + 16 * i;
+        out[17 + i] = (unsigned char)slippi_local_signal(i);
+        p[0] = l->kind; p[1] = l->fighter; p[2] = l->color; p[3] = l->team; p[4] = l->level; p[5] = l->chosen;
+        memcpy(p + 6, l->tag, LOBBY_TAG_BYTES);
+    }
+    sp_unlock();
+    out[21] = version;
+    if (memcmp(out + 3, last + 3, LOBBY_FLAT - 3) != 0) {
+        memcpy(last, out, LOBBY_FLAT);
+        out[21] = last[21] = ++version;
+    }
+    return 1;
+}
+
+/* door: kind, fighter, color, team, level, chosen, tag[8] */
+void slippi_lobby_set_door(int slot, const unsigned char *d)
+{
+    lobby_slot l;
+    memset(&l, 0, sizeof(l));
+    l.kind = d[0]; l.fighter = d[1]; l.color = d[2]; l.team = d[3]; l.level = d[4]; l.chosen = d[5];
+    memcpy(l.tag, d + 6, LOBBY_TAG_BYTES);
+    sp_lock();
+    slippi_local_set_door(slot, &l);
+    sp_unlock();
+}
+
+void slippi_lobby_start(void) { sp_lock(); slippi_local_press_start(); sp_unlock(); }
+void slippi_lobby_stage(int stage, int alt_stage) { sp_lock(); slippi_local_pick_stage(stage, alt_stage); sp_unlock(); }
+void slippi_lobby_back(void) { sp_lock(); slippi_local_stage_back(); sp_unlock(); }
+
+/* r: time mode, stocks, minutes, items, teams, friendly fire (the host's rules; ignored on other consoles). */
+void slippi_lobby_rules(const unsigned char *r)
+{
+    lobby_rules x;
+    x.time_mode = r[0]; x.stocks = r[1]; x.minutes = r[2]; x.items = r[3]; x.teams = r[4]; x.friendly_fire = r[5];
+    sp_lock();
+    slippi_local_set_rules(&x);
+    sp_unlock();
 }

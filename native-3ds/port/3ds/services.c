@@ -63,6 +63,9 @@ void mp_native_pad(void*output){u8*p=output;memset(p,0,48);for(int i=1;i<4;++i)p
     u32 held=key;
 #ifdef MP_SMOKE_TEST
     if(mp_test_keys)button|=mp_native_map_keys(mp_test_keys,battle);
+    /* The circle pad has no key mapping: a held CPAD bit tilts the stick fully (tests steer the CSS hand with it). */
+    if(mp_test_keys&KEY_CPAD_RIGHT)stick.dx=156;if(mp_test_keys&KEY_CPAD_LEFT)stick.dx=-156;
+    if(mp_test_keys&KEY_CPAD_UP)stick.dy=156;if(mp_test_keys&KEY_CPAD_DOWN)stick.dy=-156;
     held|=mp_test_keys;
 #endif
     /* Slippi Direct: the code keyboard takes the controls; locked in, A/B/X/Y

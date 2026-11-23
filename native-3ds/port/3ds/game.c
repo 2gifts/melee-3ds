@@ -86,6 +86,19 @@ void mp_native_log(const char*);
 #include "frame_rate.h"
 static void flush_log(void);
 void mp_native_panic(const char*) __attribute__((noreturn));
+/* CSS spike (tools/slippi_edits/css_spike.py): the engine asks for numbered screenshots and periodic A presses.
+ * No-op outside smoke builds. op 0: screenshot `b` after `a` frames; op 1: press A every 40 frames from `a` frames on. */
+#ifdef MP_SMOKE_TEST
+static struct{unsigned frame,index;}spike_shots[16];static unsigned spike_nshots,spike_keys_from;
+#endif
+void mp_native_css_spike(unsigned op,unsigned a,unsigned b){
+#ifdef MP_SMOKE_TEST
+    if(op==0&&spike_nshots<16){spike_shots[spike_nshots].frame=engine_frames+a;spike_shots[spike_nshots++].index=b;}
+    else if(op==1)spike_keys_from=engine_frames+a;
+#else
+    (void)op;(void)a;(void)b;
+#endif
+}
 static void capture_frame(void){
     static u8*copy;if(!copy)copy=malloc(400*240*3);if(!copy)return;
     C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
@@ -191,6 +204,11 @@ void mp_native_frame_render(void)
 #ifdef MP_SMOKE_TEST
     /* The renderer is idle here: End has acknowledged every queued job. */
     if(mp_test_capture){capture_frame();mp_test_capture=0;}
+    for(unsigned i=0;i<spike_nshots;++i)if(spike_shots[i].index&&engine_frames>=spike_shots[i].frame){
+        char to[64];capture_frame();
+        snprintf(to,sizeof(to),"sdmc:/3ds/melee/shot-%02u.bgr",spike_shots[i].index);remove(to);rename("sdmc:/3ds/melee/engine-top.bgr",to);
+        snprintf(to,sizeof(to),"sdmc:/3ds/melee/shot-%02u-bottom.rgb565",spike_shots[i].index);remove(to);rename("sdmc:/3ds/melee/engine-bottom.rgb565",to);
+        spike_shots[i].index=0;}
 #endif
     previous_tick=mp_native_ticks();mp_renderer_begin();
 }
@@ -201,6 +219,9 @@ void mp_native_frame_main(void)
     extern unsigned mp_native_ticks(void);
     static unsigned previous_tick,samples;static u64 loop_ticks;
     ++engine_frames;mp_log_frame(engine_frames);
+#ifdef MP_SMOKE_TEST
+    {extern volatile u32 mp_test_keys;if(spike_keys_from&&engine_frames>=spike_keys_from)mp_test_keys=(engine_frames%40<4)?KEY_A:0;}
+#endif
     unsigned now=mp_native_ticks();if(previous_tick){loop_ticks+=(u32)(now-previous_tick);++samples;}
     {   /* An engine frame over 50 ms: how much was disc traffic or waiting. */
         extern unsigned mp_file_sd_reads,mp_file_sd_bytes,mp_file_sd_opens,mp_file_sd_open_ticks;extern u64 mp_native_idle_ticks;

@@ -13,6 +13,7 @@ void mp_bottom_loading(uint16_t* pixels, const char* message);
 /* A full-screen message (missing game files); the hint is the last line. */
 void mp_bottom_notice(uint16_t* pixels, const char* title, const char* lead, const char* line1,
                       const char* line2, const char* line3, const char* hint);
+void mp_native_group_notice(int kind);
 void mp_native_bottom_notice(const char* title, const char* lead, const char* line1,
                              const char* line2, const char* line3, const char* hint);
 unsigned mp_bottom_hit(unsigned x, unsigned y);

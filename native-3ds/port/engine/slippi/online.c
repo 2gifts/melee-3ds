@@ -21,6 +21,8 @@
 #include <melee/ft/types.h>
 #include <melee/gm/gm_1A45.h>
 #include <melee/gm/gmvs.h>
+#include <melee/gm/gmvsmelee.h>
+#include <melee/mn/mnname.h>
 #include <melee/gm/types.h>
 #include <melee/lb/lbaudio_ax.h>
 #include <melee/mn/types.h>
@@ -466,6 +468,9 @@ static void exchange_pads(int frame)
         for (i = 0; i < on.nplayers; i++) {
             if (i != on.local_index && (mask & (1u << i)) && !(on.cpu_applied & (1u << i))) {
                 on.cpu_applied |= 1u << i;
+                if (on.block[0x61 + 0x24 * i] != 0) {
+                    continue;   /* a CPU or empty door from the start: nothing to take over (only a Human fighter is) */
+                }
                 take_over_slot(i);
                 logf_("Slippi online: player %d dropped; a level 3 CPU plays from frame %d\n", i + 1, frame, 0);
             }
@@ -834,6 +839,54 @@ int mp_slippi_online_delay(void)
     return on.delay;
 }
 
+/* ---- a group's name tags ----
+ * Every remote slot of the match block keeps tag id 0x78 (none), so nothing here touches this console's save. A remote
+ * player's tag is its 8 bytes of text from the lobby; ifnametag.c asks these two to draw it as vanilla does. */
+static char group_tags[4][12];
+static u8 group_tag_have[4];
+static int group_tag_active;
+
+int mp_slippi_tag_off(int slot)
+{
+    if (Player_GetNametagSlotID(slot) != 0x78) {
+        return 0;
+    }
+    return !(group_tag_active && group_tag_have[slot & 3]);
+}
+
+char* mp_slippi_tag_text(int slot)
+{
+    if (Player_GetNametagSlotID(slot) == 0x78 && group_tag_active && group_tag_have[slot & 3]) {
+        return group_tags[slot & 3];
+    }
+    return GetNameText(Player_GetNametagSlotID(slot));
+}
+
+static void group_tags_begin(StartMeleeData* data)
+{
+    unsigned char lobby[88];
+    int i, j;
+    group_tag_active = 0;
+    memset(group_tag_have, 0, sizeof group_tag_have);
+    if (on.nplayers <= 0 || !mp_platform_slippi_lobby_get(lobby)) {
+        return;
+    }
+    /* this console's own tag keeps its real id (the shared block carries none) */
+    data->players[on.local_index].nametag = gmVsMelee_GetVsData()->start.players[on.local_index].nametag;
+    for (i = 0; i < 4; i++) {
+        const unsigned char* door = lobby + 24 + 16 * i;
+        if (i == on.local_index || door[0] != 0 || door[6] == 0) {
+            continue;   /* only a Human door shows a tag */
+        }
+        for (j = 0; j < 8; j++) {
+            group_tags[i][j] = door[6 + j] == '%' ? '?' : (char) door[6 + j];
+        }
+        group_tags[i][8] = 0;
+        group_tag_have[i] = 1;
+        group_tag_active = 1;
+    }
+}
+
 /* ---- InitOnlinePlay (8016E748) ---- */
 
 static void sync_rng_proc(HSD_GObj* gobj)
@@ -872,6 +925,7 @@ void mp_slippi_online_start_melee(StartMeleeData* data)
         delay = MAX_DELAY;
     }
     on.delay = (u8) delay;
+    group_tags_begin(data);
     on.frame = 1;
     on.delay_index = 0;
     memset(on.delay_buffer, 0, sizeof on.delay_buffer);
@@ -917,6 +971,10 @@ void mp_slippi_online_match_exit(void)
     logf_("Slippi online: %d extra frames run to catch up, %d dropped to wait for the opponent\n",
           (int) on.advances, (int) on.dropped, 0);
     on.active = 0;
+    group_tag_active = 0;
+    if (on.nplayers > 0) {
+        mp_platform_slippi_net_game_end();   /* a group goes back to its lobby: the host reopens the doors and the stage select */
+    }
 }
 
 int mp_slippi_online_active(void)

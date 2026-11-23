@@ -243,6 +243,7 @@ static const MenuHelp menu_help[34]={
     [6]={"REGULAR MATCH","TAKE ON A SOLO RUN","CLASSIC: A SERIES OF BATTLES","ADVENTURE: EXPLORE THE WORLDS","A: CHOOSE MODE   B: 1-P MODE",0},
     [7]={"EVENT MATCH","A CHALLENGE WITH A TWIST","EACH EVENT HAS ITS OWN OBJECTIVE","READ THE OBJECTIVE ON THE TOP SCREEN","A: CHOOSE EVENT   B: BACK",0},
     [9]={"STADIUM","CHASE A PERSONAL BEST","TARGET TEST AND HOME-RUN CONTEST","MULTI-MAN: SURVIVE THE CROWD","A: CHOOSE EVENT   B: 1-P MODE",0},
+    [11]={"MELEE","SOLO OR GROUP","SOLO: PLAY ON THIS CONSOLE","GROUP: PLAY WITH NEARBY 3DS CONSOLES","A: CHOOSE   B: VS MODE",0},
     [12]={"SPECIAL MELEE","CHANGE THE WAY YOU PLAY","TRY STAMINA, GIANT OR TINY MELEE","EACH MODE ADDS ITS OWN BATTLE TWIST","A: CHOOSE MODE   B: VS MODE",0},
     [13]={"MATCH RULES","YOUR MELEE RULES","CHOOSE TIME OR STOCK BATTLES","ITEM SWITCH: FREQUENCY AND TYPES","LEFT / RIGHT: CHANGE   B: BACK",1},
     [15]={"MORE RULES","REFINE YOUR MATCH","STOCK TIMER: LIMIT MATCH LENGTH","PAUSE: ALLOW START TO PAUSE","LEFT / RIGHT: CHANGE   B: BACK",0},
@@ -431,6 +432,7 @@ void mp_bottom_notice(uint16_t* pixels,const char* title,const char* lead,const 
  * lines and the actions; and the connect-code keyboard. Same idiom as the
  * pages above: header, cards with an accent bar, pills, ink/muted/gold. */
 #include "slippi/slippi_ui.h"
+#include "slippi/slippi_group.h"
 static const uint16_t slippi_wait=RGB(60,188,255),slippi_done=RGB(51,255,47),slippi_red=RGB(255,86,86);
 /* Key rectangles: 10-column grid (rows 0-3) and the action row. */
 const short slippi_ui_key_rects[SLIPPI_KEYS][4]={
@@ -578,10 +580,115 @@ static void slippi_code_page(void){
         else pill(r[0],r[1],r[2],r[3],s,small?12:15,active);
     }
 }
+/* ---- Melee -> Solo / Group (port/3ds/slippi/slippi_group.c) ----
+ * Shown on the VS menu once Melee is chosen: Solo or Group, then Host and the games nearby. */
+enum{GP_SOLO_X=8,GP_GROUP_X=164,GP_BTN_Y=44,GP_BTN_W=148,GP_BTN_H=120,GP_BACK_X=8,GP_BACK_Y=180,GP_BACK_W=90,GP_BACK_H=24,
+     GL_HOST_X=8,GL_HOST_Y=36,GL_HOST_W=220,GL_HOST_H=28,GL_BACK_X=236,GL_BACK_W=76,GL_ROW_Y=94,GL_ROW_STEP=30,GL_ROW_H=28};
+/* The Group list (Host, games nearby) is touch-driven. The Solo/Group choice itself is made on the top-screen menu (menu
+ * kind 11) and its bottom page is information only, like the other menus'; the touch buttons only show when the menu files
+ * for that menu are missing (the fallback, on the VS menu). */
+static int group_page(const MPBottomState* s){
+    int page=slippi_group_view()->page;
+    return s->scene==1&&(page==GROUP_PAGE_LIST||(page==GROUP_PAGE_ASK&&s->menu!=11));
+}
+static void group_error(const SlippiGroupView* v,int y){
+    if(v->error[0])fit(14,y,v->error,12,292,slippi_red);
+}
+static void group_ask_page(const SlippiGroupView* v){
+    header("MELEE","VS MODE");
+    rect(GP_SOLO_X,GP_BTN_Y,GP_BTN_W,GP_BTN_H,card_color);rect(GP_SOLO_X,GP_BTN_Y,3,GP_BTN_H,gold);
+    center(GP_SOLO_X+GP_BTN_W/2,GP_BTN_Y+34,"SOLO",24,ink);center(GP_SOLO_X+GP_BTN_W/2,GP_BTN_Y+72,"THIS CONSOLE",11,muted);
+    rect(GP_GROUP_X,GP_BTN_Y,GP_BTN_W,GP_BTN_H,card_color);rect(GP_GROUP_X,GP_BTN_Y,3,GP_BTN_H,slippi_wait);
+    center(GP_GROUP_X+GP_BTN_W/2,GP_BTN_Y+34,"GROUP",24,ink);center(GP_GROUP_X+GP_BTN_W/2,GP_BTN_Y+72,"NEARBY 3DS",11,muted);
+    pill(GP_BACK_X,GP_BACK_Y,GP_BACK_W,GP_BACK_H,"BACK",13,0);
+    center(220,GP_BACK_Y+6,"B: BACK",11,muted);
+    group_error(v,160+4);
+}
+/* The fighters in a game's doors, as "FOX, FALCO". */
+static void group_fighters(const lobby_state* l,char* out,int len){
+    int n=0;out[0]=0;
+    for(int i=0;i<LOBBY_SLOTS;++i){
+        const lobby_slot* d=&l->slot[i];
+        if(d->kind==LOBBY_EMPTY||d->chosen!=1||d->fighter>=26)continue;
+        n+=snprintf(out+n,len-n>0?len-n:0,"%s%s",n?", ":"",names[d->fighter]);
+        if(n>=len-1)break;
+    }
+}
+static void group_list_page(const SlippiGroupView* v){
+    header("GROUP",v->busy?"JOINING":"SEARCHING");
+    pill(GL_HOST_X,GL_HOST_Y,GL_HOST_W,GL_HOST_H,v->busy?"PLEASE WAIT":"HOST A GAME",14,!v->busy);
+    pill(GL_BACK_X,GL_HOST_Y,GL_BACK_W,GL_HOST_H,"BACK",13,0);
+    text(14,72,"AVAILABLE GAMES",12,muted);rect(14,86,292,1,line_color);
+    if(!v->count)center(160,GL_ROW_Y+22,"LOOKING FOR GAMES NEARBY...",12,muted);
+    for(int i=0;i<v->count&&i<GROUP_ROWS;++i){
+        const SlippiGroupRow* r=&v->row[i];char b[64],f[64];int y=GL_ROW_Y+i*GL_ROW_STEP;
+        int busy=r->lobby.phase==LOBBY_MATCH;
+        rect(8,y,304,GL_ROW_H,card_color);rect(8,y,3,GL_ROW_H,busy?line_color:slippi_done);
+        fit(19,y+2,r->host[0]?r->host:"3DS",14,170,ink);
+        snprintf(b,sizeof(b),"%d/4",r->players);right(304,y+2,b,13,gold);
+        group_fighters(&r->lobby,f,sizeof(f));
+        if(busy)right(274,y+3,"IN MATCH",11,muted);
+        fit(19,y+17,f[0]?f:"NO FIGHTERS CHOSEN YET",10,busy?186:260,muted);
+    }
+    group_error(v,208-14);
+}
+/* The connected-players strip: who is on which port, the host, signal and what each is doing. */
+static void group_bars(int x,int y,int level,uint16_t on){
+    for(int b=0;b<3;++b){int h=4+b*3;rect(x+b*5,y+10-h,4,h,b<level?on:line_color);}
+}
+enum{GD_YES_X=34,GD_NO_X=176,GD_Y=120,GD_W=110,GD_H=34};
+static void group_dialog(void){
+    rect(14,70,292,110,card_color);rect(14,70,292,3,gold);
+    center(160,84,"END THE SESSION?",20,ink);
+    center(160,106,"EVERYONE IS DISCONNECTED",11,muted);
+    pill(GD_YES_X,GD_Y,GD_W,GD_H,"END IT",14,1);pill(GD_NO_X,GD_Y,GD_W,GD_H,"STAY",14,0);
+}
+static void group_strip_page(const SlippiGroupStrip* g,unsigned scene){
+    char b[64];
+    header("GROUP",g->phase==LOBBY_MATCH?"IN MATCH":scene==9?"STAGE SELECT":"CHARACTER SELECT");
+    for(int i=0;i<LOBBY_SLOTS;++i){
+        int y=36+i*38;const lobby_slot* d=&g->port[i].door;
+        rect(8,y,304,34,card_color);rect(8,y,4,34,colors[i]);
+        if(g->port[i].present){
+            fit(20,y+3,g->port[i].name[0]?g->port[i].name:"3DS",15,150,i==g->me?gold:ink);
+            if(i==0)right(240,y+5,"HOST",11,gold);
+            group_bars(266,y+5,g->port[i].signal,slippi_done);
+        }else text(20,y+3,"-",15,muted);
+        if(d->kind==LOBBY_EMPTY)snprintf(b,sizeof(b),"%s",g->port[i].present?"CLOSED":"OPEN");
+        else if(g->phase==LOBBY_MATCH)snprintf(b,sizeof(b),"%s%s",d->kind==LOBBY_CPU?"CPU ":"",d->chosen==1&&d->fighter<26?names[d->fighter]:"PLAYING");
+        else if(d->chosen==1&&d->fighter<26)snprintf(b,sizeof(b),"%s%s",d->kind==LOBBY_CPU?"CPU: ":"",names[d->fighter]);
+        else snprintf(b,sizeof(b),"%s",d->kind==LOBBY_CPU?"CPU":"CHOOSING");
+        fit(20,y+19,b,11,270,muted);
+    }
+    if(g->rules.time_mode)snprintf(b,sizeof(b),"TIME %d MIN",g->rules.minutes);else snprintf(b,sizeof(b),"%d STOCKS",g->rules.stocks);
+    if(g->toast[0])center(160,192,g->toast,13,slippi_done);else center(160,192,b,12,gold);
+    if(slippi_group_dialog())group_dialog();
+}
+/* A touch on the Solo/Group pages; 1 if used. */
+static unsigned group_touch(unsigned x,unsigned y){
+    const SlippiGroupView* v=slippi_group_view();
+    slippi_group_note_touch(x,y);
+    if(v->page==GROUP_PAGE_ASK){
+        if(inside(x,y,GP_SOLO_X,GP_BTN_Y,GP_BTN_W,GP_BTN_H))slippi_group_pick_solo();
+        else if(inside(x,y,GP_GROUP_X,GP_BTN_Y,GP_BTN_W,GP_BTN_H))slippi_group_pick_group();
+        else if(inside(x,y,GP_BACK_X,GP_BACK_Y,GP_BACK_W,GP_BACK_H))slippi_group_back();
+        return 1;
+    }
+    if(inside(x,y,GL_HOST_X,GL_HOST_Y,GL_HOST_W,GL_HOST_H))slippi_group_host();
+    else if(inside(x,y,GL_BACK_X,GL_HOST_Y,GL_BACK_W,GL_HOST_H))slippi_group_back();
+    else for(int i=0;i<GROUP_ROWS;++i)if(inside(x,y,8,GL_ROW_Y+i*GL_ROW_STEP,304,GL_ROW_H)){slippi_group_join(i);break;}
+    return 1;
+}
 /* A touch on an online page (not the footer); 1 if used. */
 unsigned mp_bottom_online_touch(unsigned x,unsigned y){
     const SlippiUiView* v=slippi_ui_view();
     if(y>=214)return 0;
+    if(slippi_group_dialog()){
+        if(inside(x,y,GD_YES_X,GD_Y,GD_W,GD_H))slippi_group_dialog_answer(1);
+        else if(inside(x,y,GD_NO_X,GD_Y,GD_W,GD_H))slippi_group_dialog_answer(0);
+        return 1;
+    }
+    if(slippi_group_view()->page!=GROUP_PAGE_NONE)return group_touch(x,y);
     if(v->page!=SLIPPI_PAGE_CODE&&v->page!=SLIPPI_PAGE_CHAT&&inside(x,y,SSS_FROZEN_X,SSS_FROZEN_Y,SSS_FROZEN_W,SSS_FROZEN_H)&&!slippi_online_css_drawn){slippi_ui_alt(1);return 1;}
     if(v->page==SLIPPI_PAGE_CODE){
         for(int i=0;i<SLIPPI_KEYS;++i){const short* r=slippi_ui_key_rects[i];
@@ -612,7 +719,7 @@ unsigned mp_bottom_online_touch(unsigned x,unsigned y){
     if(v->phase==SLIPPI_PHASE_CONNECTED&&inside(x,y,SL_SIDE_X,SL_ACTION_Y,SL_SIDE_W,SL_ACTION_H)){slippi_ui_cancel();return 1;}
     return 1;
 }
-unsigned mp_bottom_online_active(const MPBottomState* s){return slippi_online_page(s)||(s->scene==9&&s->mode==8);}
+unsigned mp_bottom_online_active(const MPBottomState* s){return slippi_group_dialog()||group_page(s)||slippi_online_page(s)||(s->scene==9&&s->mode==8);}
 void mp_bottom_draw(uint16_t* pixels,const MPBottomState* s,unsigned fps,unsigned show_fps,unsigned expanded,unsigned rate,unsigned guide){
     canvas=pixels;background();
     int battle=s->scene==2||s->scene==3||s->scene==4||s->scene==44;
@@ -627,8 +734,13 @@ void mp_bottom_draw(uint16_t* pixels,const MPBottomState* s,unsigned fps,unsigne
             card_labels[0]=online_labels[0];card_labels[1]=online_labels[1];
         }
     }
+    static SlippiGroupStrip grouped;
+    int in_group=(s->scene==8||s->scene==9)&&slippi_group_strip(&grouped);
     if(guide)guide_page();
-    else if(battle||s->scene==5){
+    else if(in_group)group_strip_page(&grouped,s->scene);
+    else if(group_page(s)){
+        if(slippi_group_view()->page==GROUP_PAGE_ASK)group_ask_page(slippi_group_view());else group_list_page(slippi_group_view());
+    }else if(battle||s->scene==5){
         char timer[24];if(s->timer)snprintf(timer,sizeof(timer),"%u:%02u",s->seconds/60,s->seconds%60);else snprintf(timer,sizeof(timer),"%s",s->scene==4?"FREE PLAY":s->teams?"TEAMS":"FREE FOR ALL");
         header(s->scene==5?"MATCH COMPLETE":s->scene==4?"TRAINING":s->scene==3?"SUDDEN DEATH":s->mode==8?"DIRECT":"MELEE",s->scene==5?"RESULTS":timer);
         unsigned count=0;for(unsigned i=0;i<4;++i)if(s->players[i].kind!=3)++count;

@@ -59,6 +59,38 @@ int mp_platform_slippi_net_match_block(unsigned char *out);
 /* Resets pad queues/frame state for the next game (Dolphin StartSlippiGame).
  * send_inputs also does this itself at frame 1. */
 void mp_platform_slippi_net_new_game(void);
+/* Local wireless group: the match is over on this console; the lobby takes over again (the host reopens it for
+ * everyone). */
+void mp_platform_slippi_net_game_end(void);
+
+/* Melee -> Solo / Group (the VS menu and the group lobby; port/3ds/slippi/slippi_group.c). */
+int mp_platform_slippi_group_open(void);          /* Melee chosen: 1 = the Solo/Group page is up (wait), 0 = vanilla */
+int mp_platform_slippi_group_menu(void);          /* 1: the top-screen submenu is on (config local_group_menu=1) */
+int mp_platform_slippi_group_pick(int group);     /* the top-screen menu's choice: 0 Solo, 1 Group */
+int mp_platform_slippi_group_waiting(void);       /* 1 while that page is up */
+int mp_platform_slippi_group_poll(int back);      /* each frame while waiting: 0 wait, 1 Solo, 2 lobby, -1 cancelled */
+int mp_platform_slippi_group_active(void);        /* 1 while a group session is open */
+void mp_platform_slippi_group_leave(void);        /* backed out of the lobby CSS */
+int mp_platform_slippi_group_returning(void);     /* 1 once after leaving: show the VS menu */
+int mp_platform_slippi_group_confirm_leave(void); /* Back on the lobby CSS: 1 = leave now, 0 = "End the session?" is up */
+int mp_platform_slippi_group_confirm_state(void); /* while it is: 0 waiting, 1 yes, 2 no */
+int mp_platform_slippi_group_lost(void);          /* 1 once the session ended under us (the host left or the link failed) */
+int mp_platform_slippi_group_fresh(void);         /* VS menu, once after a lobby: 1 = reset its entering-a-menu state */
+int mp_platform_slippi_group_reopen(void);        /* VS menu, once after that: 1 = the Host/Join page is open again */
+int mp_platform_slippi_group_toast_port(void);    /* the port that toast is about, for its colour */
+int mp_platform_slippi_group_toast(char *out, int len); /* the join/leave toast (text), ms left, 0 when none */
+void mp_platform_group_notice(int kind);          /* a full bottom-screen notice while the engine blocks: 1 stage chosen, loading */
+
+/* The group lobby for the character select (port/3ds/slippi/slippi_bridge.c, slippi_lobby.h). get fills out[0..87]
+ * (layout in slippi_bridge.c) and returns 1 once a lobby exists. A door is kind (0 Human, 1 CPU, 2 empty), fighter,
+ * color, team, level, chosen, tag[8]. The host owns the truth; any console may edit a door, press Start and pick the
+ * stage (the first pick wins); only the host's rules are used. */
+int mp_platform_slippi_lobby_get(unsigned char *out);
+void mp_platform_slippi_lobby_set_door(int slot, const unsigned char *door);
+void mp_platform_slippi_lobby_start(void);
+void mp_platform_slippi_lobby_stage(int stage, int alt_stage);
+void mp_platform_slippi_lobby_back(void);
+void mp_platform_slippi_lobby_rules(const unsigned char *rules);
 
 /* per frame (frames start at 1 each game) */
 /* Like CEXISlippi::handleOnlineInputs for a lockstep peer:

@@ -90,9 +90,23 @@ int mp_slippi_css_quiet(void)
     return mp_slippi_css_online() && css_quiet;
 }
 
+/* Melee -> Group: the lobby is the vanilla four-door CSS, the stage select and the match are vanilla's too (results
+ * skipped, back to the CSS). Only the scene table is this file's, so Back lands on the VS menu (gmmenumode.c). */
+int mp_slippi_group_mode(void)
+{
+    return gm_GetCurrentGameMode() == GM_HANYU_CSS && mp_platform_slippi_group_active();
+}
+
 static void css_enter(GameModeState* state)
 {
     CSSData* css = gm_GetGameModeStateEnterData(state);
+    if (mp_slippi_group_mode()) {
+        gmVsMelee_EnterCss(state, gmVsMelee_GetVsData(), VS_MELEE);
+        css_text = NULL;
+        slpcss_loaded = 0;
+        slpcss = NULL;
+        return;
+    }
     gm_801B06B0(css, 14, saved_ckind, 4, saved_color, 0x78, 0, 0);
     css->vs.start.players[1].slot_type = Gm_PKind_NA;
     lbDvd_SetupVsPreloadCache();
@@ -108,6 +122,16 @@ static void css_exit(GameModeState* state)
     CSSData* css = gm_GetGameModeStateExitData(state);
     s8 ckind;
     u8 color;
+    if (mp_slippi_group_mode()) {
+        int leaving = css->pending_scene_change == 2;
+        gmVsMelee_ExitCss(state, gmVsMelee_GetVsData());   /* a Back sends the game to the menus */
+        if (leaving) {
+            mp_platform_slippi_group_leave();
+        } else {
+            gm_SetNextGameModeStateId(ST_SSS);
+        }
+        return;
+    }
     if (css->pending_scene_change == 2) {
         /* B held: back to the menus. The connection closes. */
         mp_platform_slippi_ui_event(2 /* LEAVE */, 0);
@@ -259,21 +283,70 @@ int mp_slippi_css_frame(int ready, PlayerInitData* local, PlayerInitData* remote
 
 int mp_slippi_css_online(void)
 {
-    return gm_GetCurrentGameMode() == GM_HANYU_CSS;
+    return gm_GetCurrentGameMode() == GM_HANYU_CSS && !mp_platform_slippi_group_active();
 }
 
 static void sss_enter(GameModeState* state)
 {
     SSSData* sss = gm_GetGameModeStateEnterData(state);
+    if (mp_slippi_group_mode()) {
+        gmVsMelee_EnterSss(state, gmVsMelee_GetVsData());
+        return;
+    }
     sss->vs = online_css.vs;
     sss->force_stage_id = -1;
     sss->no_lras = 1;
     sss->start_game = 0;
 }
 
+extern void mp_platform_idle(void);
+int mp_slippi_sss_remote_exit(void);
+int mp_slippi_sss_sent(void);   /* the stage select (tools/slippi_edits/group_css.py) */
+
+/* Block until the host has started the match (the block is then pending), or the lobby went back to the CSS. */
+static int group_wait_match(void)
+{
+    unsigned char lobby[88];
+    int i;
+    mp_platform_group_notice(1);
+    for (i = 0; i < 20000; i++) {
+        mp_platform_slippi_net_poll();
+        if (mp_platform_slippi_group_lost()) {
+            return 0;
+        }
+        if (mp_slippi_online_take_match()) {
+            return 1;
+        }
+        if (mp_platform_slippi_lobby_get(lobby) && lobby[4] == 0) {
+            return 0;
+        }
+        mp_platform_idle();
+    }
+    return 0;
+}
+
 static void sss_exit(GameModeState* state)
 {
     SSSData* sss = gm_GetGameModeStateExitData(state);
+    if (mp_slippi_group_mode()) {
+        int remote = mp_slippi_sss_remote_exit();
+        gmVsMelee_ExitSss(state, gmVsMelee_GetVsData(), ST_CSS);
+        if (!sss->start_game) {
+            return;   /* Back: everyone returns to the lobby's character select */
+        }
+        /* The first pick wins: send ours (the host ignores it if another came first), then wait for the host's
+         * start, whose block carries the stage that was picked. */
+        if (!mp_slippi_sss_sent() && !remote) {
+            mp_platform_slippi_lobby_stage(sss->vs.start.rules.stkind, 0);
+        }
+        if (group_wait_match()) {
+            mp_slippi_prepare_match_files(mp_slippi_online_pending_block());
+            gm_SetNextGameModeStateId(ST_VS);
+        } else {
+            gm_SetNextGameModeStateId(ST_CSS);
+        }
+        return;
+    }
     if (sss->start_game) {
         int stage = sss->vs.start.rules.stkind;
         mp_platform_slippi_ui_event(3 /* STAGE */, stage | (mp_slippi_sss_alt_mode() << 16));
@@ -286,6 +359,10 @@ static void sss_exit(GameModeState* state)
 
 static void vs_enter(GameModeState* state)
 {
+    if (mp_slippi_group_mode()) {
+        gmVsMelee_EnterVs(state, gmVsMelee_GetVsData(), NULL, NULL);
+        return;
+    }
     (void) state;
     gm_LoadAnnouncer();
     mp_platform_slippi_ui_event(5 /* MATCH */, 0);
@@ -294,6 +371,10 @@ static void vs_enter(GameModeState* state)
 /* VSSceneDecide + CheckIfWonLastGame: back to the CSS; who picks next. */
 static void vs_exit(GameModeState* state)
 {
+    if (mp_slippi_group_mode()) {
+        gmVsMelee_ExitVs(state, ST_CSS, ST_CSS);   /* no results screen, back to the lobby */
+        return;
+    }
     MatchExitInfo* exit = gm_GetGameModeStateExitData(state);
     MatchEnd* end = &exit->match_end;
     int local = mp_slippi_online_local_index();

@@ -4,6 +4,7 @@
 #   docker/emu-test.sh build-dev                  # compile the development (smoke) build into the work volume
 #   docker/emu-test.sh pair [online_pair_test.py options]   # two emulated 3DSes play each other
 #   docker/emu-test.sh net  [net_test.py options]            # fake-MM tests (pc-pair, pc-client, azahar DSX)
+#   docker/emu-test.sh spike [css_spike_run.py options]   # CSS door-mirroring spike (build-dev with MELEE_CSS_SPIKE=1 first)
 #   docker/emu-test.sh run SCRIPT [args]          # any script from the repo, same environment
 #   docker/emu-test.sh shell                      # a shell in the test container
 #   docker/emu-test.sh --clean                    # remove the test image (the work volume is build.sh's)
@@ -34,7 +35,9 @@ case "${1:-}" in
         exit 0 ;;
     build-dev)
         docker build -q -f "$HERE/docker/Dockerfile" -t "$BUILDER" "$HERE" >/dev/null
-        exec docker run --rm -t -v "$VOLUME":/work -v "$HERE":/src:ro --entrypoint sh "$BUILDER" -ec '
+        # MELEE_CSS_SPIKE=1 (and MELEE_CSS_SPIKE_*) switch on tools/slippi_edits/css_spike.py; MELEE_BUILD_ARGS adds build_game.py flags.
+        exec docker run --rm -t -e MELEE_CSS_SPIKE -e MELEE_CSS_SPIKE_DOOR -e MELEE_CSS_SPIKE_FIGHTERS -e MELEE_CSS_SPIKE_DX -e MELEE_CSS_SPIKE_DY -e MELEE_CSS_SPIKE_BARX -e MELEE_CSS_SPIKE_SIZE -e MELEE_CSS_SPIKE_BARTEST \
+            -e MELEE_BUILD_ARGS -v "$VOLUME":/work -v "$HERE":/src:ro --entrypoint sh "$BUILDER" -ec '
             SRC=/work/src
             [ -f $SRC/assets/GALE01/manifest.json ] || { echo "No extracted disc in the work volume; run docker/build.sh first." >&2; exit 2; }
             rsync -a --delete --exclude=.toolchain --exclude=build --exclude=dist --exclude=assets \
@@ -42,11 +45,12 @@ case "${1:-}" in
             cd $SRC
             python3 tools/bootstrap.py --portable-linux
             python3 tools/build_game.py --smoke --boot --render-worker --async-presentation \
-                --build-dir build/game-opt --engine-build-dir build/engine-opt
+                --build-dir build/game-opt --engine-build-dir build/engine-opt $MELEE_BUILD_ARGS
             ls -la dist/3ds/melee/melee-development.3dsx build/game-opt/melee.elf' ;;
     pair) script=tools/slippi/online_pair_test.py ;;
     net) script=tools/slippi/net_test.py ;;
     run) script=${2:?run needs a script path (relative to the repo)}; shift ;;
+    spike) script=tools/css_spike_run.py; nobuild=1 ;;   # CSS door-mirroring spike (needs a MELEE_CSS_SPIKE=1 build-dev)
     shell) script= ;;
     *) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2 ;;
 esac
@@ -56,6 +60,7 @@ mkdir -p "$OUT"
 if [ -n "$script" ]; then
     set -- "$script" "$@"
     run='python tools/slippi/build_tools.py && exec python "$@"'
+    [ -z "${nobuild:-}" ] || run='exec python "$@"'
 else
     set --
     run='exec sh'

@@ -159,6 +159,8 @@ static void worker_main(void *arg)
     }
 }
 
+extern int slippi_group_force;
+
 int slippi_init(void)
 {
     slippi_state *g = &g_slippi;
@@ -172,6 +174,11 @@ int slippi_init(void)
     snprintf(path, sizeof(path), "%s/config.ini", sp_data_dir());
     if (slippi_config_load(&g->cfg, path) == 0) sp_log("config: %s loaded", path);
     else sp_log("config: %s not found, using defaults", path);
+    /* The Melee -> Group menu (slippi_group.c) opens a lobby session whatever config.ini says. */
+    if (slippi_group_force) {
+        snprintf(g->cfg.opponent, sizeof(g->cfg.opponent), "@join");
+        g->cfg.local_lobby = 1;
+    }
     /* opponent=@host / @join: local wireless, no account and no sockets. */
     g->local_mode = g->cfg.opponent[0] == '@';
     if (g->local_mode) {

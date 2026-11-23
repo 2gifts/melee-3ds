@@ -76,6 +76,12 @@ def main():
     exe = OUT / ('lw_client' + EXE)   # the module alone (tools/localwireless)
     subprocess.run([cc, *flags, str(ROOT / 'tools/localwireless/lw_client.c'), *map(str, lw_objects), *libs, '-o', str(exe)], check=True)
     print('built', exe)
+    exe = OUT / ('lw_lobby_client' + EXE)   # the module's lobby, alone
+    subprocess.run([cc, *flags, str(ROOT / 'tools/localwireless/lw_lobby_client.c'), *map(str, lw_objects), *libs, '-o', str(exe)], check=True)
+    print('built', exe)
+    exe = OUT / ('lobby_unit' + EXE)   # the Melee lobby rules, alone
+    subprocess.run([cc, *flags, str(ROOT / 'tools/slippi/src/lobby_unit.c'), str(SLIPPI / 'slippi_lobby.c'), '-o', str(exe)], check=True)
+    print('built', exe)
 
 
 if __name__ == '__main__':

@@ -31,6 +31,11 @@ typedef socklen_t sa_len_t;
 #define MSG_HELLO 0xF0   /* client -> host: name */
 #define MSG_WELCOME 0xF1 /* host -> client: u8 node, host name */
 #define MSG_BYE 0xF2     /* either way; a client's is told apart by its address */
+#define MSG_SCAN 0xF3    /* browser -> every port in [base, base+SCAN_PORTS) */
+#define MSG_SCANR 0xF4   /* host -> browser: u8 players, u8 max, 12 name bytes, u8 len, beacon blob */
+#define SCAN_PORTS 8     /* hosts of a browsed lobby use base..base+7 (the stand-in's \"beacon channel\") */
+#define SCAN_FORGET_US 2500000ull
+#define MAX_SCAN 8
 
 static sock_t sock = SOCK_NONE;
 static int is_host, joined, my_node, max_nodes_cfg;
@@ -41,7 +46,12 @@ static unsigned node_mask;
 static struct sockaddr_in host_addr, client_addr[MAX_NODES + 1];
 static char node_names[MAX_NODES + 1][LW_LINK_NAME_MAX];
 static char local_name[32];
-static uint64_t last_hello_us;
+static uint64_t last_hello_us, last_scan_us;
+static int browse, base_port;
+static uint8_t beacon[LW_LINK_APPDATA_MAX];
+static int beacon_len;
+static struct { int port; uint64_t seen_us; lw_net_info info; } scan_list[MAX_SCAN];
+static int scan_n;
 
 const char *lw_udp_local_name(void) { return local_name; }
 unsigned lw_udp_nodes(void) { return node_mask; }
@@ -84,9 +94,14 @@ static int node_of(const struct sockaddr_in *a)
     return 0;
 }
 
-int lw_udp_open(int host, int port, int max_nodes, char *err, int errlen)
+int lw_udp_open(int mode, int port, int max_nodes, char *err, int errlen)
 {
+    int host = mode == LW_LINK_MODE_HOST;
     lw_udp_close();
+    browse = mode == LW_LINK_MODE_BROWSE;
+    base_port = port <= 0 ? DEFAULT_PORT : port;
+    scan_n = beacon_len = 0;
+    last_scan_us = 0;
     if (lw_platform_net_init() != 0) { snprintf(err, (size_t)errlen, "sockets are unavailable"); return -1; }
 #ifdef _WIN32
     { WSADATA d; if (WSAStartup(MAKEWORD(2, 2), &d) != 0) { snprintf(err, (size_t)errlen, "WSAStartup failed"); return -1; } started_net = 1; }
@@ -115,6 +130,7 @@ int lw_udp_open(int host, int port, int max_nodes, char *err, int errlen)
     host_addr.sin_family = AF_INET;
     host_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     host_addr.sin_port = htons((uint16_t)port);
+    if (browse) host_addr.sin_port = 0;   /* chosen by join() */
     if (host) {
         my_node = LW_LINK_HOST_NODE;
         node_mask = 1u << (LW_LINK_HOST_NODE - 1);
@@ -158,6 +174,31 @@ static int pump(uint8_t *buf, size_t cap, int *from_node)
                 snprintf(node_names[my_node], LW_LINK_NAME_MAX, "%s", local_name);
                 node_mask = (1u << (LW_LINK_HOST_NODE - 1)) | (1u << (my_node - 1));
             }
+        } else if (tmp[0] == MSG_SCAN && is_host) {
+            uint8_t r[16 + LW_LINK_APPDATA_MAX];
+            r[0] = MSG_SCANR;
+            r[1] = (uint8_t)__builtin_popcount(node_mask);
+            r[2] = (uint8_t)max_nodes_cfg;
+            memset(r + 3, 0, 12);
+            memcpy(r + 3, local_name, strlen(local_name) < 11 ? strlen(local_name) : 11);
+            r[15] = (uint8_t)beacon_len;
+            memcpy(r + 16, beacon, (size_t)beacon_len);
+            raw_send(&from, r, (size_t)(16 + beacon_len));
+        } else if (tmp[0] == MSG_SCANR && browse && !is_host && n >= 16 && n >= 16 + tmp[15]) {
+            int at = -1, port = (int)ntohs(from.sin_port);
+            for (int k = 0; k < scan_n; ++k) if (scan_list[k].port == port) at = k;
+            if (at < 0 && scan_n < MAX_SCAN) { at = scan_n++; }
+            if (at >= 0) {
+                scan_list[at].port = port;
+                scan_list[at].seen_us = lw_platform_time_us();
+                lw_net_info *in = &scan_list[at].info;
+                memset(in, 0, sizeof(*in));
+                in->players = tmp[1];
+                in->max = tmp[2];
+                memcpy(in->host, tmp + 3, 11);
+                in->len = tmp[15];
+                memcpy(in->data, tmp + 16, (size_t)tmp[15]);
+            }
         } else if (tmp[0] == MSG_BYE) {
             if (is_host) {
                 int node = node_of(&from);
@@ -181,7 +222,28 @@ int lw_udp_poll(char *err, int errlen)
 {
     (void)err; (void)errlen;
     if (sock == SOCK_NONE) return LW_LINK_FAILED;
-    if (!is_host && !joined) {
+    if (!is_host && !joined && browse) {
+        uint64_t now = lw_platform_time_us();
+        if (host_addr.sin_port) {                       /* join() picked one: say hello until it welcomes us */
+            if (now - last_hello_us > 200000) { last_hello_us = now; send_hello(); }
+        } else if (now - last_scan_us > 500000) {
+            last_scan_us = now;
+            uint8_t q = MSG_SCAN;
+            for (int k = 0; k < SCAN_PORTS; ++k) {
+                struct sockaddr_in to = host_addr;
+                to.sin_port = htons((uint16_t)(base_port + k));
+                raw_send(&to, &q, 1);
+            }
+        }
+        uint8_t scratch[1600];
+        int from;
+        pump(scratch, sizeof(scratch), &from);
+        now = lw_platform_time_us();
+        int out = 0;
+        for (int k = 0; k < scan_n; ++k)
+            if (now - scan_list[k].seen_us <= SCAN_FORGET_US) scan_list[out++] = scan_list[k];
+        scan_n = out;
+    } else if (!is_host && !joined) {
         uint64_t now = lw_platform_time_us();
         if (now - last_hello_us > 200000) { last_hello_us = now; send_hello(); }
         uint8_t scratch[1600];
@@ -209,6 +271,36 @@ int lw_udp_recv(uint8_t *buf, size_t cap, int *from)
     int n = pump(buf, cap, &src);
     if (n > 0 && from) *from = src;
     return n;
+}
+
+int lw_udp_scan_count(void) { return browse && !joined ? scan_n : 0; }
+int lw_udp_scan_get(int i, lw_net_info *out)
+{
+    if (!browse || joined || i < 0 || i >= scan_n) return -1;
+    *out = scan_list[i].info;
+    return 0;
+}
+int lw_udp_join(int i, char *err, int errlen)
+{
+    if (sock == SOCK_NONE || !browse || joined || host_addr.sin_port || i < 0 || i >= scan_n) { snprintf(err, (size_t)errlen, "That game is gone"); return -1; }
+    host_addr.sin_port = htons((uint16_t)scan_list[i].port);
+    last_hello_us = 0;
+    return 0;                /* the welcome arrives in poll; the link is READY then */
+}
+void lw_udp_set_beacon(const uint8_t *data, int len)
+{
+    if (len > LW_LINK_APPDATA_MAX) len = LW_LINK_APPDATA_MAX;
+    if (len < 0) len = 0;
+    memcpy(beacon, data, (size_t)len);
+    beacon_len = len;
+}
+void lw_udp_eject(int node)
+{
+    if (!is_host || node < 2 || node > MAX_NODES || !(node_mask & (1u << (node - 1)))) return;
+    uint8_t bye = MSG_BYE;
+    raw_send(&client_addr[node], &bye, 1);
+    node_mask &= ~(1u << (node - 1));
+    node_names[node][0] = 0;
 }
 
 void lw_udp_close(void)

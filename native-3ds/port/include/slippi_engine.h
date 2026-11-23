@@ -68,6 +68,7 @@ int mp_slippi_online_local_index(void);
 void mp_slippi_prepare_match_files(const unsigned char* info);
 struct PlayerInitData;
 int mp_slippi_css_online(void);
+int mp_slippi_group_mode(void);   /* Melee -> Group: the CSS scene is the lobby */
 int mp_slippi_css_frame(int ready, struct PlayerInitData* local, struct PlayerInitData* remote,
                         unsigned trigger, unsigned held);
 int mp_slippi_sss_alt_mode(void);
