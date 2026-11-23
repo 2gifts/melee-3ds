@@ -8,10 +8,10 @@ results screen, and a second game follows. Each console records the match
 Never contacts mm.slippi.gg.
 """
 import argparse
+import os
 import shutil
 import socket
 import struct
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -21,17 +21,15 @@ sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parent))
 import emu  # noqa: E402
 from gdb_probe import packet, receive  # noqa: E402
-from net_test import OUT, TOOLS, USERS, start, write_profile  # noqa: E402
+from net_test import EXE, OUT, TOOLS, USERS, start, write_profile  # noqa: E402
 
 ROOT = emu.ROOT
 KEY_A = 1
 KEY_START = 8
 
 
-def symbols():
-    nm = ROOT / '.toolchain/llvm-mingw-20260908-ucrt-x86_64/bin/llvm-nm.exe'
-    out = subprocess.check_output([str(nm), str(ROOT / 'build/game-opt/melee.elf')], text=True)
-    return {p[2]: int(p[0], 16) for line in out.splitlines() if len(p := line.split()) == 3}
+def symbols(elf):
+    return emu.elf_symbols(elf)
 
 
 def poke(port, address, value):
@@ -77,6 +75,9 @@ def main():
     ap.add_argument('--mm-port', type=int, default=43113)
     ap.add_argument('--code-encoding', default='fullwidth')
     ap.add_argument('--show', action='store_true')
+    ap.add_argument('--dsx', default=os.environ.get('MELEE_DSX') or str(ROOT / 'dist/3ds/melee/melee-development.3dsx'), help='the development build to run ($MELEE_DSX)')
+    ap.add_argument('--elf', default=os.environ.get('MELEE_ELF') or str(ROOT / 'build/game-opt/melee.elf'), help='its ELF, for the test key address ($MELEE_ELF)')
+    ap.add_argument('--graphics', default=None, help='emulator renderer: opengl, vulkan or software (default: opengl on Windows, software elsewhere)')
     ap.add_argument('--mm-hold-first', type=int, default=0, help='ms the fake MM holds the first ticket match reply')
     args = ap.parse_args()
 
@@ -84,10 +85,10 @@ def main():
     if out.exists():
         shutil.rmtree(out)
     out.mkdir(parents=True)
-    sym = symbols()
+    sym = symbols(args.elf)
     keys = sym['mp_test_keys']
-    dsx = (ROOT / 'dist/3ds/melee/melee-development.3dsx').resolve()
-    mm_cmd = [TOOLS / 'slippi_fake_mm.exe', '--port', args.mm_port]
+    dsx = Path(args.dsx).resolve()
+    mm_cmd = [TOOLS / ('slippi_fake_mm' + EXE), '--port', args.mm_port]
     if args.mm_hold_first:
         mm_cmd += ['--delay-first-ms', args.mm_hold_first]
     mm = start(mm_cmd, out / 'fake_mm.log')
@@ -97,7 +98,7 @@ def main():
             ('a', 'a', 'PEER#002', ['character=2', 'stage=32', f'test_inputs=1', f'test_end_frame={args.end_frame}'], 24850),
             ('b', 'b', 'TEST#001', ['character=20', 'stage=31', 'test_inputs=2'], 24851)):
         # Two Vulkan instances can lose the GPU device; OpenGL is stable here.
-        home = emu.prepare('pair-' + name, port, graphics='opengl')
+        home = emu.prepare('pair-' + name, port, graphics=args.graphics or ('opengl' if emu.WINDOWS else None))
         sd = emu.sd(home)
         write_profile(sd / 'slippi', who, opp, args, args.delay,
                       ['color=0', 'stage_select=1', 'auto_match=1', 'record=1', *extra])

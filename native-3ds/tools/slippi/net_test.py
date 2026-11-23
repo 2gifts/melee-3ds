@@ -9,11 +9,13 @@ Options: --frames N, --drop PCT (fake peer drops that share of its pad
 packets), --delay-a/--delay-b, --mm-port, --seconds (emulator run time),
 --second-is-host, --code-encoding ascii.
 
-Build the tools first: python tools/slippi/build_tools.py
+Build the tools first: python tools/slippi/build_tools.py (Windows or Linux/macOS;
+in Docker: docker/emu-test.sh)
 Logs: build/slippi-tests/<mode>/*.log
 """
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -21,8 +23,9 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-TOOLS = ROOT / 'build/slippi-tools'
-OUT = ROOT / 'build/slippi-tests'
+TOOLS = Path(os.environ.get('MELEE_TOOLS_DIR') or ROOT / 'build/slippi-tools')
+OUT = Path(os.environ.get('MELEE_TEST_OUT') or ROOT / 'build/slippi-tests')
+EXE = '.exe' if sys.platform == 'win32' else ''
 
 USERS = {
     'a': {'uid': 'local-test-uid-a', 'playKey': 'dummy-play-key-a', 'connectCode': 'TEST#001', 'displayName': 'Test 3DS',
@@ -91,23 +94,23 @@ def main():
     if out.exists():
         shutil.rmtree(out)
     out.mkdir(parents=True)
-    mm_cmd = [TOOLS / 'slippi_fake_mm.exe', '--port', args.mm_port] + (['--second-is-host'] if args.second_is_host else [])
+    mm_cmd = [TOOLS / ('slippi_fake_mm' + EXE), '--port', args.mm_port] + (['--second-is-host'] if args.second_is_host else [])
     procs = {'mm': start(mm_cmd, out / 'fake_mm.log')}
     time.sleep(0.5)
     drop = [f'test_drop_pct={args.drop}'] if args.drop else []
     write_profile(out / 'b', 'b', USERS['a']['connectCode'], args, args.delay_b, drop)
-    peer_b = [TOOLS / 'slippi_fake_peer.exe', '--dir', out / 'b', '--frames', args.frames]
+    peer_b = [TOOLS / ('slippi_fake_peer' + EXE), '--dir', out / 'b', '--frames', args.frames]
     try:
         if args.mode == 'pc-pair':
             write_profile(out / 'a', 'a', USERS['b']['connectCode'], args, args.delay_a)
-            procs['a'] = start([TOOLS / 'slippi_fake_peer.exe', '--dir', out / 'a', '--frames', args.frames], out / 'peer_a.log')
+            procs['a'] = start([TOOLS / ('slippi_fake_peer' + EXE), '--dir', out / 'a', '--frames', args.frames], out / 'peer_a.log')
             time.sleep(0.3)
             procs['b'] = start(peer_b, out / 'peer_b.log')
             codes = finish({k: v for k, v in procs.items() if k != 'mm'}, 120)
         elif args.mode == 'pc-client':
             write_profile(out / 'a', 'a', USERS['b']['connectCode'], args, args.delay_a,
                           ['selftest=1', f'selftest_frames={args.frames}'])
-            procs['a'] = start([TOOLS / 'slippi_client.exe', '--dir', out / 'a'], out / 'client_a.log')
+            procs['a'] = start([TOOLS / ('slippi_client' + EXE), '--dir', out / 'a'], out / 'client_a.log')
             time.sleep(0.3)
             procs['b'] = start(peer_b, out / 'peer_b.log')
             codes = finish({k: v for k, v in procs.items() if k != 'mm'}, 120)
@@ -138,7 +141,7 @@ def main():
             emu.stop(proc)
             if log.exists():
                 shutil.copy(log, out / 'game.log')
-                azahar_log = home / 'user/log/azahar_log.txt'
+                azahar_log = emu.log_path(home)
                 if azahar_log.exists():
                     shutil.copy(azahar_log, out / 'azahar_log.txt')
             codes = finish({'b': procs['b']}, 30)

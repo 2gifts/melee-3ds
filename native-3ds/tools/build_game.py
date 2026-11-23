@@ -3,7 +3,7 @@ import argparse
 import subprocess
 import sys
 from pathlib import Path
-from build import ROOT, prepare, local_clang, common_flags, run
+from build import ROOT, EXE, prepare, local_clang, common_flags, run
 from engine_build import compile_engine
 
 
@@ -78,13 +78,13 @@ def main():
     for stem in ('vertex','vertex-dual','vertex-stereo','vertex-dual-stereo'):
         assert ('; MP_AFFINE_IDENTITY_SHADER' in (shader_dir/(stem+'.v.pica')).read_text())==args.identity_affine,'Affine shader interface mismatch'
         assert ('; MP_UNLIT_AFFINE_SHADER' in (shader_dir/(stem+'.v.pica')).read_text())==args.unlit_affine,'Unlit shader interface mismatch'
-    run([ROOT/'.toolchain/bin/picasso.exe','-o',shader,shader_dir/'vertex.v.pica',ROOT/'port/3ds/point.g.pica'])
+    run([ROOT/'.toolchain/bin'/('picasso'+EXE),'-o',shader,shader_dir/'vertex.v.pica',ROOT/'port/3ds/point.g.pica'])
     shader_c=out/'shader.c'
     blob=shader.read_bytes()
     shader_c.write_text('const unsigned char mp_shader[] __attribute__((aligned(4)))={'+
                         ','.join(str(b) for b in blob)+'};\nconst unsigned mp_shader_size='+str(len(blob))+';\n')
     dual_shader=out/'vertex-dual.shbin'
-    run([ROOT/'.toolchain/bin/picasso.exe','-o',dual_shader,shader_dir/'vertex-dual.v.pica'])
+    run([ROOT/'.toolchain/bin'/('picasso'+EXE),'-o',dual_shader,shader_dir/'vertex-dual.v.pica'])
     dual_blob=dual_shader.read_bytes()
     with shader_c.open('a') as source:
         source.write('const unsigned char mp_dual_shader[] __attribute__((aligned(4)))={'+
@@ -94,7 +94,7 @@ def main():
         binary=out/f'{stem}-clamped.shbin'
         sources=[ROOT/'port/3ds'/f'{stem}-clamped.v.pica']
         if name in ('base','stereo'):sources.append(ROOT/'port/3ds/point.g.pica')
-        run([ROOT/'.toolchain/bin/picasso.exe','-o',binary,*sources])
+        run([ROOT/'.toolchain/bin'/('picasso'+EXE),'-o',binary,*sources])
         data=binary.read_bytes()
         with shader_c.open('a') as source:
             source.write(f'const unsigned char mp_clamped_{name}[] __attribute__((aligned(4)))={{'+','.join(str(b) for b in data)+f'}};\nconst unsigned mp_clamped_{name}_size={len(data)};\n')
@@ -107,13 +107,13 @@ def main():
         sources=[shader_dir/f'vertex-{name.replace("_","-")}.v.pica']
         if name=='stereo':sources.append(ROOT/'port/3ds/point.g.pica')
         if name=='stereo' and args.smoke:sources.append(reuse_source)
-        run([ROOT/'.toolchain/bin/picasso.exe','-o',binary,*sources])
+        run([ROOT/'.toolchain/bin'/('picasso'+EXE),'-o',binary,*sources])
         data=binary.read_bytes()
         with shader_c.open('a') as source:
             source.write(f'const unsigned char mp_{name}_shader[] __attribute__((aligned(4)))={{'+','.join(str(b) for b in data)+f'}};\nconst unsigned mp_{name}_shader_size={len(data)};\n')
     if args.smoke:
         reuse_binary=out/'stereo-reuse.shbin'
-        run([ROOT/'.toolchain/bin/picasso.exe','-o',reuse_binary,shader_dir/'vertex.v.pica',reuse_source])
+        run([ROOT/'.toolchain/bin'/('picasso'+EXE),'-o',reuse_binary,shader_dir/'vertex.v.pica',reuse_source])
         data=reuse_binary.read_bytes()
         with shader_c.open('a') as source:
             source.write('const unsigned char mp_stereo_reuse_shader[] __attribute__((aligned(4)))={'+','.join(map(str,data))+'};\n'+f'const unsigned mp_stereo_reuse_shader_size={len(data)};\n')
@@ -123,7 +123,7 @@ def main():
             binary=reference/f'{stem}.shbin'
             sources=[reference/f'{stem}.v.pica']
             if name in ('base','stereo'):sources.append(ROOT/'port/3ds/point.g.pica')
-            run([ROOT/'.toolchain/bin/picasso.exe','-o',binary,*sources])
+            run([ROOT/'.toolchain/bin'/('picasso'+EXE),'-o',binary,*sources])
             data=binary.read_bytes()
             with shader_c.open('a') as source:
                 source.write(f'const unsigned char mp_light_reference_{name}[] __attribute__((aligned(4)))={{'+','.join(str(b) for b in data)+f'}};\nconst unsigned mp_light_reference_{name}_size={len(data)};\n')
@@ -161,7 +161,7 @@ def main():
     layout+='\nmp_image_text_start = ADDR(.text);\nmp_image_rodata_start = ADDR(.rodata);\nmp_image_data_start = ADDR(.data);\n'
     script.write_text(layout)
     linked=out/'melee-linked.elf';elf=out/'melee.elf'
-    command=[bin/'ld.lld.exe','-T',script,'--gc-sections','--emit-relocs','--wrap=GX_ProcessCommandList',
+    command=[bin/('ld.lld'+EXE),'-T',script,'--gc-sections','--emit-relocs','--wrap=GX_ProcessCommandList',
              *('--wrap='+name for name in ('C3D_UpdateUniforms','C3Di_LoadShaderUniforms','C3Di_ClearShaderUniforms','C3Di_DirtyUniforms')),
              *('--wrap='+name for name in ('linearAlloc','linearMemAlign','linearRealloc','linearFree','linearSpaceFree')),
              '--wrap=gspSubmitGxCommand','--wrap=gxCmdQueueInterrupt','--wrap=GPUCMD_Add',
@@ -181,7 +181,7 @@ def main():
     dest.parent.mkdir(parents=True,exist_ok=True)
     from launcher_icon import make_smdh
     smdh=make_smdh(out,args.profile)
-    run([ROOT/'.toolchain/bin/3dsxtool.exe',elf,dest,*([f'--smdh={smdh}'] if smdh else [])])
+    run([ROOT/'.toolchain/bin'/('3dsxtool'+EXE),elf,dest,*([f'--smdh={smdh}'] if smdh else [])])
     print('Built native engine integration:',dest,'Build-time BE8 relocation words:',image_info['be8_words'])
 
 

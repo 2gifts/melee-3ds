@@ -10,6 +10,8 @@ import json
 from pathlib import Path, PurePosixPath
 import struct
 
+from ciso import open_disc
+
 ROOT = Path(__file__).resolve().parents[1]
 LOCK = json.loads((ROOT / "upstream.lock.json").read_text())
 
@@ -176,11 +178,11 @@ def extract_fonts(dol, output):
 
 
 def disc_info(path):
-    size = path.stat().st_size
-    with path.open("rb") as f:
+    f, size = open_disc(path)
+    with f:
         h = read_exact(f, 0, 0x440)
         if h[:6] != b"GALE01" or h[6] != 0 or h[7] != 2 or u32(h, 0x1c) != 0xc2339f3d:
-            raise AssetError("Expected uncompressed GALE01 US v1.02 ISO/GCM; convert RVZ in Dolphin first")
+            raise AssetError("Expected GALE01 US v1.02 ISO/GCM or CISO; convert RVZ and other formats to ISO in Dolphin first")
         dol, fst, fst_size = (u32(h,n) for n in (0x420,0x424,0x428))
         if fst_size < 12 or fst_size > 16*1024*1024 or fst+fst_size > size:
             raise AssetError("Invalid FST range")
@@ -240,7 +242,8 @@ def extract_iso(source, output):
     (root / "sys/main.dol").write_bytes(dol)
     (root / "sys/fst.bin").write_bytes(fst)
     records = []
-    with source.open("rb") as src:
+    src, _ = open_disc(source)
+    with src:
         for entry in entries:
             dest = files.joinpath(*PurePosixPath(entry.path).parts)
             if not dest.resolve().is_relative_to(files):

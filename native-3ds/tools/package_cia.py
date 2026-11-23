@@ -109,8 +109,7 @@ def main():
     with wave.open(str(args.art/'announcer.wav'), 'rb') as wav:
         assert wav.getnchannels() == 2 and wav.getsampwidth() == 2
         assert 0 < wav.getnframes()/wav.getframerate() <= 3
-    bannertool = ROOT/'.toolchain/home-menu/bannertool/windows-x86_64/bannertool.exe'
-    makerom = ROOT/'.toolchain/home-menu/makerom/makerom.exe'
+    from hosttools import BANNERTOOL as bannertool, MAKEROM as makerom
     run(bannertool, 'makesmdh', '-s', profile['short'],
         '-l', profile['long'], '-p', '2gifts and contributors',
         '-i', args.art/'icon.png', '-o', args.art/'icon.smdh', '-r', 'regionfree',
