@@ -4,6 +4,7 @@ credentials.
 
     python tools/slippi/net_test.py pc-pair      # fake MM + two Dolphin-like fake peers
     python tools/slippi/net_test.py pc-client    # fake MM + fake peer + PC build of the 3DS self-test
+    python tools/slippi/net_test.py local-pair   # two PC self-tests over the local wireless stand-in (loopback UDP)
     python tools/slippi/net_test.py azahar DSX   # fake MM + fake peer + the 3DS self-test in Azahar
 Options: --frames N, --drop PCT (fake peer drops that share of its pad
 packets), --delay-a/--delay-b, --mm-port, --seconds (emulator run time),
@@ -75,9 +76,41 @@ def tail(path, pattern=None, n=12):
     return '\n'.join(lines[-n:])
 
 
+def local_pair(args, out):
+    """Two self-test clients, opponent=@host and @join, no matchmaking server."""
+    procs = {}
+    try:
+        for who, role in (('a', '@host'), ('b', '@join')):
+            folder = out / who
+            folder.mkdir(parents=True)
+            lines = [f'opponent={role}', f'delay={args.delay_a if who == "a" else args.delay_b}', 'selftest=1',
+                     f'selftest_frames={args.frames}', f'local_port={args.mm_port + 3000}']
+            if args.drop:
+                lines.append(f'test_drop_pct={args.drop}')
+            (folder / 'config.ini').write_text('\n'.join(lines) + '\n', encoding='utf-8')
+        procs['a'] = start([TOOLS / ('slippi_client' + EXE), '--dir', out / 'a'], out / 'client_a.log')
+        time.sleep(0.5)
+        procs['b'] = start([TOOLS / ('slippi_client' + EXE), '--dir', out / 'b'], out / 'client_b.log')
+        codes = finish(procs, 120)
+    finally:
+        for p, f in procs.values():
+            if p.poll() is None:
+                p.kill()
+                p.wait()
+            if not f.closed:
+                f.close()
+    print('exit codes:', codes)
+    for path in sorted(out.glob('*.log')):
+        print(f'---- {path.name}')
+        print(tail(path, 'selftest:', 8))
+    ok = all(c == 0 for c in codes.values())
+    print('RESULT:', 'PASS' if ok else 'FAIL', '->', out)
+    return 0 if ok else 1
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('mode', choices=('pc-pair', 'pc-client', 'azahar'))
+    ap.add_argument('mode', choices=('pc-pair', 'pc-client', 'azahar', 'local-pair'))
     ap.add_argument('dsx', nargs='?')
     ap.add_argument('--frames', type=int, default=600)
     ap.add_argument('--drop', type=int, default=0)
@@ -94,6 +127,8 @@ def main():
     if out.exists():
         shutil.rmtree(out)
     out.mkdir(parents=True)
+    if args.mode == 'local-pair':
+        return local_pair(args, out)
     mm_cmd = [TOOLS / ('slippi_fake_mm' + EXE), '--port', args.mm_port] + (['--second-is-host'] if args.second_is_host else [])
     procs = {'mm': start(mm_cmd, out / 'fake_mm.log')}
     time.sleep(0.5)

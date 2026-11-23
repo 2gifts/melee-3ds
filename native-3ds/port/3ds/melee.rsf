@@ -115,6 +115,7 @@ AccessControlInfo:
    - ptm:sysm
    - soc:U
    - ac:u
+   - nwm::UDS
 SystemControlInfo:
   SaveDataSize: 0KB
   RemasterVersion: 0

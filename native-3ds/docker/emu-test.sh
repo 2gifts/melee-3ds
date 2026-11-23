@@ -4,6 +4,7 @@
 #   docker/emu-test.sh build-dev                  # compile the development (smoke) build into the work volume
 #   docker/emu-test.sh pair [online_pair_test.py options]   # two emulated 3DSes play each other
 #   docker/emu-test.sh net  [net_test.py options]            # fake-MM tests (pc-pair, pc-client, azahar DSX)
+#   docker/emu-test.sh run SCRIPT [args]          # any script from the repo, same environment
 #   docker/emu-test.sh shell                      # a shell in the test container
 #   docker/emu-test.sh --clean                    # remove the test image (the work volume is build.sh's)
 #
@@ -45,6 +46,7 @@ case "${1:-}" in
             ls -la dist/3ds/melee/melee-development.3dsx build/game-opt/melee.elf' ;;
     pair) script=tools/slippi/online_pair_test.py ;;
     net) script=tools/slippi/net_test.py ;;
+    run) script=${2:?run needs a script path (relative to the repo)}; shift ;;
     shell) script= ;;
     *) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2 ;;
 esac

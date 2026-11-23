@@ -54,7 +54,7 @@ int slippi_selftest_run(void)
     sp_log("selftest: starting (data dir %s)", sp_data_dir());
     if (slippi_init() != 0) { sp_log("selftest: FAIL init: %s", slippi_net_error()); return -1; }
     slippi_config cfg = g_slippi.cfg;
-    if (!strcmp(cfg.mm_host, SLIPPI_MM_HOST_PROD) && !cfg.selftest_allow_real_mm) {
+    if (!g_slippi.local_mode && !strcmp(cfg.mm_host, SLIPPI_MM_HOST_PROD) && !cfg.selftest_allow_real_mm) {
         sp_log("selftest: refusing to use the real matchmaking server %s; set mm_host to the fake server", cfg.mm_host);
         slippi_net_stop();
         return -1;

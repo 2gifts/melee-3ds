@@ -111,6 +111,14 @@ typedef struct {
     int status;                 /* slippi_status_code */
     char error[160];
     int initialized;
+    /* Local wireless (3DS UDS): opponent=@host / @join in config.ini. No account,
+     * matchmaking or ENet; slippi_local.c carries the same packets over UDS. */
+    int local_mode, local_host;
+    int sel_resend_pending;         /* selections are re-sent until the peer's pads arrive */
+    uint64_t sel_resend_us;
+    uint8_t sel_pkt[14];            /* the selections packet re-sent (a new game clears local_sel) */
+    uint8_t last_remote_sel[14];    /* duplicate selections (re-sends) are ignored */
+    int last_remote_sel_valid;
 
     slippi_config cfg;
     slippi_user user;
@@ -199,6 +207,16 @@ void slippi_p2p_send_chat(int id);
 int32_t slippi_p2p_time_offset(void);
 void slippi_p2p_disconnect(void);
 void slippi_p2p_clear(void);
+/* Local wireless entry points (slippi_local.c calls these). */
+void slippi_p2p_local_connected(const char *peer_name);
+void slippi_p2p_on_data(const uint8_t *d, size_t len);
+void slippi_p2p_resend_selections(void);
+
+/* slippi_local.c (lock held) */
+void slippi_local_start(int host);
+void slippi_local_service(void);
+void slippi_local_send(const uint8_t *data, size_t len);
+void slippi_local_close(void);
 
 /* net.c (lock held) */
 int slippi_send_pad_locked(int frame, const unsigned char *pad, int checksum_frame, unsigned checksum);

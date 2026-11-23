@@ -117,6 +117,11 @@ static void service_locked(void)
 {
     slippi_state *g = &g_slippi;
     if (!g->initialized) return;
+    if (g->local_mode) {
+        slippi_local_service();
+        slippi_p2p_tick();
+        return;
+    }
     if (g->mm_state == MM_RESOLVE) slippi_mm_tick();
     if (!g->host) return;
     ENetEvent ev;
@@ -168,6 +173,22 @@ int slippi_init(void)
     snprintf(path, sizeof(path), "%s/config.ini", sp_data_dir());
     if (slippi_config_load(&g->cfg, path) == 0) sp_log("config: %s loaded", path);
     else sp_log("config: %s not found, using defaults", path);
+    /* opponent=@host / @join: local wireless, no account and no sockets. */
+    g->local_mode = g->cfg.opponent[0] == '@';
+    if (g->local_mode) {
+        g->initialized = 1;
+        g->status = SLIPPI_STATUS_IDLE;
+        sp_log("ready: local wireless (%s), delay %d, thread %d", g->cfg.opponent, g->cfg.delay, g->cfg.net_thread);
+        int lt = g->cfg.net_thread && !thread_running;
+        int lcore = g->cfg.net_thread_core;
+        sp_unlock();
+        if (lt) {
+            thread_stop = 0;
+            if (sp_thread_start(worker_main, NULL, lcore) == 0) thread_running = 1;
+            else sp_log("network thread unavailable; servicing from slippi_poll only");
+        }
+        return 0;
+    }
     snprintf(path, sizeof(path), "%s/user.json", sp_data_dir());
     char err[160];
     if (slippi_user_load(&g->user, path, err, sizeof(err)) != 0) {
@@ -206,6 +227,7 @@ void slippi_shutdown(void)
     if (!lock_ready) return;
     sp_lock();
     int was = g->initialized;
+    if (was && g->local_mode) slippi_local_close();
     if (was && g->host) {
         slippi_p2p_disconnect();
         slippi_mm_close();
@@ -236,7 +258,7 @@ void slippi_shutdown(void)
     }
     sp_unlock();
     sp_log_drain();
-    if (was) {
+    if (was && !g->local_mode) {
         if (enet_ready) { enet_deinitialize(); enet_ready = 0; }
         sp_net_exit();
     }
@@ -249,6 +271,19 @@ int slippi_find_match(const char *code)
     sp_lock();
     if (!g->initialized) { sp_unlock(); return -1; }
     const char *c = code && code[0] ? code : g->cfg.opponent;
+    if (g->local_mode != (c[0] == '@')) {
+        snprintf(g->error, sizeof(g->error), "Mixed local and online settings"); g->status = SLIPPI_STATUS_FAILED; sp_unlock(); return -2;
+    }
+    if (g->local_mode) {
+        int host = strcmp(c, "@join") != 0;
+        if (strcmp(c, "@host") && strcmp(c, "@join")) {
+            snprintf(g->error, sizeof(g->error), "opponent= must be @host or @join"); g->status = SLIPPI_STATUS_FAILED; sp_unlock(); return -2;
+        }
+        slippi_local_start(host);
+        int ok = g->status != SLIPPI_STATUS_FAILED;
+        sp_unlock();
+        return ok ? 0 : -3;
+    }
     if (!c[0]) { snprintf(g->error, sizeof(g->error), "No opponent connect code"); g->status = SLIPPI_STATUS_FAILED; sp_unlock(); return -2; }
     slippi_p2p_disconnect();
     slippi_mm_close();
