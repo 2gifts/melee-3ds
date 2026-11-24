@@ -12,7 +12,6 @@
  * as Slippi patches it: 8 characters, '#', recent codes on L/R, Z (here X)
  * takes the suggestion, B erases.
  */
-#include "slippi_group.h"
 #include "slippi_ui.h"
 #include "slippi_internal.h"
 #include <3ds.h>
@@ -65,7 +64,7 @@ int slippi_ui_alt(int toggle)
     }
     return ui.frozen_stadium;
 }
-unsigned slippi_ui_serial(void) { return ui.serial + slippi_group_serial(); }
+unsigned slippi_ui_serial(void) { return ui.serial; }
 
 static void changed(void) { ++ui.serial; }
 

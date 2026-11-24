@@ -1,4 +1,4 @@
-"""Tests of the local wireless lobby alone (port/3ds/localwireless, cfg.lobby), no game: several lw_lobby_client processes
+"""Tests of the local wireless module alone (port/3ds/localwireless), no game: several lw_lobby_client processes
 over the loopback UDP link, joining and leaving at different times.
 
     python tools/localwireless/lw_lobby_test.py [--scenario all|alone|churn] [--drop 40]
@@ -6,7 +6,7 @@ alone: the host sits in the lobby by itself and plays a one-console game, twice.
 churn: console 3 joins and leaves, another takes its slot, console 4 joins in the middle of game 1 (and must wait), game 2
        has everybody, and the console in slot 3 vanishes without a goodbye in the middle of it. Every console that stays must see
        identical bundles for each game, no lobby blob may be torn or go back, and every command must arrive in order.
-Build first: python tools/slippi/build_tools.py.
+Build first: python tools/group/build_tools.py.
 """
 import argparse
 import os
@@ -17,8 +17,8 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-TOOLS = Path(os.environ.get('MELEE_TOOLS_DIR') or ROOT / 'build/slippi-tools')
-OUT = Path(os.environ.get('MELEE_TEST_OUT') or ROOT / 'build/slippi-tests') / 'lw_lobby'
+TOOLS = Path(os.environ.get('MELEE_GROUP_TOOLS_DIR') or ROOT / 'build/group-tools')
+OUT = Path(os.environ.get('MELEE_TEST_OUT') or ROOT / 'build/group-tests') / 'lw_lobby'
 EXE = '.exe' if sys.platform == 'win32' else ''
 
 
@@ -85,12 +85,29 @@ def churn(port, drop):
     return [ok]
 
 
+def again(port, drop):
+    # A follow-up game (lw_host_start_again, e.g. a sudden death) has only the consoles of the game before it: c3, who
+    # joined during game 1, must not play game 2 either, while host and c2 do.
+    res = run('again', port, drop, [
+        ('host', ['--host', '--again', '--games', 2, '--start-at', 2500, '--frames', 240, '--run-ms', 13000]),
+        ('c2', ['--join', '--join-at', 500]),
+        ('c3', ['--join', '--join-at', 4000]),                       # arrives during game 1
+    ])
+    ok = True
+    for label in ('host', 'c2', 'c3'):
+        ok &= check(f'again: {label} exits 0', res[label][0] == 0, str(res[label][0]))
+    g = {label: {l.split()[0]: l.split()[1] for l in lines(res, label, 'MATCH')} for label in ('host', 'c2', 'c3')}
+    ok &= check('again: host and c2 played both games alike', all(g['host'].get(k) and g['host'].get(k) == g['c2'].get(k) for k in ('1', '2')), str(g))
+    ok &= check('again: c3 played neither', not g['c3'], str(g['c3']))
+    return [ok]
+
+
 def browse(port, drop):
     # Two hosts in range (ports base+1 and base+3, different beacons); a browser joins the second one by its beacon.
     res = run('browse', port, drop, [
         ('h1', ['--host', '--port', port + 1, '--beacon-tag', 11, '--run-ms', 7000, '--games', 0]),
         ('h2', ['--host', '--port', port + 3, '--beacon-tag', 22, '--run-ms', 7000, '--games', 0]),
-        ('b', ['--join', '--browse', '--want-tag', 22, '--join-at', 1000]),
+        ('b', ['--join', '--want-tag', 22, '--join-at', 1000]),
     ])
     b = res['b'][1]
     joined = [l for l in b if 'joining #' in l]
@@ -119,6 +136,8 @@ def main():
         results += browse(args.port + 10, args.drop)
     if args.scenario in ('all', 'churn'):
         results += churn(args.port + 1, args.drop)
+    if args.scenario in ('all', 'again'):
+        results += again(args.port + 20, args.drop)
     print('RESULT:', 'PASS' if all(results) else 'FAIL', '->', OUT)
     return 0 if all(results) else 1
 

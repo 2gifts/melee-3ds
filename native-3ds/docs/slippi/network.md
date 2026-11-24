@@ -168,9 +168,6 @@ The native API in `port/3ds/slippi/slippi_net.h` is richer: info strings, stats,
 | `delay` | 2 | Input delay frames (1..15), returned in the match block trailer |
 | `mm_host` / `mm_port` | `mm.slippi.gg` / 43113 | Matchmaking server. Tests use `127.0.0.1`. |
 | `local_port` | 0 | Force the local UDP port (0 = 41000..50999 random) |
-| `local_players` | 2 | Local wireless (`opponent=@host`): consoles in the match, 2 to 4 (see `docs/local-wireless/`) |
-| `local_timeout_ms` | 2000 | Local wireless: silence after which a console is dropped (tests under emulation raise it) |
-| `local_udp` | 0 | Development 3DS build only: use the loopback UDP link instead of UDS |
 | `lan_ip` | – | Force the `ipAddressLan` IP |
 | `app_version` | `3.6.4` | `appVersion` sent in create-ticket (Ishiiruka's netplay version) |
 | `code_encoding` | `fullwidth` | `ascii` sends the code bytes as typed |

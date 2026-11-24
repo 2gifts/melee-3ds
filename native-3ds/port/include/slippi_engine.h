@@ -59,7 +59,7 @@ void mp_slippi_online_match_exit(void);
 void mp_slippi_record_online_begin(void);
 void mp_slippi_record_online_frame(int engine_frame);
 void mp_slippi_record_online_inputs(const unsigned char* port0, const unsigned char* port1, unsigned checksum);
-void mp_slippi_record_online_inputs_ports23(const unsigned char* port2, const unsigned char* port3);
+void mp_slippi_record_online_inputs_ports23(const unsigned char* port2, const unsigned char* port3);   /* group play: a J record */
 void mp_slippi_record_online_end(void);
 /* The menu flow (online_mode.c): take the negotiated match block (1 = ready),
  * this console's port index in it, the files a match needs. */
@@ -68,7 +68,6 @@ int mp_slippi_online_local_index(void);
 void mp_slippi_prepare_match_files(const unsigned char* info);
 struct PlayerInitData;
 int mp_slippi_css_online(void);
-int mp_slippi_group_mode(void);   /* Melee -> Group: the CSS scene is the lobby */
 int mp_slippi_css_frame(int ready, struct PlayerInitData* local, struct PlayerInitData* remote,
                         unsigned trigger, unsigned held);
 int mp_slippi_sss_alt_mode(void);

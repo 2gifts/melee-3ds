@@ -4,10 +4,11 @@ from build import ROOT
 def adapt(source):
     # Per-file overlays below, then layout fixes (layout_fixes/), then the
     # gameplay mods both builds ship (gameplay_mods.py), then 3DS
-    # presentation edits (presentation_mods.py).
+    # presentation edits (presentation_mods.py), Slippi online (slippi_mods.py)
+    # and group play (group_mods.py).
     result=_adapt(source)
-    import layout_fixes,gameplay_mods,presentation_mods,slippi_mods
-    edits=layout_fixes.edits_for(source)+gameplay_mods.edits_for(source)+presentation_mods.edits_for(source)+slippi_mods.edits_for(source)
+    import layout_fixes,gameplay_mods,presentation_mods,slippi_mods,group_mods
+    edits=layout_fixes.edits_for(source)+gameplay_mods.edits_for(source)+presentation_mods.edits_for(source)+slippi_mods.edits_for(source)+group_mods.edits_for(source)
     if not edits:return result
     text=result.read_text(encoding='utf-8')
     for old,new,count in edits:

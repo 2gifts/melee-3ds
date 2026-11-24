@@ -1,13 +1,13 @@
-/* The Melee lobby of a local wireless group: see slippi_lobby.h. Pure logic, no I/O, so the PC tests drive it directly
- * (tools/slippi/src/lobby_unit.c). */
-#include "slippi_lobby.h"
+/* The Melee lobby of a local wireless group: see group_lobby.h. Pure logic, no I/O, so the PC tests drive it directly
+ * (tools/group/src/lobby_unit.c). */
+#include "group_lobby.h"
 #include <string.h>
 
-/* Bytes 8 and 9 are 0 as in Slippi Ishiiruka (what Slippi Launcher ships;
- * mainline has 1, 1 there): the PC's replays record 0 at 0x9. */
-/* CEXISlippi::prepareOnlineMatchState's static block: "a VS match with P1 Red
- * Falco vs P2 Red Bowser vs P3 Young Link vs P4 Young Link on Battlefield". */
-const unsigned char slippi_match_block_template[0x138] = {
+/* The game info block a group match starts from: the same bytes as the Slippi Direct template
+ * (port/3ds/slippi/slippi_bridge.c, CEXISlippi::prepareOnlineMatchState's static block: "a VS match with P1 Red Falco vs
+ * P2 Red Bowser vs P3 Young Link vs P4 Young Link on Battlefield", bytes 8 and 9 zero as in Slippi Ishiiruka). A copy, so
+ * the Slippi code stays as it is; lobby_build_block rewrites every field a group match depends on. */
+static const unsigned char block_template[0x138] = {
     0x32, 0x01, 0x86, 0x4C, 0xC3, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0x6E, 0x00,
     0x1F, 0x00, 0x00, 0x01, 0xE0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x3F,
@@ -32,12 +32,46 @@ const unsigned char slippi_match_block_template[0x138] = {
 };
 
 #define BLOB_ID 0x4C
-#define BLOB_HEADER 12
+#define BLOB_HEADER (13 + LOBBY_MELEE_RULES)
 #define SLOT_BYTES 14
 #define MAX_FIGHTER 0x19            /* external character ids 0..0x19 (Melee's 26 fighters) */
 #define DEFAULT_CPU_LEVEL 3         /* the level a dropped console's fighter plays at (online.c take_over_slot) */
 
 /* ---- the wire ---- */
+
+/* The status section follows the doors: valid, timer, seconds (u16), then per port kind, stocks, damage (u16). An older or
+ * shorter blob without it decodes as "no status". */
+#define STATUS_BYTES (4 + 4 * LOBBY_SLOTS)
+
+static int put_status(const lobby_status *st, uint8_t *out, int cap)
+{
+    if (cap < STATUS_BYTES) return 0;
+    out[0] = st->valid ? 1 : 0;
+    out[1] = st->timer;
+    out[2] = (uint8_t)(st->seconds >> 8);
+    out[3] = (uint8_t)st->seconds;
+    for (int i = 0; i < LOBBY_SLOTS; ++i) {
+        uint8_t *p = out + 4 + 4 * i;
+        p[0] = st->port[i].kind; p[1] = st->port[i].stocks;
+        p[2] = (uint8_t)(st->port[i].damage >> 8); p[3] = (uint8_t)st->port[i].damage;
+    }
+    return STATUS_BYTES;
+}
+
+static void get_status(lobby_status *st, const uint8_t *in, int len)
+{
+    memset(st, 0, sizeof(*st));
+    if (len < STATUS_BYTES || !in[0]) return;
+    st->valid = 1;
+    st->timer = in[1] ? 1 : 0;
+    st->seconds = (uint16_t)((in[2] << 8) | in[3]);
+    for (int i = 0; i < LOBBY_SLOTS; ++i) {
+        const uint8_t *p = in + 4 + 4 * i;
+        st->port[i].kind = p[0] > 3 ? 3 : p[0];
+        st->port[i].stocks = p[1];
+        st->port[i].damage = (uint16_t)((p[2] << 8) | p[3]);
+    }
+}
 
 int lobby_encode(const lobby_state *s, uint8_t *out, int cap)
 {
@@ -55,13 +89,15 @@ int lobby_encode(const lobby_state *s, uint8_t *out, int cap)
     out[9] = (uint8_t)s->stage;
     out[10] = s->stage_picked;
     out[11] = s->alt_stage;
+    out[12] = s->rules.melee_valid ? 1 : 0;
+    memcpy(out + 13, s->rules.melee, LOBBY_MELEE_RULES);
     for (int i = 0; i < LOBBY_SLOTS; ++i) {
         uint8_t *p = out + BLOB_HEADER + SLOT_BYTES * i;
         const lobby_slot *l = &s->slot[i];
         p[0] = l->kind; p[1] = l->fighter; p[2] = l->color; p[3] = l->team; p[4] = l->level; p[5] = l->chosen;
         memcpy(p + 6, l->tag, LOBBY_TAG_BYTES);
     }
-    return need;
+    return need + put_status(&s->status, out + need, cap - need);
 }
 
 /* Clamp a received slot to values the game can show. */
@@ -91,6 +127,8 @@ int lobby_decode(lobby_state *s, const uint8_t *in, int len)
     s->stage = (uint16_t)((in[8] << 8) | in[9]);
     s->stage_picked = in[10] ? 1 : 0;
     s->alt_stage = in[11];
+    s->rules.melee_valid = in[12] ? 1 : 0;
+    memcpy(s->rules.melee, in + 13, LOBBY_MELEE_RULES);
     for (int i = 0; i < LOBBY_SLOTS; ++i) {
         const uint8_t *p = in + BLOB_HEADER + SLOT_BYTES * i;
         lobby_slot *l = &s->slot[i];
@@ -98,6 +136,8 @@ int lobby_decode(lobby_state *s, const uint8_t *in, int len)
         memcpy(l->tag, p + 6, LOBBY_TAG_BYTES);
         sanitize_slot(l);
     }
+    const int doors_end = BLOB_HEADER + SLOT_BYTES * LOBBY_SLOTS;
+    get_status(&s->status, in + doors_end, len - doors_end);
     return 0;
 }
 
@@ -130,6 +170,7 @@ static void default_rules(lobby_rules *r)
     memset(r, 0, sizeof(*r));
     r->stocks = 4;
     r->minutes = 8;
+    r->melee_valid = 0;                                  /* the host's console sends its rules from the CSS */
 }
 
 void lobby_host_init(lobby_host *h, unsigned present)
@@ -183,12 +224,15 @@ int lobby_host_sync(lobby_host *h, unsigned present)
 int lobby_can_start(const lobby_state *s)
 {
     int used = 0;
+    unsigned teams = 0;
     for (int i = 0; i < LOBBY_SLOTS; ++i) {
         const lobby_slot *l = &s->slot[i];
         if (l->kind == LOBBY_EMPTY) continue;
         if (l->chosen != 1) return 0;
         ++used;
+        teams |= 1u << (l->team % 3);
     }
+    if (s->rules.teams && (teams & (teams - 1)) == 0) return 0;   /* everybody on one team */
     return used >= 2;
 }
 
@@ -239,12 +283,16 @@ int lobby_host_command(lobby_host *h, int from, const uint8_t *cmd, int len)
             memset(&s, 0, sizeof(s));
             s.kind = cmd[2]; s.fighter = cmd[3]; s.color = cmd[4]; s.team = cmd[5]; s.level = cmd[6]; s.chosen = cmd[7];
             memcpy(s.tag, cmd + 8, LOBBY_TAG_BYTES);
-            /* A console that sends a command is here, even if the roster has not told the host yet. */
-            unsigned saved = h->present;
-            h->present |= 1u << from;
-            int r = lobby_host_set_door(h, cmd[1], &s);
-            h->present = saved;
-            return r;
+            int slot = cmd[1];
+            if (slot >= LOBBY_SLOTS) return 0;
+            const lobby_slot *cur = &h->st.slot[slot];
+            if (slot != from && (h->present & (1u << slot)) && cur->kind == LOBBY_HUMAN) {
+                /* Another console's Human door: its fighter, costume, tag and hand are that console's own. Anyone may
+                 * still flip it to CPU or closed, or change its team, as with a GameCube door. */
+                s.fighter = cur->fighter; s.color = cur->color; s.chosen = cur->chosen;
+                memcpy(s.tag, cur->tag, LOBBY_TAG_BYTES);
+            }
+            return lobby_host_set_door(h, slot, &s);
         }
         case LCMD_START: return lobby_host_start(h, from);
         case LCMD_STAGE:
@@ -262,6 +310,17 @@ void lobby_host_match_began(lobby_host *h)
 {
     h->st.phase = LOBBY_MATCH;
     h->joined_in_match = h->left_in_match = 0;
+    memset(&h->st.status, 0, sizeof(h->st.status));
+}
+
+int lobby_host_set_status(lobby_host *h, const lobby_status *st)
+{
+    if (h->st.phase != LOBBY_MATCH) return 0;
+    lobby_status n = *st;
+    n.valid = 1;
+    if (!memcmp(&n, &h->st.status, sizeof(n))) return 0;
+    h->st.status = n;
+    return LOBBY_CHANGED;
 }
 
 int lobby_host_match_over(lobby_host *h)
@@ -270,6 +329,7 @@ int lobby_host_match_over(lobby_host *h)
     h->st.phase = LOBBY_CSS;
     h->st.stage_picked = 0;
     h->st.mode = 0;
+    memset(&h->st.status, 0, sizeof(h->st.status));
     unsigned joined = h->joined_in_match, left = h->left_in_match;
     h->joined_in_match = h->left_in_match = 0;
     int changed = LOBBY_CHANGED;
@@ -288,7 +348,7 @@ static void put_u16(unsigned char *p, unsigned v) { p[0] = (unsigned char)(v >> 
 
 void lobby_build_block(unsigned char *b, const lobby_state *s, unsigned rng_offset, int delay)
 {
-    memcpy(b, slippi_match_block_template, 0x138);
+    memcpy(b, block_template, 0x138);
     memset(b + 0x138, 0, LOBBY_BLOCK_SIZE - 0x138);
     const lobby_rules *r = &s->rules;
     int stocks = r->stocks >= 1 && r->stocks <= 99 ? r->stocks : 4;
@@ -332,22 +392,34 @@ void lobby_build_block(unsigned char *b, const lobby_state *s, unsigned rng_offs
         counts[k] += 1;
     }
 
-    /* Rules. Byte 0 0x32 is a stock match with the timer on; a timed match clears is_stock (byte 2, top bit).
-     * UNVERIFIED against a real vanilla time-mode block and the item mask: check against a real match in Azahar. */
-    b[0x0] = 0x32;
-    b[0x3] = 0x4C;
-    b[2] &= 0xF7;                                   /* vanilla pause allowed */
-    if (r->time_mode) b[2] &= 0x7F;                 /* timed match: not a stock match */
-    b[0x1] = (unsigned char)((b[0x1] & 0xFE) | (!teams || r->friendly_fire));   /* friendly fire only matters in Teams */
+    /* Rules (StartMeleeRules, src/melee/mn/types.h; its bitfields are big-endian, the first field in the top bits).
+     * byte 0: match_kind (bits 7-5), x0_3 (4-2), timer_enabled (1), timer_counts_up (0); byte 1: friendly_fire (0);
+     * byte 2: is_stock (7), disable_pausing (3); byte 3: x3_0, the score display (7); 0x8 is_teams; 0xB item_freq;
+     * 0xC sd_penalty; 0xE stkind; 0x10 time_limit (u32, seconds); 0x20 the item mask (u64); 0x30 the damage ratio. */
     b[0x8] = (unsigned char)teams;
     b[0xE] = (unsigned char)(s->stage >> 8);
     b[0xF] = (unsigned char)s->stage;
-    b[0x10] = 0; b[0x11] = 0;
-    put_u16(b + 0x12, (unsigned)(minutes * 60));
-    b[0xB] = 0xFF;
-    unsigned long long items = 0xF80000000F000000ull;
-    if (r->items) { items |= 0x0FFFFFFFull << 28; b[0xB] = (unsigned char)(r->items - 1); }
-    for (int i = 0; i < 8; ++i) b[0x23 + i] = (unsigned char)(items >> (56 - 8 * i));
+    if (r->melee_valid) {
+        const uint8_t *m = r->melee;
+        int kind = m[0] >> 5;
+        b[0x0] = (unsigned char)((b[0x0] & 0x1C) | (m[0] & 0xE3));
+        b[0x1] = (unsigned char)((b[0x1] & 0xFE) | (m[1] & 0x01));
+        b[0x2] = (unsigned char)((b[0x2] & 0x77) | (m[2] & 0x08) | (kind == 1 ? 0x80 : 0));   /* is_stock: a stock match */
+        b[0x3] = (unsigned char)((b[0x3] & 0x7F) | (m[3] & 0x80));
+        b[0xB] = m[0xB];
+        b[0xC] = m[0xC];
+        memcpy(b + 0x10, m + 0x10, 4);
+        memcpy(b + 0x20, m + 0x20, 8);
+        memcpy(b + 0x30, m + 0x30, 4);
+    } else {
+        b[0x0] = r->time_mode ? 0x12 : 0x32;        /* a time or stock match, the timer on */
+        b[2] &= 0xF7;                               /* pause allowed */
+        if (r->time_mode) b[2] &= 0x7F;             /* timed match: not a stock match */
+        b[0x1] = (unsigned char)((b[0x1] & 0xFE) | (!teams || r->friendly_fire));
+        b[0x10] = 0; b[0x11] = 0;
+        put_u16(b + 0x12, (unsigned)(minutes * 60));
+        b[0xB] = r->items ? (unsigned char)(r->items - 1) : 0xFF;   /* item_freq: -1 = no items */
+    }
 
     b[0x138] = (unsigned char)(rng_offset >> 24);
     b[0x139] = (unsigned char)(rng_offset >> 16);

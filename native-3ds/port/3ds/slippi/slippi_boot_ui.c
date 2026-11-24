@@ -145,61 +145,6 @@ static void draw(const choices* c, const slippi_user* u, int row)
 
 void slippi_prefetch_match(int character, int color, int stage);
 
-/* Rewrite config.ini with opponent= and auto_match=1 for local wireless, every other line kept. */
-static void save_local(const char* path, const char* role)
-{
-    char* old = read_text(path);
-    FILE* f = fopen(path, "wb");
-    if (!f) { free(old); return; }
-    if (old) {
-        char* line = old + 1;
-        while (*line) {
-            char* end = strchr(line, '\n');
-            size_t len = end ? (size_t) (end - line) : strlen(line);
-            if (len && strncmp(line, "opponent=", 9) && strncmp(line, "auto_match=", 11)) { fwrite(line, 1, len, f); fputc('\n', f); }
-            if (!end) break;
-            line = end + 1;
-        }
-    }
-    fprintf(f, "opponent=%s\nauto_match=1\n", role);
-    fclose(f);
-    free(old);
-}
-
-/* config.ini local_menu=1: ask whether this console hosts or joins a local wireless game (no account
- * needed; the same config.ini works on every console). The answer is saved as opponent=@host / @join
- * with auto_match=1 so the engine boots straight into the match. */
-static void local_menu(const char* cpath, const char* cfg)
-{
-    int character = key_int(cfg, "character", 2), color = key_int(cfg, "color", 0), stage = key_int(cfg, "stage", 32);
-    const char* role = NULL;
-    printf("\x1b[2J\x1b[1;1H");
-    printf("  LOCAL WIRELESS (experimental)\n\n");
-    printf("  A: host a game  (you are player 1)\n");
-    printf("  Y: join a game  (find a host nearby)\n");
-    printf("  B: play offline\n\n");
-    printf("  Both consoles need this build, Wi-Fi\n  on, and to be close together.\n");
-    while (aptMainLoop()) {
-        u32 k;
-        hidScanInput();
-        k = hidKeysDown();
-        if (k & KEY_B) { session = 2; break; }
-        if (k & KEY_A) { role = "@host"; break; }
-        if (k & KEY_Y) { role = "@join"; break; }
-        gspWaitForVBlank();
-    }
-    if (role) {
-        session = 1;
-        save_local(cpath, role);
-        if (character < 0 || character > 25) character = 2;
-        if (key_int(cfg, "prefetch", 1)) {
-            printf("\x1b[2J\x1b[1;1H");
-            slippi_prefetch_match(character, color, stage);
-        }
-    }
-    printf("\x1b[2J\x1b[1;1H%s\n", !role ? "Offline" : strcmp(role, "@host") ? "Looking for a game..." : "Waiting for a player...");
-}
-
 void slippi_boot_menu(void)
 {
     char upath[256], cpath[256], *cfg;
@@ -211,13 +156,6 @@ void slippi_boot_menu(void)
     snprintf(upath, sizeof upath, "%s/user.json", sp_data_dir());
     snprintf(cpath, sizeof cpath, "%s/config.ini", sp_data_dir());
     memset(&user, 0, sizeof user);
-    cfg = read_text(cpath);
-    if (cfg && key_int(cfg, "local_menu", 0) && !key_int(cfg, "selftest", 0)) {
-        local_menu(cpath, cfg);
-        free(cfg);
-        return;
-    }
-    free(cfg);
     if (slippi_user_load(&user, upath, err, sizeof err) != 0) return;   /* no account: offline */
     memset(&c, 0, sizeof c);
     c.character = 2;

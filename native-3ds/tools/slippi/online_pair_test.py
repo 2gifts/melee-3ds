@@ -51,7 +51,7 @@ def records(path):
     out = {}
     for off in range(0, len(data) - 39, 40):
         rec = data[off:off + 40]
-        if rec[0:1] in (b'P', b'O', b'I', b'J'):
+        if rec[0:1] in (b'P', b'O', b'I'):
             frame = struct.unpack('>i', rec[4:8])[0]
             out[(rec[0:1], frame, rec[1])] = rec
     return out

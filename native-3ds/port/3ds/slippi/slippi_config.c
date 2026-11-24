@@ -21,8 +21,6 @@ void slippi_config_defaults(slippi_config *cfg)
     cfg->auto_resend = 1;
     cfg->send_checksum = 1;
     cfg->mm_retries = -1;
-    cfg->local_players = 2;
-    cfg->local_timeout_ms = 2000;
     cfg->selftest_frames = 600;
     cfg->selftest_character = 2;          /* Fox */
 }
@@ -61,12 +59,6 @@ int slippi_config_load(slippi_config *cfg, const char *path)
         else if (!strcmp(key, "mm_host")) copy(cfg->mm_host, sizeof(cfg->mm_host), value);
         else if (!strcmp(key, "mm_port")) cfg->mm_port = v;
         else if (!strcmp(key, "local_port")) cfg->local_port = v;
-        else if (!strcmp(key, "local_timeout_ms")) cfg->local_timeout_ms = v < 200 ? 200 : v;
-        else if (!strcmp(key, "local_udp")) cfg->local_udp = v;
-        else if (!strcmp(key, "local_lobby")) cfg->local_lobby = v;
-        else if (!strcmp(key, "local_group")) cfg->local_group = v;
-        else if (!strcmp(key, "local_group_menu")) cfg->local_group_menu = v;
-        else if (!strcmp(key, "local_players")) cfg->local_players = v < 2 ? 2 : v > 4 ? 4 : v;
         else if (!strcmp(key, "lan_ip")) copy(cfg->lan_ip, sizeof(cfg->lan_ip), value);
         else if (!strcmp(key, "app_version")) copy(cfg->app_version, sizeof(cfg->app_version), value);
         else if (!strcmp(key, "code_encoding")) cfg->code_fullwidth = strcmp(value, "ascii") != 0;
@@ -85,8 +77,6 @@ int slippi_config_load(slippi_config *cfg, const char *path)
         else if (!strcmp(key, "selftest_frames")) cfg->selftest_frames = v;
         else if (!strcmp(key, "selftest_character")) cfg->selftest_character = v;
         else if (!strcmp(key, "selftest_allow_real_mm")) cfg->selftest_allow_real_mm = v;
-        else if (!strcmp(key, "selftest_games")) cfg->selftest_games = v;
-        else if (!strcmp(key, "selftest_crash_frame")) cfg->selftest_crash_frame = v;
         else if (!strcmp(key, "selftest_exit")) cfg->selftest_exit = v;
         else sp_log("config: unknown key '%s' ignored", key);
     }

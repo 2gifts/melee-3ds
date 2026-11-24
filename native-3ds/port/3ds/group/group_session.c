@@ -1,0 +1,634 @@
+/* Group play's network side (see group_session.h): the localwireless module carrying a Melee lobby and lockstep
+ * matches. The module moves bytes: one 8-byte pad per console per frame, the lobby blob (group_lobby.c), door / Start /
+ * stage commands, and the match block as the start blob. Everything Melee-specific stays here and in group_lobby.c. */
+#include "group_session.h"
+#include "group_bridge.h"
+#include "localwireless.h"
+#include "lw_platform.h"
+#include "slippi_plat.h"   /* the port's platform layer (time, lock, thread, log, data folder); nothing else of Slippi */
+#include <stdarg.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+/* What the localwireless module needs from its host project. */
+uint64_t lw_platform_time_us(void) { return sp_time_us(); }
+uint32_t lw_platform_random(void) { return sp_random(); }
+int lw_platform_net_init(void) { return sp_net_init(); }
+void lw_platform_log(const char *fmt, ...)
+{
+    char line[200];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(line, sizeof(line), fmt, ap);
+    va_end(ap);
+    sp_log("%s", line);
+}
+
+#define PAD_BYTES 8
+#define FRAME_US 16683
+enum { ST_IDLE = 0, ST_SEARCHING = 1, ST_CONNECTED = 3, ST_FAILED = 4, ST_DISCONNECTED = 5 };   /* slippi_net_bridge.h */
+
+static struct {
+    int open, status, host, automatic, my_port;
+    char error[160];
+    group_config cfg;
+    int thread_running;
+    volatile int thread_stop;
+    /* the lobby: the host's state (host) and what everyone shows */
+    lobby_host host_lobby;
+    lobby_state view;
+    int view_valid;
+    unsigned view_version;
+    int match_pending;            /* host: the stage was picked; start the game once the module is free */
+    int sudden_pending;           /* host: the last match was tied; start its sudden death once the module is free */
+    unsigned char last_block[LOBBY_BLOCK_SIZE];   /* host: the block of the last game started */
+    int last_block_ok;
+    /* automatic sessions (tests) */
+    int auto_joined, auto_started, auto_stage;
+    /* the lockstep frame driver */
+    int last_queued_frame, stall_frames;
+    uint64_t stall_since_us;
+} G;
+
+/* ---- settings ---- */
+
+int group_ini_int(const char *text, const char *key, int def)
+{
+    size_t kl = strlen(key);
+    for (const char *line = text; line && *line;) {
+        while (*line == ' ' || *line == '\t' || *line == '\r' || *line == '\n') ++line;
+        if (!strncmp(line, key, kl) && line[kl] == '=') return atoi(line + kl + 1);
+        line = strchr(line, '\n');
+    }
+    return def;
+}
+
+void group_config_load(group_config *c)
+{
+    char path[256];
+    snprintf(path, sizeof(path), "%s/group.ini", sp_data_dir());
+    char *t = sp_read_file(path, NULL);
+    const char *s = t ? t : "";
+    c->menu = group_ini_int(s, "menu", 0);
+    c->top_menu = group_ini_int(s, "top_menu", 0);
+    c->delay = group_ini_int(s, "delay", 2);
+    if (c->delay < 1) c->delay = 1;
+    if (c->delay > 15) c->delay = 15;
+    c->timeout_ms = group_ini_int(s, "timeout_ms", 2000);
+    if (c->timeout_ms < 200) c->timeout_ms = 200;
+    c->udp = group_ini_int(s, "udp", 0);
+    c->port = group_ini_int(s, "port", 0);
+    c->drop_pct = group_ini_int(s, "drop_pct", 0);
+    c->net_thread = group_ini_int(s, "net_thread", 1);
+    c->net_thread_core = group_ini_int(s, "net_thread_core", -2);
+    c->auto_players = group_ini_int(s, "auto_players", 2);
+    free(t);
+}
+
+/* ---- the lobby (lock held) ---- */
+
+/* The host's lobby state goes to every console, and into the beacon (so a console browsing sees who is here). */
+static void lobby_publish(void)
+{
+    uint8_t b[LW_MAX_LOBBY];
+    int n = lobby_encode(&G.host_lobby.st, b, sizeof(b));
+    if (n <= 0) return;
+    lw_host_set_lobby(b, n);
+    lw_host_set_beacon(b, n);
+    G.view = G.host_lobby.st;
+    G.view_valid = 1;
+}
+
+/* Host: the stage is picked, so build the block from the lobby and start the game (once the module is free). */
+static int lobby_start_match(void)
+{
+    unsigned char blk[LOBBY_BLOCK_SIZE];
+    lobby_build_block(blk, &G.host_lobby.st, sp_random() & 0xFFFF, G.cfg.delay);
+    if (lw_host_start(blk, sizeof(blk)) != 0) return 0;        /* the last game is still ending; try again */
+    memcpy(G.last_block, blk, sizeof(blk));
+    G.last_block_ok = 1;
+    lobby_host_match_began(&G.host_lobby);
+    sp_log("group: starting a match: stage 0x%02x, %d consoles present", G.host_lobby.st.stage, __builtin_popcount(lw_present()));
+    lobby_publish();
+    return 1;
+}
+
+/* Host: a sudden death after a tie: the last game's block marked LOBBY_BLOCK_SUDDEN (every console turns it into the
+ * sudden death setup from its own copy of the tied result, which lockstep makes identical), a new rng offset, and only
+ * the consoles that played that game. */
+static int sudden_start(void)
+{
+    unsigned char blk[LOBBY_BLOCK_SIZE];
+    unsigned rng = sp_random() & 0xFFFF;
+    memcpy(blk, G.last_block, sizeof(blk));
+    blk[LOBBY_BLOCK_SUDDEN] = 1;
+    blk[0x138] = (unsigned char)(rng >> 24); blk[0x139] = (unsigned char)(rng >> 16);
+    blk[0x13A] = (unsigned char)(rng >> 8); blk[0x13B] = (unsigned char)rng;
+    if (lw_host_start_again(blk, sizeof(blk)) != 0) return 0;  /* the last game is still ending; try again */
+    memcpy(G.last_block, blk, sizeof(blk));
+    lobby_host_match_began(&G.host_lobby);
+    G.host_lobby.st.mode = 1;
+    sp_log("group: starting a sudden death");
+    lobby_publish();
+    return 1;
+}
+
+static void host_apply(int flags)
+{
+    if (flags & LOBBY_START_MATCH) G.match_pending = 1;
+    if (flags & LOBBY_CHANGED) lobby_publish();
+}
+
+static void set_door(int port, const lobby_slot *l)
+{
+    if (G.host) { host_apply(lobby_host_set_door(&G.host_lobby, port, l)); return; }
+    uint8_t c[LW_MAX_COMMAND];
+    lw_send_command(c, lobby_cmd_door(c, port, l));
+}
+
+/* An automatic session's host starts by itself once auto_players consoles are here and every door is ready. */
+static void auto_host(void)
+{
+    lobby_state *s = &G.host_lobby.st;
+    if (G.auto_started) return;
+    if (s->phase == LOBBY_CSS && __builtin_popcount(lw_present()) >= G.cfg.auto_players && lobby_can_start(s)) {
+        int all = 1;
+        for (int i = 0; i < LOBBY_SLOTS; ++i)
+            if ((lw_present() >> i & 1) && s->slot[i].chosen != 1) all = 0;
+        if (all) host_apply(lobby_host_start(&G.host_lobby, 0));
+    }
+    if (s->phase == LOBBY_STAGE && !s->stage_picked) {
+        host_apply(lobby_host_pick_stage(&G.host_lobby, G.auto_stage, 0));
+        G.auto_started = 1;
+    }
+}
+
+static void lobby_service(void)
+{
+    if (G.host) {
+        int flags = lobby_host_sync(&G.host_lobby, lw_present());
+        uint8_t cmd[LW_MAX_COMMAND];
+        int from, n;
+        while ((n = lw_poll_command(&from, cmd, sizeof(cmd))) > 0) flags |= lobby_host_command(&G.host_lobby, from, cmd, n);
+        host_apply(flags);
+        if (G.automatic) auto_host();
+        if (G.sudden_pending) {
+            G.match_pending = 0;                           /* nothing else starts before the sudden death */
+            if (sudden_start()) G.sudden_pending = 0;
+        } else if (G.match_pending && lobby_start_match()) {
+            G.match_pending = 0;
+        }
+        if (!G.view_valid) lobby_publish();
+    } else {
+        unsigned v = lw_lobby_version();
+        if (v != G.view_version || !G.view_valid) {
+            uint8_t b[LW_MAX_LOBBY];
+            int n = lw_get_lobby(b, sizeof(b));
+            if (n > 0 && lobby_decode(&G.view, b, n) == 0) G.view_valid = 1;
+            G.view_version = v;
+        }
+    }
+}
+
+/* ---- the session ---- */
+
+static void fail(int status, const char *text)
+{
+    G.status = status;
+    snprintf(G.error, sizeof(G.error), "%s", text && text[0] ? text : "Local wireless failed");
+    sp_log("group: %s", G.error);
+}
+
+static void service(void)
+{
+    if (!G.open || (G.status != ST_SEARCHING && G.status != ST_CONNECTED)) return;
+    int st = lw_poll();
+    if (st == LW_FAILED) { fail(ST_FAILED, lw_error()); return; }
+    if (st == LW_DISCONNECTED) { fail(ST_DISCONNECTED, lw_error()); return; }
+    if (st == LW_SEARCHING && G.automatic && !G.host && !G.auto_joined && lw_browsing() && lw_scan_count() > 0) {
+        lw_net n;
+        if (lw_scan_get(0, &n) == 0 && lw_join(n.key) == 0) {
+            G.auto_joined = 1;
+            sp_log("group: joining the game of \"%s\"", n.host);
+        }
+    }
+    if (st != LW_CONNECTED) return;
+    if (G.status == ST_SEARCHING) {
+        G.my_port = lw_my_index();
+        G.status = ST_CONNECTED;
+        sp_log("group: in the lobby on port %d%s", G.my_port + 1, G.host ? " (host)" : "");
+    }
+    lobby_service();
+}
+
+static void worker(void *arg)
+{
+    (void)arg;
+    while (!G.thread_stop) {
+        sp_lock();
+        service();
+        sp_unlock();
+        sp_sleep_us(2000);
+    }
+}
+
+/* Called without the lock: the worker needs it to finish its last service. */
+static void stop_thread(void)
+{
+    if (G.thread_running) {
+        G.thread_stop = 1;
+        sp_thread_join();
+        G.thread_running = 0;
+    }
+}
+
+int group_session_start(int host, int automatic)
+{
+    char err[160] = "";
+    group_session_stop();
+    sp_lock_init();
+    sp_lock();
+    memset(&G, 0, sizeof(G));
+    group_config_load(&G.cfg);
+    G.host = host;
+    G.automatic = automatic;
+    G.my_port = host ? 0 : -1;
+    G.auto_stage = 0x1F;                      /* Battlefield, unless the host's engine says otherwise */
+    lw_config c;
+    memset(&c, 0, sizeof(c));
+    c.host = host;
+    c.input_size = PAD_BYTES;
+    c.frame_us = FRAME_US;
+    c.timeout_ms = G.cfg.timeout_ms;
+    c.use_udp = G.cfg.udp;
+#ifndef __3DS__
+    c.use_udp = 1;                            /* PC tools: there is no UDS */
+#endif
+    c.port = G.cfg.port;
+    c.test_drop_pct = G.cfg.drop_pct;
+    if (host) lobby_host_init(&G.host_lobby, 1);
+    sp_log("group: %s (delay %d)", host ? "hosting a game" : "looking for games", G.cfg.delay);
+    if (lw_open(&c, err, sizeof(err)) != 0) {
+        fail(ST_FAILED, err[0] ? err : "Local wireless is unavailable");
+        sp_unlock();
+        return -1;
+    }
+    G.open = 1;
+    G.status = ST_SEARCHING;
+    int want_thread = G.cfg.net_thread, core = G.cfg.net_thread_core;
+    sp_unlock();
+    if (want_thread) {
+        G.thread_stop = 0;
+        if (sp_thread_start(worker, NULL, core) == 0) G.thread_running = 1;
+        else sp_log("group: no network thread; servicing from the engine's polls");
+    }
+    return 0;
+}
+
+void group_session_stop(void)
+{
+    stop_thread();
+    sp_lock_init();
+    sp_lock();
+    if (G.open) {
+        lw_close();
+        sp_log("group: session closed");
+    }
+    G.open = 0;
+    G.view_valid = 0;
+    G.match_pending = 0;
+    if (G.status == ST_SEARCHING || G.status == ST_CONNECTED) G.status = ST_IDLE;
+    sp_unlock();
+    sp_log_drain();
+}
+
+int group_session_open(void) { return G.open; }
+int group_is_host(void) { return G.host; }
+int group_my_port(void) { return G.my_port < 0 ? 0 : G.my_port; }
+
+/* ---- browsing ---- */
+
+int group_scan(group_game *out, int max)
+{
+    int n = 0;
+    sp_lock();
+    if (G.open && !G.host) {
+        int count = lw_scan_count();
+        for (int i = 0; i < count && n < max; ++i) {
+            lw_net net;
+            if (lw_scan_get(i, &net) != 0) break;
+            group_game *g = &out[n++];
+            memset(g, 0, sizeof(*g));
+            g->key = net.key;
+            snprintf(g->host, sizeof(g->host), "%s", net.host);
+            g->players = net.players;
+            g->max = net.max;
+            if (lobby_decode(&g->lobby, net.data, net.len) != 0) memset(&g->lobby, 0, sizeof(g->lobby));
+        }
+    }
+    sp_unlock();
+    return n;
+}
+
+int group_join(uint32_t key)
+{
+    sp_lock();
+    int r = G.open && !G.host ? lw_join(key) : -1;
+    if (r != 0) snprintf(G.error, sizeof(G.error), "%s", lw_error()[0] ? lw_error() : "Could not join the game");
+    sp_unlock();
+    return r;
+}
+
+/* ---- the lobby, natively ---- */
+
+int group_lobby_view(lobby_state *out)
+{
+    sp_lock();
+    int ok = G.open && G.view_valid;
+    if (ok && out) *out = G.view;
+    sp_unlock();
+    return ok;
+}
+
+unsigned group_present(void) { sp_lock(); unsigned p = G.open ? lw_present() : 0; sp_unlock(); return p; }
+
+int group_watching(void)
+{
+    sp_lock();
+    int w = G.open && G.status == ST_CONNECTED && lw_match_running() && !lw_in_match();
+    sp_unlock();
+    return w;
+}
+
+#define STATUS_US 250000ull                    /* how often the match status goes out */
+
+void group_match_status(const lobby_status *st)
+{
+    static uint64_t last_us;
+    uint64_t now = sp_time_us();
+    if (!G.open || !G.host || now - last_us < STATUS_US) return;   /* cheap checks first: called every frame */
+    sp_lock();
+    if (G.open && G.host && G.status == ST_CONNECTED && lw_match_running()) {
+        last_us = now;
+        host_apply(lobby_host_set_status(&G.host_lobby, st));
+    }
+    sp_unlock();
+}
+int group_signal(int port) { sp_lock(); int s = G.open ? lw_signal(port) : 0; sp_unlock(); return s; }
+
+void group_name(int port, char *out, int len)
+{
+    if (len <= 0) return;
+    sp_lock();
+    snprintf(out, (size_t)len, "%s", G.open ? lw_player_name(port) : "");
+    sp_unlock();
+}
+
+/* ---- the lobby, for the engine ---- */
+
+int group_lobby_get(MpGroupLobby *out)
+{
+    memset(out, 0, sizeof(*out));
+    sp_lock();
+    if (!G.open || !G.view_valid) { sp_unlock(); return 0; }
+    const lobby_state *v = &G.view;
+    out->valid = 1;
+    out->me = (unsigned char)(G.my_port < 0 ? 0 : G.my_port);
+    out->host = (unsigned char)G.host;
+    out->present = (unsigned char)lw_present();
+    out->phase = v->phase; out->starter = v->starter; out->stage_picked = v->stage_picked; out->mode = v->mode;
+    out->stage_hi = (unsigned char)(v->stage >> 8); out->stage_lo = (unsigned char)v->stage; out->alt_stage = v->alt_stage;
+    out->rules.time_mode = v->rules.time_mode; out->rules.stocks = v->rules.stocks; out->rules.minutes = v->rules.minutes;
+    out->rules.items = v->rules.items; out->rules.teams = v->rules.teams; out->rules.friendly_fire = v->rules.friendly_fire;
+    out->rules.melee_valid = v->rules.melee_valid;
+    memcpy(out->rules.melee, v->rules.melee, sizeof(out->rules.melee));
+    for (int i = 0; i < 4; ++i) {
+        const lobby_slot *l = &v->slot[i];
+        MpGroupDoor *d = &out->door[i];
+        out->signal[i] = (unsigned char)lw_signal(i);
+        d->kind = l->kind; d->fighter = l->fighter; d->color = l->color; d->team = l->team; d->level = l->level; d->chosen = l->chosen;
+        memcpy(d->tag, l->tag, LOBBY_TAG_BYTES);
+    }
+    sp_unlock();
+    return 1;
+}
+
+void group_lobby_set_door(int port, const MpGroupDoor *d)
+{
+    lobby_slot l;
+    memset(&l, 0, sizeof(l));
+    l.kind = d->kind; l.fighter = d->fighter; l.color = d->color; l.team = d->team; l.level = d->level; l.chosen = d->chosen;
+    memcpy(l.tag, d->tag, LOBBY_TAG_BYTES);
+    sp_lock();
+    if (G.open && G.status == ST_CONNECTED) set_door(port, &l);
+    sp_unlock();
+}
+
+void group_lobby_start(void)
+{
+    sp_lock();
+    if (G.open && G.status == ST_CONNECTED) {
+        if (G.host) host_apply(lobby_host_start(&G.host_lobby, 0));
+        else { uint8_t c[LW_MAX_COMMAND]; lw_send_command(c, lobby_cmd_start(c)); }
+    }
+    sp_unlock();
+}
+
+void group_lobby_stage(int stage, int alt_stage)
+{
+    sp_lock();
+    if (G.open && G.status == ST_CONNECTED) {
+        if (G.host) host_apply(lobby_host_pick_stage(&G.host_lobby, stage, alt_stage));
+        else { uint8_t c[LW_MAX_COMMAND]; lw_send_command(c, lobby_cmd_stage(c, stage, alt_stage)); }
+    }
+    sp_unlock();
+}
+
+void group_lobby_back(void)
+{
+    uint8_t c[LW_MAX_COMMAND];
+    int n = lobby_cmd_back(c);
+    sp_lock();
+    if (G.open && G.status == ST_CONNECTED) {
+        if (G.host) host_apply(lobby_host_command(&G.host_lobby, 0, c, n));
+        else lw_send_command(c, n);
+    }
+    sp_unlock();
+}
+
+void group_lobby_rules(const MpGroupRules *r)
+{
+    lobby_rules x;
+    memset(&x, 0, sizeof(x));
+    x.time_mode = r->time_mode; x.stocks = r->stocks; x.minutes = r->minutes; x.items = r->items; x.teams = r->teams;
+    x.friendly_fire = r->friendly_fire;
+    x.melee_valid = r->melee_valid ? 1 : 0;
+    memcpy(x.melee, r->melee, LOBBY_MELEE_RULES);
+    sp_lock();
+    if (G.open && G.host) host_apply(lobby_host_set_rules(&G.host_lobby, &x));   /* only the host sets the rules */
+    sp_unlock();
+}
+
+int group_players(void) { sp_lock(); int n = G.open ? lw_players() : 0; sp_unlock(); return n; }
+
+int group_player_name(int port, char *buf, int len)
+{
+    if (len <= 0) return 0;
+    group_name(port, buf, len);
+    return (int)strlen(buf);
+}
+
+/* The match is over on this console (back to the lobby). */
+void group_game_end(void)
+{
+    sp_lock();
+    if (G.open) {
+        lw_game_end();
+        if (G.host) {
+            lobby_host_match_over(&G.host_lobby);
+            lobby_publish();
+        }
+        G.last_queued_frame = 0;
+        G.stall_frames = 0;
+    }
+    sp_unlock();
+}
+
+void group_sudden_death(void)
+{
+    sp_lock();
+    if (G.open && G.host && G.last_block_ok) {
+        G.sudden_pending = 1;
+        sp_log("group: the match was tied: a sudden death follows");
+    }
+    sp_unlock();
+}
+
+/* ---- the online bridge ---- */
+
+int group_net_start(const char *role)
+{
+    int host = role && !strcmp(role, "@host");
+    if (!role || (!host && strcmp(role, "@join"))) {
+        snprintf(G.error, sizeof(G.error), "opponent= must be @host or @join");
+        G.status = ST_FAILED;
+        return -2;
+    }
+    return group_session_start(host, 1) == 0 ? 0 : -3;
+}
+
+int group_net_status(void) { return G.status; }
+const char *group_net_error(void) { return G.error; }
+
+void group_net_poll(void)
+{
+    if (!G.thread_running) {
+        sp_lock();
+        service();
+        sp_unlock();
+    }
+    sp_log_drain();
+}
+
+void group_net_stop(void) { group_session_stop(); }
+int group_net_local_index(void) { return group_my_port(); }
+
+/* Automatic sessions: this console takes its door with the engine's configured fighter (a different one per port, so
+ * the fighters are not all identical) and the host remembers the stage. */
+void group_net_set_selections(int char_id, int color, int stage_id, int stage_selected)
+{
+    sp_lock();
+    if (G.open && G.status == ST_CONNECTED && G.automatic) {
+        lobby_slot s;
+        memset(&s, 0, sizeof(s));
+        s.kind = LOBBY_HUMAN;
+        s.fighter = (uint8_t)((char_id + group_my_port()) % 26);
+        s.color = (uint8_t)color;
+        s.chosen = 1;
+        s.level = 3;
+        if (G.host && stage_selected) G.auto_stage = stage_id;
+        set_door(group_my_port(), &s);
+    }
+    sp_unlock();
+}
+
+int group_net_remote_ready(void) { return G.status == ST_CONNECTED; }
+
+int group_net_match_block(unsigned char *out)
+{
+    unsigned char blk[LOBBY_BLOCK_SIZE];
+    sp_lock();
+    int ok = G.open && G.status == ST_CONNECTED && lw_get_start(blk, sizeof(blk)) == (int)sizeof(blk);
+    if (ok && out) {
+        memcpy(out, blk, sizeof(blk));
+        out[0x13C] = (unsigned char)group_my_port();
+        sp_log("group: match block: %d consoles, stage 0x%02x%02x, fighters %u/%u/%u/%u, types %u/%u/%u/%u, delay %u%s", lw_players(),
+               blk[0xE], blk[0xF], blk[0x60], blk[0x84], blk[0xA8], blk[0xCC], blk[0x61], blk[0x85], blk[0xA9], blk[0xCD], blk[0x13D],
+               blk[LOBBY_BLOCK_SUDDEN] ? ", sudden death" : "");
+        sp_log("group: match rules %02x %02x %02x %02x, teams %u, items %02x, time limit %u s, damage ratio %02x%02x", blk[0], blk[1],
+               blk[2], blk[3], blk[8], blk[0xB], (unsigned)blk[0x12] << 8 | blk[0x13], blk[0x30], blk[0x31]);
+    }
+    sp_unlock();
+    return ok;
+}
+
+static void begin_game_locked(void)
+{
+    lw_game_begin();
+    G.last_queued_frame = 0;
+    G.stall_frames = 0;
+}
+
+void group_net_new_game(void)
+{
+    sp_lock();
+    if (G.open) begin_game_locked();
+    sp_unlock();
+}
+
+/* Our pad goes to the host; the answer is the host's bundle for this frame (see group_bridge.h). */
+int group_net_send_inputs(int frame, int delay, int finalized_frame, unsigned checksum, const unsigned char *local_pad12,
+                          unsigned char *out)
+{
+    sp_lock();
+    if (!G.open || G.status != ST_CONNECTED) { sp_unlock(); return 3; }
+    if (frame == 1 && G.last_queued_frame != 1 + delay) begin_game_locked();   /* a new game: frame 1 again */
+    if (frame + delay > G.last_queued_frame) {
+        /* zero pads for the delay frames at the start (Dolphin handleSendInputs) */
+        if (G.last_queued_frame == 0)
+            for (int f = 1; f < frame + delay; ++f) lw_submit(f, NULL, 0, 0);
+        lw_submit(frame + delay, local_pad12, finalized_frame, checksum);
+        G.last_queued_frame = frame + delay;
+    }
+    uint8_t in[LW_MAX_PLAYERS][LW_MAX_INPUT], mask = 0;
+    if (!lw_bundle(frame, in, &mask)) {
+        if (G.stall_frames++ == 0) G.stall_since_us = sp_time_us();
+        /* backstop, past the host's own drop timeout */
+        if (sp_time_us() - G.stall_since_us > 5000000ull + (uint64_t)G.cfg.timeout_ms * 1000ull) {
+            sp_log("group: no inputs from the host for too long (frame %d)", frame);
+            fail(ST_DISCONNECTED, "No inputs from the host");
+            G.stall_frames = 0;
+            sp_unlock();
+            return 3;
+        }
+        sp_unlock();
+        return 2;
+    }
+    G.stall_frames = 0;
+    if (out) {
+        memset(out, 0, 50);
+        for (int i = 0; i < 4; ++i) memcpy(out + 12 * i, in[i], PAD_BYTES);
+        out[48] = mask;
+        out[49] = (unsigned char)lw_players();
+    }
+    sp_unlock();
+    return 1;
+}
+
+int group_net_remote_checksum_frame(void) { sp_lock(); int f = lw_remote_checksum(NULL); sp_unlock(); return f; }
+int group_net_remote_checksum(int *unused) { (void)unused; return group_net_remote_checksum_frame(); }
+unsigned group_net_remote_checksum_value(void) { uint32_t ck = 0; sp_lock(); lw_remote_checksum(&ck); sp_unlock(); return ck; }
+int group_net_ping_ms(void) { sp_lock(); int p = lw_ping_us() / 1000; sp_unlock(); return p; }
+int group_net_time_offset_us(void) { return 0; }   /* the star paces everyone by the slowest console; no time sync */
+int group_net_stat(int which) { sp_lock(); int v = (int)lw_stat(which); sp_unlock(); return v; }

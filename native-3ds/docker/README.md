@@ -57,9 +57,18 @@ MELEE_VARIANT=slippi MELEE_VOLUME=melee3ds-slippi-work docker/build.sh "<disc>" 
 MELEE_VOLUME=melee3ds-slippi-work docker/emu-test.sh build-dev   # the development build the tests need
 docker/emu-test.sh pair --games 1 --end-frame 600
 docker/emu-test.sh net pc-pair
-docker/emu-test.sh net local-quad --players 4 --drop 50          # local wireless through the Slippi provider, PC loopback
-docker/emu-test.sh run tools/localwireless/lw_test.py --players 4 --drop 50   # the localwireless module alone
-docker/emu-test.sh run tools/slippi/online_quad_test.py --players 3 --end-frame 600 --kill 3:60 --timeout-ms 20000   # engine, Azahar
+```
+
+Group play (Melee -> Group, local wireless lobbies; `port/3ds/group`, `tools/group`):
+
+```sh
+docker/emu-test.sh group --players 4 --games 2 --drop 50        # PC consoles: lobby, doors, Start, stage, matches
+docker/emu-test.sh group --players 4 --games 1 --crash 3:200    # a console vanishes mid-match: the others make it a CPU
+docker/emu-test.sh group --players 3 --via-menu                 # meeting through the Solo / Group pages
+docker/emu-test.sh run tools/localwireless/lw_lobby_test.py     # the localwireless module alone
+docker/emu-test.sh run tools/group/group_quad_test.py --players 3 --end-frame 600 --kill 3:60 --timeout-ms 20000   # engine, Azahar
+docker/emu-test.sh run tools/group/group_menu_test.py            # Melee -> Solo / Group in Azahar
+docker/emu-test.sh run tools/group/group_lobby_test.py           # the lobby CSS in Azahar against a PC console
 ```
 
 Results land in `native-3ds/build/emu-test/` (set `MELEE_TEST_OUT` to change it).
@@ -90,7 +99,7 @@ boot. `docker/emu-web.sh logs` shows the container log.
 
 What it is: the stock `linuxserver/azahar` image (a Selkies web desktop on Wayland) with Azahar launched on
 `melee-development.3dsx` from the read-only work volume. Bound to 127.0.0.1 only. At each start the session script
-(`docker/emu-web-session.sh`) writes `slippi/config.ini` (`local_group=1`, `local_udp=1`, `local_port=44100`,
+(`docker/emu-web-session.sh`) writes `slippi/group.ini` (`menu=1`, `udp=1`, `port=44100`) and `slippi/config.ini` (
 `prefetch=0`, `delay=2`) and links the builder's Slippi menu files.
 
 Controls (click the page first so it captures the keyboard): the mouse is the touch screen; arrows = circle pad
@@ -116,5 +125,5 @@ Other options (environment variables of `emu-web.sh`):
 
 Two consoles in the browser: start a second container with another port and name, for example
 `MELEE_WEB_NAME=melee3ds-emu-web2 MELEE_WEB_PORT=3189 docker/emu-web.sh`. UDS between separate emulators does not work
-headless; with `local_udp=1` the consoles meet over the loopback link, which is **not shared between containers**, so
+headless; with `udp=1` in `group.ini` the consoles meet over the loopback link, which is **not shared between containers**, so
 use one container (or the PC tools) for lobby tests.

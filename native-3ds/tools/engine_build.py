@@ -72,6 +72,8 @@ def compile_engine(jobs=6,sanitize=False,output_directory=None,clamped_shade=Fal
     sources += sorted((ROOT/'port/engine').glob('*.c'))
     # Slippi online experiment: engine-side (big-endian) sources.
     sources += sorted((ROOT/'port/engine/slippi').glob('*.c'))
+    # Group play (local wireless lobbies): engine-side sources.
+    sources += sorted((ROOT/'port/engine/group').glob('*.c'))
     from engine_math import generate
     dolphin_math=generate()
     sources.append(dolphin_math)

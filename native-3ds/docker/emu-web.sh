@@ -7,8 +7,9 @@
 #
 # How it works: the stock linuxserver/azahar image is a Selkies web desktop (labwc + Azahar streamed to the
 # browser by Selkies). We replace its labwc autostart (docker/emu-web-session.sh, mounted read-only) so the
-# desktop session starts Azahar directly on melee-development.3dsx with the software renderer and a profile whose
-# SD card holds sdmc:/3ds/melee/slippi/config.ini (local_group=1, local_udp=1, local_port=44100, prefetch=0).
+# desktop session starts Azahar directly on melee-development.3dsx (OpenGL renderer by default) and a profile whose
+# SD card holds sdmc:/3ds/melee/slippi/group.ini (menu=1, udp=1, port=44100), config.ini (prefetch=0) and
+# no-scripted-input (the development build presses nothing by itself and never stops on its own).
 # The work volume (disc extract, build) is mounted READ-ONLY; nothing is copied or uploaded. The port is bound
 # to 127.0.0.1 only. The emulator profile and saves live in the container and vanish with it.
 #

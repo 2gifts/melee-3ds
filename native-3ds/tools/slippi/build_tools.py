@@ -21,7 +21,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SLIPPI = ROOT / 'port/3ds/slippi'
-LW = ROOT / 'port/3ds/localwireless'
 OUT = Path(os.environ.get('MELEE_TOOLS_DIR') or ROOT / 'build/slippi-tools')
 
 
@@ -50,19 +49,12 @@ def main():
     obj_dir = OUT / 'obj'
     obj_dir.mkdir(exist_ok=True)
     flags = ['-std=gnu11', '-O2', '-g', '-Wall', '-Wextra', '-Wno-unused-parameter', '-Wno-sign-compare',
-             '-I' + str(SLIPPI), '-I' + str(SLIPPI / 'enet/include'), '-I' + str(LW)]
+             '-I' + str(SLIPPI), '-I' + str(SLIPPI / 'enet/include')]
     flags += ['-D_WIN32_WINNT=0x0601'] if WINDOWS else ['-D_GNU_SOURCE', '-pthread']
     # slippi_files.c, slippi_boot_ui.c, slippi_prefetch.c and slippi_ui.c are 3DS only.
     lib = sorted(p for p in SLIPPI.glob('*.c') if p.name not in ('slippi_files.c', 'slippi_boot_ui.c', 'slippi_prefetch.c', 'slippi_ui.c'))
     enet = sorted((SLIPPI / 'enet').glob('*.c'))
-    lw = sorted(LW.glob('*.c'))
     objects = []
-    lw_objects = []
-    for src in lw:
-        obj = obj_dir / ('lw_' + src.stem + '.o')
-        subprocess.run([cc, *flags, '-c', str(src), '-o', str(obj)], check=True)
-        objects.append(obj)
-        lw_objects.append(obj)
     for src in lib + enet:
         obj = obj_dir / (('enet_' if src.parent.name == 'enet' else '') + src.stem + '.o')
         extra = ['-w', *ENET_FEATURES] if src.parent.name == 'enet' else []
@@ -73,15 +65,6 @@ def main():
         exe = OUT / (name + EXE)
         subprocess.run([cc, *flags, str(ROOT / 'tools/slippi/src' / src), *map(str, objects), *libs, '-o', str(exe)], check=True)
         print('built', exe)
-    exe = OUT / ('lw_client' + EXE)   # the module alone (tools/localwireless)
-    subprocess.run([cc, *flags, str(ROOT / 'tools/localwireless/lw_client.c'), *map(str, lw_objects), *libs, '-o', str(exe)], check=True)
-    print('built', exe)
-    exe = OUT / ('lw_lobby_client' + EXE)   # the module's lobby, alone
-    subprocess.run([cc, *flags, str(ROOT / 'tools/localwireless/lw_lobby_client.c'), *map(str, lw_objects), *libs, '-o', str(exe)], check=True)
-    print('built', exe)
-    exe = OUT / ('lobby_unit' + EXE)   # the Melee lobby rules, alone
-    subprocess.run([cc, *flags, str(ROOT / 'tools/slippi/src/lobby_unit.c'), str(SLIPPI / 'slippi_lobby.c'), '-o', str(exe)], check=True)
-    print('built', exe)
 
 
 if __name__ == '__main__':

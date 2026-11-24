@@ -12,7 +12,9 @@ SD=$DATA/sdmc/3ds/melee
 mkdir -p "$CFG" "$SD/slippi" "$DATA/log"
 ln -sfn "$MELEE_GAME_FILES" "$SD/files"
 [ ! -d "$MELEE_SLIPPI_FILES" ] || ln -sfn "$MELEE_SLIPPI_FILES" "$SD/slippi/files"
-printf 'local_group=1\nlocal_udp=1\nlocal_port=44100\nprefetch=0\ndelay=2\n' > "$SD/slippi/config.ini"
+printf 'prefetch=0\ndelay=2\n' > "$SD/slippi/config.ini"
+printf 'menu=1\nudp=1\nport=44100\ndelay=2\n' > "$SD/slippi/group.ini"
+: > "$SD/no-scripted-input"   # the development build's scripted presses and automatic stop off
 
 python3 - <<'PY'
 import os, re

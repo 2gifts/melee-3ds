@@ -1,9 +1,10 @@
-/* Test client for the local wireless *lobby* (cfg.lobby), no game: a host or a joiner that sits in the lobby, sends
+/* Test client for the local wireless lobby, no game: a host or a joiner that sits in the lobby, sends
  * commands, and plays lockstep matches when the host starts them. Used by lw_lobby_test.py, which starts several of them
  * at different times, makes some leave or vanish, and compares what they print.
  *
- *   lw_lobby_client --host --port N [--games G] [--start-at MS] [--frames F] [--run-ms MS] [--drop PCT]
- *   lw_lobby_client --join --port N [--join-at MS] [--leave-at MS] [--crash-at MS] [--drop PCT]
+ *   lw_lobby_client --host --port N [--games G] [--again] [--start-at MS] [--frames F] [--run-ms MS] [--drop PCT]
+ *   lw_lobby_client --join --port N [--want-tag T] [--join-at MS] [--leave-at MS] [--crash-at MS] [--drop PCT]
+ * A joiner browses and joins the first game listed (with --want-tag, the first whose beacon starts with T).
  *
  * The host sets a lobby blob (a counter and a pattern of it) every 100 ms, starts game 1 at --start-at and each next game
  * 500 ms after the previous one is over, then freezes the blob (counter 0xFFFFFFFF) at --run-ms and waits for the others.
@@ -71,21 +72,20 @@ int main(int argc, char **argv)
     memset(&c, 0, sizeof(c));
     c.input_size = 8;
     c.use_udp = 1;
-    c.lobby = 1;
     c.port = 47030;
     int games = 1, frames = 200, delay = 2, bad = 0;   /* clients take the frame count from the start blob */
-    int browse = 0, want_tag = -1, beacon_tag = -1;
+    int want_tag = -1, beacon_tag = -1, again = 0;   /* again: games after the first with lw_host_start_again */
     unsigned start_at = 3000, run_ms = 12000, join_at = 0, leave_at = 0, crash_at = 0;
     setvbuf(stdout, NULL, _IONBF, 0);
     for (int i = 1; i < argc; ++i) {
         if (!strcmp(argv[i], "--host")) c.host = 1;
         else if (!strcmp(argv[i], "--join")) c.host = 0;
-        else if (!strcmp(argv[i], "--browse")) browse = 1;
         else if (i + 1 < argc && !strcmp(argv[i], "--want-tag")) want_tag = atoi(argv[++i]);
         else if (i + 1 < argc && !strcmp(argv[i], "--beacon-tag")) beacon_tag = atoi(argv[++i]);
         else if (i + 1 < argc && !strcmp(argv[i], "--port")) c.port = atoi(argv[++i]);
         else if (i + 1 < argc && !strcmp(argv[i], "--drop")) c.test_drop_pct = atoi(argv[++i]);
         else if (i + 1 < argc && !strcmp(argv[i], "--games")) games = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--again")) again = 1;
         else if (i + 1 < argc && !strcmp(argv[i], "--frames")) frames = atoi(argv[++i]);
         else if (i + 1 < argc && !strcmp(argv[i], "--start-at")) start_at = (unsigned)atoi(argv[++i]);
         else if (i + 1 < argc && !strcmp(argv[i], "--run-ms")) run_ms = (unsigned)atoi(argv[++i]);
@@ -96,7 +96,6 @@ int main(int argc, char **argv)
     }
     t0 = now_us();
     while (ms() < join_at) sleep_us(2000);
-    c.browse = browse;
     char err[160];
     if (lw_open(&c, err, sizeof(err)) != 0) { printf("FAIL open: %s\n", err); return 1; }
 
@@ -127,10 +126,10 @@ int main(int argc, char **argv)
                 for (int k = 0; k < n; ++k) {
                     lw_net net;
                     if (lw_scan_get(k, &net) != 0) continue;
-                    if (net.len >= 2 && net.data[0] == (uint8_t)want_tag) {
+                    if (want_tag < 0 || (net.len >= 2 && net.data[0] == (uint8_t)want_tag)) {
                         printf("SCAN: %d games; joining #%d \"%s\" tag %d, %d of %d consoles, beacon check %d\n", n, k, net.host, net.data[0], net.players, net.max, net.data[1]);
-                        if (net.data[1] != (uint8_t)(net.data[0] * 3 + 1)) { printf("FAIL: beacon torn\n"); return 1; }
-                        if (lw_join(k) != 0) printf("join failed: %s\n", lw_error());
+                        if (want_tag >= 0 && net.data[1] != (uint8_t)(net.data[0] * 3 + 1)) { printf("FAIL: beacon torn\n"); return 1; }
+                        if (lw_join(net.key) != 0) printf("join failed: %s\n", lw_error());
                         break;
                     }
                 }
@@ -172,7 +171,7 @@ int main(int argc, char **argv)
                     sb[0] = (uint8_t)(games_started + 1);
                     sb[2] = (uint8_t)(frames >> 8);
                     sb[3] = (uint8_t)frames;
-                    int r = lw_host_start(sb, sizeof(sb));
+                    int r = again && games_started > 0 ? lw_host_start_again(sb, sizeof(sb)) : lw_host_start(sb, sizeof(sb));
                     if (r == 0) {
                         ++games_started;
                         printf("host starts game %d with present %x\n", games_started, lw_present());

@@ -1,13 +1,14 @@
 /* The UDS link (3DS, libctru uds.h, nwm::UDS) under the local wireless session (lw_link.h).
  *
  * The host creates a network for up to four consoles with a fixed passphrase; clients scan beacons for it and
- * join. One data frame carries one session packet on data channel 1. The 3DS system name is the player name;
- * other consoles' names are read from the node info. Elsewhere this file only provides failing stubs. */
+ * join the one picked. One data frame carries one session packet on data channel 1. The 3DS system name is the player
+ * name; other consoles' names are read from the node info. Node ids are whatever UDS assigns (1..16); the session maps
+ * them to ports. Elsewhere this file only provides failing stubs. */
 #include "lw_link.h"
 #include "lw_platform.h"
 #include <stdio.h>
 #include <string.h>
-#define LW_MAX_NODES 4
+#define LW_MAX_NODES 4   /* consoles in one network */
 
 #ifdef __3DS__
 #include <3ds.h>
@@ -28,12 +29,12 @@ static unsigned node_mask;
 static udsBindContext bind_ctx;
 static udsNetworkStruct netw;
 static char local_name[32];
-static char node_names[LW_MAX_NODES + 1][LW_LINK_NAME_MAX];
+static char node_names[LW_LINK_MAX_NODE + 1][LW_LINK_NAME_MAX];
 static uint64_t last_scan_us, last_status_us;
 static u8 scan_buf[0x4000];
 #define MAX_SCAN 8
 #define SCAN_FORGET 3                      /* scans a network may miss before it leaves the list */
-static int browse, scan_n;
+static int scan_n;
 static struct { udsNetworkStruct net; lw_net_info info; int missed; } scan_list[MAX_SCAN];
 
 static void fmt_err(char *err, int errlen, const char *what, Result r)
@@ -44,15 +45,13 @@ static void fmt_err(char *err, int errlen, const char *what, Result r)
 const char *lw_uds_local_name(void) { return local_name; }
 unsigned lw_uds_nodes(void) { return node_mask; }
 int lw_uds_my_node(void) { return my_node; }
-const char *lw_uds_node_name(int node) { return node >= 1 && node <= LW_MAX_NODES ? node_names[node] : ""; }
+const char *lw_uds_node_name(int node) { return node >= 1 && node <= LW_LINK_MAX_NODE ? node_names[node] : ""; }
 
-int lw_uds_open(int mode, int port, int max_nodes, char *err, int errlen)
+int lw_uds_open(int host, int port, int max_nodes, char *err, int errlen)
 {
-    int host = mode == LW_LINK_MODE_HOST;
-    browse = mode == LW_LINK_MODE_BROWSE;
-    scan_n = 0;
     (void)port;
     lw_uds_close();
+    scan_n = 0;
     Result r = udsInit(SHAREDMEM, NULL);
     if (R_FAILED(r)) { fmt_err(err, errlen, "Wireless is unavailable", r); return -1; }
     up = 1;
@@ -89,23 +88,15 @@ static int connect_to(const udsNetworkStruct *n, char *err, int errlen)
     return 1;
 }
 
-/* Scans once; joins the first game found. Returns 0 on failure (retried later). */
-static int try_join(void)
+/* A network's key: its host's MAC address, folded (FNV-1a), never 0. */
+static uint32_t mac_key(const u8 *mac)
 {
-    udsNetworkScanInfo *nets = NULL;
-    size_t total = 0;
-    Result r = udsScanBeacons(scan_buf, sizeof(scan_buf), &nets, &total, WLANCOMM_ID, ID8, NULL, false);
-    if (R_FAILED(r) || total == 0) {
-        if (R_FAILED(r)) lw_platform_log("uds: scan failed 0x%08lx", (unsigned long)r);
-        free(nets);
-        return 0;
-    }
-    udsNetworkStruct first = nets[0].network;
-    free(nets);
-    return connect_to(&first, NULL, 0);
+    uint32_t h = 2166136261u;
+    for (int i = 0; i < 6; ++i) h = (h ^ mac[i]) * 16777619u;
+    return h ? h : 1;
 }
 
-/* Browse mode: one scan; the list keeps its order, new networks go last, silent ones leave after SCAN_FORGET scans. */
+/* One scan; the list keeps its order, new networks go last, silent ones leave after SCAN_FORGET scans. */
 static void scan_refresh(void)
 {
     udsNetworkScanInfo *nets = NULL;
@@ -127,6 +118,7 @@ static void scan_refresh(void)
         scan_list[at].missed = 0;
         lw_net_info *in = &scan_list[at].info;
         memset(in, 0, sizeof(*in));
+        in->key = mac_key(n->host_macaddress);
         in->players = n->total_nodes;
         in->max = n->max_nodes;
         for (int j = 0; j < UDS_MAXNODES; ++j)
@@ -155,9 +147,9 @@ int lw_uds_poll(char *err, int errlen)
     uint64_t now = lw_platform_time_us();
     if (!hosting && !joined) {
         if (now - last_scan_us < SCAN_INTERVAL_US && last_scan_us) return LW_LINK_WAITING;
-        last_scan_us = now;
-        if (browse) { scan_refresh(); last_scan_us = lw_platform_time_us(); return LW_LINK_WAITING; }
-        if (!try_join()) return LW_LINK_WAITING;
+        scan_refresh();
+        last_scan_us = lw_platform_time_us();
+        return LW_LINK_WAITING;
     }
     if (now - last_status_us >= STATUS_INTERVAL_US || !last_status_us) {
         last_status_us = now;
@@ -165,10 +157,11 @@ int lw_uds_poll(char *err, int errlen)
         if (R_FAILED(udsGetConnectionStatus(&cs))) {
             node_mask = 0;
         } else {
-            /* Node ids are 1-based bit positions in node_bitmask; the host is node 1. */
-            node_mask = cs.node_bitmask & ((1u << LW_MAX_NODES) - 1);
+            /* Node ids are 1-based bit positions in node_bitmask; the host is node 1. Every id is kept: UDS decides
+             * the numbering, so a client may well be node 5 after others came and went. */
+            node_mask = cs.node_bitmask & ((1u << LW_LINK_MAX_NODE) - 1);
             my_node = (int)cs.cur_NetworkNodeID;
-            for (int n = 1; n <= LW_MAX_NODES; ++n) {
+            for (int n = 1; n <= LW_LINK_MAX_NODE; ++n) {
                 if (!(node_mask & (1u << (n - 1)))) { node_names[n][0] = 0; continue; }
                 if (node_names[n][0]) continue;
                 udsNodeInfo ni;
@@ -183,7 +176,7 @@ int lw_uds_poll(char *err, int errlen)
 
 int lw_uds_send(int node, const uint8_t *data, size_t len)
 {
-    if (!up || node < 1 || node > LW_MAX_NODES || len > UDS_DATAFRAME_MAXSIZE) return -1;
+    if (!up || node < 1 || node > LW_LINK_MAX_NODE || len > UDS_DATAFRAME_MAXSIZE) return -1;
     Result r = udsSendTo((u16)node, CHANNEL, UDS_SENDFLAG_Default, data, len);
     /* 0xC86113F0: the frame was dropped (queue full); the netcode resends. */
     return (r < 0 && (u32)r != 0xC86113F0u) ? -1 : 0;
@@ -199,16 +192,18 @@ int lw_uds_recv(uint8_t *buf, size_t cap, int *from)
     return (int)n;
 }
 
-int lw_uds_scan_count(void) { return browse && !joined ? scan_n : 0; }
+int lw_uds_scan_count(void) { return !hosting && !joined ? scan_n : 0; }
 int lw_uds_scan_get(int i, lw_net_info *out)
 {
-    if (!browse || joined || i < 0 || i >= scan_n) return -1;
+    if (hosting || joined || i < 0 || i >= scan_n) return -1;
     *out = scan_list[i].info;
     return 0;
 }
-int lw_uds_join(int i, char *err, int errlen)
+int lw_uds_join(uint32_t key, char *err, int errlen)
 {
-    if (!up || !browse || joined || i < 0 || i >= scan_n) { snprintf(err, (size_t)errlen, "That game is gone"); return -1; }
+    int i = 0;
+    while (i < scan_n && scan_list[i].info.key != key) ++i;
+    if (!up || hosting || joined || i >= scan_n) { snprintf(err, (size_t)errlen, "That game is gone"); return -1; }
     if (!connect_to(&scan_list[i].net, err, errlen)) return -1;
     last_status_us = 0;
     return 0;
@@ -239,7 +234,7 @@ void lw_uds_close(void)
     lw_platform_log("uds: closed");
 }
 #else /* not a 3DS: no UDS */
-int lw_uds_open(int mode, int port, int max_nodes, char *err, int errlen) { (void)mode; (void)port; (void)max_nodes; snprintf(err, (size_t)errlen, "UDS needs a 3DS"); return -1; }
+int lw_uds_open(int host, int port, int max_nodes, char *err, int errlen) { (void)host; (void)port; (void)max_nodes; snprintf(err, (size_t)errlen, "UDS needs a 3DS"); return -1; }
 int lw_uds_poll(char *err, int errlen) { (void)err; (void)errlen; return LW_LINK_FAILED; }
 unsigned lw_uds_nodes(void) { return 0; }
 int lw_uds_my_node(void) { return 0; }
@@ -250,7 +245,7 @@ void lw_uds_close(void) {}
 const char *lw_uds_local_name(void) { return ""; }
 int lw_uds_scan_count(void) { return 0; }
 int lw_uds_scan_get(int i, lw_net_info *o) { (void)i; (void)o; return -1; }
-int lw_uds_join(int i, char *e, int n) { (void)i; snprintf(e, (size_t)n, "UDS needs a 3DS"); return -1; }
+int lw_uds_join(uint32_t key, char *e, int n) { (void)key; snprintf(e, (size_t)n, "UDS needs a 3DS"); return -1; }
 void lw_uds_set_beacon(const uint8_t *d, int n) { (void)d; (void)n; }
 void lw_uds_eject(int node) { (void)node; }
 #endif

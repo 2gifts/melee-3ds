@@ -117,10 +117,6 @@ static void service_locked(void)
 {
     slippi_state *g = &g_slippi;
     if (!g->initialized) return;
-    if (g->local_mode) {
-        slippi_local_service();
-        return;
-    }
     if (g->mm_state == MM_RESOLVE) slippi_mm_tick();
     if (!g->host) return;
     ENetEvent ev;
@@ -159,8 +155,6 @@ static void worker_main(void *arg)
     }
 }
 
-extern int slippi_group_force;
-
 int slippi_init(void)
 {
     slippi_state *g = &g_slippi;
@@ -174,27 +168,6 @@ int slippi_init(void)
     snprintf(path, sizeof(path), "%s/config.ini", sp_data_dir());
     if (slippi_config_load(&g->cfg, path) == 0) sp_log("config: %s loaded", path);
     else sp_log("config: %s not found, using defaults", path);
-    /* The Melee -> Group menu (slippi_group.c) opens a lobby session whatever config.ini says. */
-    if (slippi_group_force) {
-        snprintf(g->cfg.opponent, sizeof(g->cfg.opponent), "@join");
-        g->cfg.local_lobby = 1;
-    }
-    /* opponent=@host / @join: local wireless, no account and no sockets. */
-    g->local_mode = g->cfg.opponent[0] == '@';
-    if (g->local_mode) {
-        g->initialized = 1;
-        g->status = SLIPPI_STATUS_IDLE;
-        sp_log("ready: local wireless (%s), delay %d, thread %d", g->cfg.opponent, g->cfg.delay, g->cfg.net_thread);
-        int lt = g->cfg.net_thread && !thread_running;
-        int lcore = g->cfg.net_thread_core;
-        sp_unlock();
-        if (lt) {
-            thread_stop = 0;
-            if (sp_thread_start(worker_main, NULL, lcore) == 0) thread_running = 1;
-            else sp_log("network thread unavailable; servicing from slippi_poll only");
-        }
-        return 0;
-    }
     snprintf(path, sizeof(path), "%s/user.json", sp_data_dir());
     char err[160];
     if (slippi_user_load(&g->user, path, err, sizeof(err)) != 0) {
@@ -233,7 +206,6 @@ void slippi_shutdown(void)
     if (!lock_ready) return;
     sp_lock();
     int was = g->initialized;
-    if (was && g->local_mode) slippi_local_close();
     if (was && g->host) {
         slippi_p2p_disconnect();
         slippi_mm_close();
@@ -264,7 +236,7 @@ void slippi_shutdown(void)
     }
     sp_unlock();
     sp_log_drain();
-    if (was && !g->local_mode) {
+    if (was) {
         if (enet_ready) { enet_deinitialize(); enet_ready = 0; }
         sp_net_exit();
     }
@@ -277,19 +249,6 @@ int slippi_find_match(const char *code)
     sp_lock();
     if (!g->initialized) { sp_unlock(); return -1; }
     const char *c = code && code[0] ? code : g->cfg.opponent;
-    if (g->local_mode != (c[0] == '@')) {
-        snprintf(g->error, sizeof(g->error), "Mixed local and online settings"); g->status = SLIPPI_STATUS_FAILED; sp_unlock(); return -2;
-    }
-    if (g->local_mode) {
-        int host = strcmp(c, "@join") != 0;
-        if (strcmp(c, "@host") && strcmp(c, "@join")) {
-            snprintf(g->error, sizeof(g->error), "opponent= must be @host or @join"); g->status = SLIPPI_STATUS_FAILED; sp_unlock(); return -2;
-        }
-        slippi_local_start(host);
-        int ok = g->status != SLIPPI_STATUS_FAILED;
-        sp_unlock();
-        return ok ? 0 : -3;
-    }
     if (!c[0]) { snprintf(g->error, sizeof(g->error), "No opponent connect code"); g->status = SLIPPI_STATUS_FAILED; sp_unlock(); return -2; }
     slippi_p2p_disconnect();
     slippi_mm_close();
@@ -408,8 +367,7 @@ void slippi_set_selections(int character, int color, int stage, int flags)
     if (stage >= 0) { l->stage_id = (uint16_t)stage; l->is_stage_selected = 1; l->alt_stage_mode = (uint8_t)(flags >> 8); }
     if (character >= 0) { l->character_id = (uint8_t)character; l->character_color = (uint8_t)color; l->team_id = (uint8_t)flags; l->is_character_selected = 1; }
     l->player_idx = (uint8_t)(g->match.local_index < 0 ? 0 : g->match.local_index);
-    if (g->status == SLIPPI_STATUS_CONNECTED && g->local_mode) slippi_local_publish_selections();
-    else if (g->status == SLIPPI_STATUS_CONNECTED) slippi_p2p_send_selections();
+    if (g->status == SLIPPI_STATUS_CONNECTED) slippi_p2p_send_selections();
     sp_unlock();
 }
 
@@ -446,7 +404,6 @@ void slippi_start_game_locked(void)
     l->stage_id = 0; l->is_stage_selected = 0; l->rng_offset = 0;
     r->character_id = r->character_color = r->is_character_selected = r->team_id = 0;
     r->stage_id = 0; r->is_stage_selected = 0; r->rng_offset = 0;
-    if (g_slippi.local_mode) slippi_local_game_begin();
 }
 
 void slippi_start_game(void)
@@ -497,7 +454,6 @@ int slippi_send_pad(int frame, const unsigned char *pad, int checksum_frame, uns
 int slippi_remote_pad_locked(int frame, unsigned char *out)
 {
     slippi_state *g = &g_slippi;
-    if (g->local_mode) return -1;   /* local wireless has bundles, not one remote pad (slippi_local.c) */
     if (frame <= 0) return -1;
     if (frame > g->remote_head_frame) return 0;
     int slot = frame & (REMOTE_RING - 1);
@@ -516,13 +472,8 @@ int slippi_remote_pad(int frame, unsigned char *out)
 }
 
 int slippi_latest_remote_frame(void) { return g_slippi.remote_head_frame; }
-int slippi_remote_checksum_frame(void) { return g_slippi.local_mode ? slippi_local_checksum(NULL) : g_slippi.remote_checksum_frame; }
-unsigned slippi_remote_checksum(void)
-{
-    unsigned ck = g_slippi.remote_checksum;
-    if (g_slippi.local_mode) slippi_local_checksum(&ck);
-    return ck;
-}
+int slippi_remote_checksum_frame(void) { return g_slippi.remote_checksum_frame; }
+unsigned slippi_remote_checksum(void) { return g_slippi.remote_checksum; }
 
 int slippi_time_offset_us(void)
 {
@@ -533,7 +484,7 @@ int slippi_time_offset_us(void)
     return v;
 }
 
-int slippi_ping_us(void) { return g_slippi.local_mode ? slippi_local_ping_us() : (int)g_slippi.ping_us; }
+int slippi_ping_us(void) { return (int)g_slippi.ping_us; }
 
 int slippi_chat_poll(void)
 {
@@ -555,7 +506,6 @@ void slippi_send_chat(int message_id)
 
 int slippi_stat(int which)
 {
-    if (g_slippi.local_mode && which >= 0 && which < SLIPPI_STAT_COUNT) return slippi_local_stat(which);
     slippi_state *g = &g_slippi;
     if (which < 0 || which >= SLIPPI_STAT_COUNT) return 0;
     if (!lock_ready) return 0;

@@ -12,9 +12,19 @@ void mp_native_idle(void){extern void mp_native_gx_check(void);mp_native_gx_chec
 extern unsigned mp_native_frame_number(void);
 /* Slippi replay/online runs turn the smoke build's scripted input off. */
 volatile unsigned mp_slippi_no_scripts;
+#ifdef MP_SMOKE_TEST
+/* sdmc:/3ds/melee/no-scripted-input (any content) turns the smoke build's scripted presses and its automatic stop off
+ * from boot: written for interactive emulator sessions and tests that drive the menus themselves. */
+static int scripts_off(void){
+    static int off=-1;
+    if(off<0){extern volatile unsigned mp_test_frame_limit;FILE*f=fopen("sdmc:/3ds/melee/no-scripted-input","rb");off=f!=NULL;
+        if(f){fclose(f);mp_slippi_no_scripts=1;mp_test_frame_limit=0;mp_native_log("Scripted input off (no-scripted-input)\n");}}
+    return off;
+}
+#endif
 static unsigned scripted_keys(void){
 #ifdef MP_SMOKE_TEST
-    if(mp_slippi_no_scripts)return 0;
+    if(scripts_off()||mp_slippi_no_scripts)return 0;
     /* Repeat a short A press to dismiss the original no-memory-card prompt. */
     unsigned f=mp_native_frame_number();if(f>90&&f<485&&f%120<5)return KEY_A|(f>=300?KEY_START:0);
     if(f>=600&&f<725&&f%60<5)return KEY_DDOWN;

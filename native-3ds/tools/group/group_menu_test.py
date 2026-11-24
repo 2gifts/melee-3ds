@@ -1,11 +1,11 @@
 """Melee -> Solo / Group in Azahar drives the real VS menu of the development build.
 
-Boots with local_group=1 and the loopback link (local_udp=1), then: main menu -> VS -> Melee (the Solo/Group page),
+Boots with group.ini menu=1 and the loopback link (udp=1), then: main menu -> VS -> Melee (the Solo/Group page),
 Back (B), Melee again -> Group (the Group page), Host (the lobby CSS in the HANYU scene, with the connected-players strip),
 B out of the CSS (back on the VS menu, the session closed), and finally Melee -> Solo (the vanilla CSS).
 Every step saves both screens as PNGs and the log lines are checked.
 
-    docker/emu-test.sh run tools/slippi/group_menu_test.py [--seconds 600]
+    docker/emu-test.sh run tools/group/group_menu_test.py [--seconds 600]
 Results: $MELEE_TEST_OUT/group-menu/ (the PNGs, game.log)."""
 import argparse
 import os
@@ -19,14 +19,17 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+sys.path.insert(0, str(HERE.parent / 'slippi'))
 sys.path.insert(0, str(HERE.parent))
 import emu  # noqa: E402
 from gdb_probe import packet, receive  # noqa: E402
 
 PORT = 24862
 KEY_A, KEY_B, KEY_START, KEY_DOWN = 1, 2, 8, 0x80
+KEY_UP = 0x40
 CPAD_UP, CPAD_RIGHT = 1 << 30, 1 << 28
 FIELDS = 'scene mode stock_mode teams seconds timer stage rule_stocks rule_minutes items stamina menu'.split()
+MENU_MAIN, MENU_VS, SEL_MAIN_VS = 0, 2, 1   # src/melee/mn/forward.h
 
 
 def png(path, w, h, rows):
@@ -98,6 +101,52 @@ class Stub:
         w = struct.unpack('<36I', self.peek('mp_bottom_observed', 144))
         return dict(zip(FIELDS, w))
 
+    # ---- driving the game by engine frames, so the tests work at full speed and when emulation is slow ----
+    def frames(self):
+        return struct.unpack('<I', self.peek('engine_frames', 4))[0]
+
+    def until_frames(self, n, limit=120):
+        """Wait until the engine has run n more frames (or `limit` seconds passed)."""
+        start, end = self.frames(), time.monotonic() + limit
+        while self.frames() - start < n and time.monotonic() < end:
+            time.sleep(0.05)
+
+    def press(self, keys, hold=2, release=8):
+        """Hold keys for `hold` engine frames, then release them for `release` frames. Menus act on the press edge and
+        ignore all input while their cooldown runs (5 frames after each action, mn_80229624), so callers check the
+        result and press again rather than holding longer."""
+        self.poke('mp_test_keys', keys)
+        self.until_frames(hold)
+        self.poke('mp_test_keys', 0)
+        self.until_frames(release)
+
+    def menu(self):
+        """The main menus' state (MenuFlow mn_804A04F0, big-endian engine data): (menu kind, hovered row)."""
+        b = self.peek('mn_804A04F0', 4)
+        return b[0], (b[2] << 8) | b[3]
+
+    def goto_vs_menu(self, timeout=600):
+        """From the main menus to the VS menu by what the menus say, not by timing. Call it once the menus are up (scene
+        1): the scene reads differently for a moment while a submenu loads, so this never presses START / A blindly."""
+        end = time.monotonic() + timeout
+        while time.monotonic() < end:
+            s = self.state()
+            if s['scene'] != 1:
+                time.sleep(0.2)
+                continue
+            kind, hovered = self.menu()
+            print(f'  menu kind {kind}, hovered {hovered}', flush=True)
+            if kind == MENU_VS:
+                return s
+            if kind == MENU_MAIN and hovered == SEL_MAIN_VS:
+                self.press(KEY_A, 2, 30)
+            elif kind == MENU_MAIN:
+                # Up / Down repeat while held (each held frame can move): one frame per step.
+                self.press(KEY_DOWN if hovered < SEL_MAIN_VS else KEY_UP, 1, 30)
+            else:
+                self.press(KEY_B, 2, 30)
+        return self.state()
+
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -105,7 +154,7 @@ def main():
     ap.add_argument('--elf', default=os.environ.get('MELEE_ELF') or str(emu.ROOT / 'build/game-opt/melee.elf'))
     ap.add_argument('--seconds', type=float, default=900)
     ap.add_argument('--show', action='store_true')
-    ap.add_argument('--top-menu', action='store_true', help='the top-screen Solo/Group submenu (local_group_menu=1; its labels are still Slippi\'s Ranked / Unranked) instead of the bottom-screen touch page')
+    ap.add_argument('--top-menu', action='store_true', help='the top-screen Solo/Group submenu (group.ini top_menu=1; its labels are still Slippi\'s Ranked / Unranked) instead of the bottom-screen touch page')
     args = ap.parse_args()
     out = Path(os.environ.get('MELEE_TEST_OUT') or emu.ROOT / 'build/emu-test') / 'group-menu'
     shutil.rmtree(out, ignore_errors=True)
@@ -113,7 +162,9 @@ def main():
     home = emu.prepare('group', PORT)
     sd = emu.sd(home)
     (sd / 'slippi').mkdir(parents=True, exist_ok=True)
-    (sd / 'slippi' / 'config.ini').write_text('local_group=1\nlocal_udp=1\nlocal_port=44100\nprefetch=0\ndelay=2\n' + ('local_group_menu=1\n' if args.top_menu else ''))
+    (sd / 'slippi' / 'config.ini').write_text('prefetch=0\ndelay=2\n')
+    (sd / 'slippi' / 'group.ini').write_text('menu=1\nudp=1\nport=44100\ndelay=2\n' + ('top_menu=1\n' if args.top_menu else ''))
+    (sd / 'no-scripted-input').write_text('')   # no smoke-build scripted presses
     (sd / 'game.log').unlink(missing_ok=True)
     stub = Stub(emu.elf_symbols(args.elf))
     proc = emu.launch(home, Path(args.dsx).resolve(), hidden=not args.show)
@@ -133,15 +184,18 @@ def main():
         results.append((name, ok))
         print(('PASS ' if ok else 'FAIL ') + name, detail, flush=True)
 
-    def pulse(keys, hold=1.2):
-        stub.poke('mp_test_keys', keys)
-        time.sleep(hold)
-        stub.poke('mp_test_keys', 0)
-        time.sleep(0.8)
-
     def touch(x, y):
         stub.poke('mp_test_bottom_touch', x | (y << 16))
-        time.sleep(1.5)
+        stub.until_frames(10)
+
+    def wait_log(text, count=1, timeout=120):
+        """Wait until game.log has `text` at least `count` times."""
+        end = time.monotonic() + timeout
+        while time.monotonic() < end:
+            if log_text().count(text) >= count:
+                return True
+            time.sleep(0.5)
+        return False
 
     def capture(name):
         stub.poke('mp_test_capture', 1)
@@ -166,7 +220,7 @@ def main():
             if pred(s):
                 return s
             if press:
-                pulse(press, hold)
+                stub.press(press, 2, 30)
             else:
                 time.sleep(1)
         check(what, False, f'last state {s}')
@@ -177,101 +231,97 @@ def main():
         stub.poke('mp_test_frame_limit', 0)
         # Past the title (START) and the card prompt (A) to the main menu.
         s = wait(lambda s: s['scene'] == 1, 'reach the main menu', 360, KEY_START | KEY_A)
-        time.sleep(3)
+        stub.until_frames(30)
         capture('main-menu')
         check('main menu', True, str(s))
-        # Main menu: down to VS, A. VS menu: Melee is hovered; A asks Solo/Group.
-        for attempt in range(10):
-            time.sleep(5)
-            s = stub.state()
-            if s['scene'] == 1 and s['menu'] == 2:
-                break
-            if s['scene'] == 1 and s['menu'] == 0:
-                pulse(KEY_DOWN, 0.5)      # 1P is hovered first; VS is next
-                time.sleep(2)
-                pulse(KEY_A, 0.5)
-            elif s['scene'] == 1 and s['menu'] != 0:
-                print('in menu kind %d; B to the main menu' % s['menu'], flush=True)
-                pulse(KEY_B, 0.5)
-            time.sleep(3)
-            s = stub.state()
-        check('reached the VS menu', s['scene'] == 1 and s['menu'] == 2, str(s))
+        # Main menu: down to VS, A. VS menu: Melee is hovered.
+        s = stub.goto_vs_menu()
+        check('reached the VS menu', s['scene'] == 1 and stub.menu()[0] == MENU_VS, str(s))
+        stub.until_frames(30)
         capture('vs-menu')
         if args.top_menu:
             # Melee opens the top-screen Solo/Group menu (menu kind 11).
-            pulse(KEY_A, 0.3)
-            time.sleep(4)
+            stub.press(KEY_A)
+            stub.until_frames(40)
             s = stub.state()
-            check('Melee opens the Solo/Group menu (kind 11)', s['menu'] == 11, str(s))
+            check('Melee opens the Solo/Group menu (kind 11)', stub.menu()[0] == 11, str(stub.menu()))
             capture('solo-group')
-            pulse(KEY_B, 0.3)
-            time.sleep(4)
-            s = stub.state()
-            check('B returns to the VS menu', s['menu'] == 2, str(s))
+            stub.press(KEY_B)
+            stub.until_frames(40)
+            check('B returns to the VS menu', stub.menu()[0] == MENU_VS, str(stub.menu()))
             capture('after-back')
             # Again, down to Group, A: the Group list on the bottom screen.
-            pulse(KEY_A, 0.3)
-            time.sleep(4)
-            pulse(KEY_DOWN, 0.3)
-            time.sleep(1)
+            stub.press(KEY_A)
+            stub.until_frames(40)
+            stub.press(KEY_DOWN, 1, 30)
             capture('group-hovered')
-            pulse(KEY_A, 0.3)
-            time.sleep(3)
+            stub.press(KEY_A)
+            wait_log('group: Group, looking for games')
             capture('group-list')
             expect_log('Group opens the list', 'group: Group, looking for games')
         else:
             # Melee asks Solo or Group on the bottom screen (touch); the top screen stays on the VS menu.
-            pulse(KEY_A, 0.3)
-            time.sleep(4)
+            stub.press(KEY_A)
+            wait_log('group: the Solo/Group page is up')
+            stub.until_frames(10)
             s = stub.state()
             check('Melee shows the Solo/Group page (VS menu stays)', s['menu'] == 2, str(s))
             capture('solo-group')
             touch(53, 192)               # BACK
-            time.sleep(2)
+            wait_log('group: Back from the Solo/Group page')
             expect_log('Back closes the page', 'group: Back from the Solo/Group page')
             capture('after-back')
-            pulse(KEY_A, 0.3)
-            time.sleep(4)
+            stub.until_frames(20)
+            stub.press(KEY_A)
+            wait_log('group: the Solo/Group page is up', 2)
             touch(238, 104)              # GROUP
-            time.sleep(3)
+            wait_log('group: Group, looking for games')
             capture('group-list')
             expect_log('Group opens the list', 'group: Group, looking for games')
         touch(118, 50)
         s = wait(lambda s: s['scene'] == 8, 'enter the lobby CSS', 120)
         check('Host enters the CSS in scene 8', s['mode'] == 8, str(s))
-        time.sleep(8)
+        stub.until_frames(60)
         capture('lobby-css')
-        # B backs out of the CSS to the VS menu.
-        for _ in range(3):
-            pulse(KEY_B, 0.3)
-        if stub.state()['scene'] != 1:
-            for _ in range(3):
-                pulse(KEY_B, 3.5)
-        if stub.state()['scene'] != 1:
-            # the hand to BACK (top right) with the circle pad, then A
-            pulse(CPAD_UP | CPAD_RIGHT, 6)
-            pulse(KEY_A, 0.3)
+        # The engine must keep running in the lobby (a hang here once looked like B doing nothing).
+        f0 = stub.frames()
+        time.sleep(3)
+        f1 = stub.frames()
+        check('the engine keeps running on the lobby CSS', f1 > f0, f'engine_frames {f0} -> {f1}')
+        # B backs out of the CSS to the VS menu: vanilla wants B released once, then held for 30 engine frames.
+        stub.press(KEY_B, 2, 4)
+        stub.poke('mp_test_keys', KEY_B)
+        start, deadline = stub.frames(), time.monotonic() + 240
+        # Let go as soon as the CSS is leaving (its pending scene byte is 2): B still held on the VS menu would go back
+        # one more level, to the main menu.
+        while time.monotonic() < deadline and stub.peek('mnCharSel_804D6CF6', 1)[0] != 2 and stub.frames() - start < 120:
+            time.sleep(0.02)
+        stub.poke('mp_test_keys', 0)
         s = wait(lambda s: s['scene'] == 1, 'back to the menus', 120)
         expect_log('Back from the CSS closes the session', 'group: left the lobby')
-        time.sleep(4)
+        stub.until_frames(60)
         capture('back-on-vs-menu')
-        check('back on the VS menu with Melee hovered', s['menu'] == 2, f"menu kind {s['menu']}")
+        kind, hovered = stub.menu()
+        check('back on the VS menu with Melee hovered', kind == MENU_VS and hovered == 0, f'menu kind {kind}, hovered {hovered}')
         # Melee -> Solo: the vanilla CSS (not the HANYU scene).
-        pulse(KEY_A, 0.3)
-        time.sleep(4)
+        stub.press(KEY_A)
         if args.top_menu:
-            pulse(KEY_A, 0.3)   # Solo is hovered first
+            stub.until_frames(40)
+            stub.press(KEY_A)   # Solo is hovered first
         else:
+            wait_log('group: the Solo/Group page is up', 3)
             touch(82, 104)      # SOLO
         s = wait(lambda s: s['scene'] == 8, 'Solo enters the CSS', 120)
         check('Solo is the vanilla VS CSS (mode != 8)', s['mode'] != 8, str(s))
-        time.sleep(6)
+        stub.until_frames(60)
         capture('solo-css')
     finally:
         emu.stop(proc)
         time.sleep(1)
         if (sd / 'game.log').exists():
             shutil.copy2(sd / 'game.log', out / 'game.log')
+        if emu.log_path(home).exists():
+            shutil.copy2(emu.log_path(home), out / 'azahar_log.txt')
         final = (out / 'game.log').read_text(errors='replace') if (out / 'game.log').exists() else ''
         for name, text in expected:
             check(name, text in final)

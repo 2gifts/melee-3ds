@@ -1,10 +1,12 @@
-"""2 to 4 emulated 3DS consoles play a local wireless match (the development build's loopback UDP link,
-local_udp=1: Azahar cannot join a UDS room headless). Deterministic test inputs on every console, the host ends
+"""2 to 4 emulated 3DS consoles play a group match (the development build's loopback UDP link, group.ini udp=1: Azahar
+cannot join a UDS room headless). The consoles meet as an automatic session (opponent=@host / @join and auto_match=1 in
+the engine's config): each joiner takes the first game it finds, every console takes its door with the configured
+fighter, and the host starts once group.ini auto_players consoles are here. Deterministic test inputs on every console, the host ends
 the match with L+R+A+Start, every console records the match (record=1) and the records must be identical.
 --kill N:SECONDS stops console N (2..4) that long after every console has started its match: the others must
 carry on, turn that player into a level 3 CPU at the same frame, and still produce identical records.
 
-    docker/emu-test.sh run tools/slippi/online_quad_test.py [--players 4] [--end-frame 600] [--kill 3:20]
+    docker/emu-test.sh run tools/group/group_quad_test.py [--players 4] [--end-frame 600] [--kill 3:20]
 Four emulated consoles are CPU bound: this checks determinism, not timing.
 """
 import argparse
@@ -15,11 +17,12 @@ import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE))
+sys.path.insert(0, str(HERE.parent / 'slippi'))
 sys.path.insert(0, str(HERE.parent))
 import emu  # noqa: E402
-from net_test import OUT  # noqa: E402
 from online_pair_test import compare  # noqa: E402
+
+OUT = Path(os.environ.get('MELEE_TEST_OUT') or emu.ROOT / 'build/group-tests')
 
 ROOT = emu.ROOT
 
@@ -31,7 +34,7 @@ def main():
     ap.add_argument('--delay', type=int, default=3)
     ap.add_argument('--seconds', type=float, default=1500)
     ap.add_argument('--kill', default='', help='N:SECONDS, stop console N that long after all matches started')
-    ap.add_argument('--timeout-ms', type=int, default=60000, help='local_timeout_ms (the real default is 2000; emulation stalls longer)')
+    ap.add_argument('--timeout-ms', type=int, default=60000, help='group.ini timeout_ms (the real default is 2000; emulation stalls longer)')
     ap.add_argument('--port', type=int, default=47010)
     ap.add_argument('--dsx', default=os.environ.get('MELEE_DSX') or str(ROOT / 'dist/3ds/melee/melee-development.3dsx'))
     ap.add_argument('--graphics', default=None)
@@ -53,12 +56,14 @@ def main():
         home = emu.prepare(f'quad-{i + 1}', 24850 + i, graphics=args.graphics)
         sd = emu.sd(home)
         (sd / 'slippi').mkdir(parents=True, exist_ok=True)
-        lines = [f'opponent={"@host" if i == 0 else "@join"}', 'local_udp=1', f'local_players={n}',
-                 f'local_port={args.port}', f'delay={args.delay}', 'character=2', 'color=0', 'stage=32', 'stage_select=1',
-                 'auto_match=1', 'record=1', f'local_timeout_ms={args.timeout_ms}', f'test_inputs={i + 1}']
+        lines = [f'opponent={"@host" if i == 0 else "@join"}', f'delay={args.delay}', 'character=2', 'color=0', 'stage=32',
+                 'stage_select=1', 'auto_match=1', 'record=1', f'test_inputs={i + 1}']
         if i == 0:
             lines.append(f'test_end_frame={args.end_frame}')
         (sd / 'slippi' / 'config.ini').write_text('\n'.join(lines) + '\n')
+        group = ['udp=1', f'port={args.port}', f'delay={args.delay}', f'auto_players={n}', f'timeout_ms={args.timeout_ms}']
+        (sd / 'slippi' / 'group.ini').write_text('\n'.join(group) + '\n')
+        (sd / 'no-scripted-input').write_text('')   # no smoke-build scripted presses
         for f in ('game.log', 'slippi/online-out.bin'):
             (sd / f).unlink(missing_ok=True)
         sides.append(dict(name=f'p{i + 1}', home=home, sd=sd, proc=None, killed=False, copied=False, started=False))
@@ -115,7 +120,7 @@ def main():
         if path.exists():
             lines = path.read_text(errors='replace').splitlines()
             print(f"---- {s['name']}")
-            print('\n'.join(l for l in lines if (l.startswith('Slippi online') and 'still waiting' not in l) or 'star:' in l)[-1800:])
+            print('\n'.join(l for l in lines if (l.startswith('Slippi online') and 'still waiting' not in l) or l.startswith(('Group:', 'group:', 'lw:')))[-1800:])
     print('RESULT:', 'PASS' if ok else 'FAIL', '->', out)
     sys.exit(0 if ok else 1)
 

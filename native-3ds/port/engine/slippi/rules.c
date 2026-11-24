@@ -442,7 +442,7 @@ int mp_slippi_lgl_timeout_message(void)
     if (online_mode < 0 || !mp_slippi_rule(MP_SR_LGL)) {
         return 0;
     }
-    if (online_mode == 3 || online_mode == 4 || online_mode == 5) {   /* teams, party; local wireless (up to four players) */
+    if (online_mode == 3 || online_mode == 4 || online_mode == 5) {   /* teams, party; group play (up to four players) */
         return 0;
     }
     p1 = (int) pl_80040AF0(0);

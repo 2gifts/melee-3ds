@@ -15,6 +15,7 @@
 #include <sysdolphin/baselib/gobjgxlink.h>
 #include <sysdolphin/baselib/gobjobject.h>
 #include <sysdolphin/baselib/sislib.h>
+#include <group_engine.h>
 #include <slippi_engine.h>
 #include <slippi_net_bridge.h>
 
@@ -84,16 +85,12 @@ void mp_slippi_hud_init(void)
     /* Names over the damage displays. */
     for (i = 0; i < 4; i++) {
         Vec3* hud;
+        int group;
         if (Player_GetPlayerSlotType(i) == Gm_PKind_NA) {
             continue;
         }
-        if (mp_platform_slippi_net_local_players() > 0) {
-            name[0] = 0;
-            mp_platform_slippi_net_player_name(i, name, sizeof name);
-            if (name[0] == 0) {
-                continue;
-            }
-        } else if (i >= 2 || mp_platform_slippi_ui_text(30 + i, name, sizeof name) < 0 || name[0] == 0) {
+        group = mp_group_hud_name(i, name, sizeof name);   /* group play: the console's name on that port */
+        if (group == 0 || (group < 0 && (i >= 2 || mp_platform_slippi_ui_text(30 + i, name, sizeof name) < 0 || name[0] == 0))) {
             continue;
         }
         name[sizeof name - 1] = 0;
