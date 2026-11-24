@@ -110,12 +110,33 @@ static void mp_css_show_hc(int d)
 {
     HSD_JObj* j;
     s32 h;
-    if (mp_css_game_rules()->handicap == 0 || mnCharSel_803F0DFC.doors[d].p_kind == 3) {
+    if (mp_css_game_rules()->handicap == 0 || mnCharSel_803F0DFC.doors[d].p_kind == 3 ||
+        mnCharSel_803F0DFC.doors[d].is_hold_handicap_slider) {
         return;
     }
     h = getHandicapValue(d);
     j = animateJoint(mnCharSel_804D6CC0, mnCharSel_803F0DFC.doors[d].cpuslider_joint, TOBJ_MASK, (f32) h);
     HSD_JObjSetTranslateX(j, 1.25f * (f32) (h - 1));
+}
+
+/* Move a CPU door's level slider (its number and its knob) to the level the door holds now. Vanilla redraws the slider
+ * only when a door changes between Human, CPU and closed (8025DB34), and places the knob only in the scene setup and
+ * while dragging, so a level set on another console, or one already set when this CSS was built, needs this. The joint
+ * is cpuslider2 with handicap on, else cpuslider (as in the setup). A slider this console is dragging is left alone. */
+static void mp_css_show_level(int d)
+{
+    CSSDoor* dr = &mnCharSel_803F0DFC.doors[d];
+    HSD_JObj* j;
+    s32 level = mnCharSel_804D6CB0->vs.start.players[d].cpu_level;
+    if (dr->p_kind != 1 || dr->is_hold_cpu_slider) {
+        return;
+    }
+    if (level < 1) {
+        level = 1;
+    }
+    j = animateJoint(mnCharSel_804D6CC0, mp_css_game_rules()->handicap != 0 ? dr->cpuslider2_joint : dr->cpuslider_joint,
+                     TOBJ_MASK, (f32) level);
+    HSD_JObjSetTranslateX(j, 1.25f * (f32) (level - 1));
 }
 
 /* A door's handicap as the lobby holds it: 0 with handicap off, else 1..9 (auto: mp_css_auto_hc; fixed: the slider). */
@@ -189,16 +210,18 @@ u32 mp_css_trigger(int hand, f32 x, f32 y, u32 trigger)
     return 0;
 }
 
-/* READY waits while another console is in its name tag list or name entry (vanilla waits for this console's own). */
-int mp_css_busy_elsewhere(void)
+/* READY waits while another console is busy (a name tag list, name entry, the rules page, a slider in hand; vanilla
+ * waits for this console's own tag list), and never shows while watching a match: Start does nothing there. */
+int mp_css_hide_ready(void)
 {
-    return mp_css_group() && mp_lob_ok && (mp_lob.busy & 0xF & ~(1u << mp_css_my())) != 0;
+    return mp_css_group() && mp_lob_ok && ((mp_lob.busy & 0xF & ~(1u << mp_css_my())) != 0 || mp_lob.watching);
 }
 
-/* Tell the host while this console is in a name tag list or name entry; the host refuses Start until it is back.
- * Name entry runs inside this scene (pending-scene byte 4, then 5 while it is up; 5 is also the rules page): the bit is
- * set while a list is open or name entry begins and cleared only when the CSS is back (byte 0) with every list shut.
- * The lobby's copy of the bit is checked every frame, so a lost command is sent again. */
+/* Tell the host while this console is busy: a name tag list open, a CPU level or handicap slider in hand, name entry or
+ * the rules page. The host refuses Start until it is back. Name entry and the rules page run inside this scene
+ * (pending-scene byte 4 or 3 for the frame they are asked for, then 5 while they are up): the bit is set when a list
+ * opens, a slider is grabbed or one of them begins, and cleared only when the CSS is back (byte 0) with every list
+ * shut and no slider held. The lobby's copy of the bit is checked every frame, so a lost command is sent again. */
 static void mp_css_busy_frame(void)
 {
     int my = mp_css_my(), i;
@@ -208,8 +231,12 @@ static void mp_css_busy_frame(void)
             if (mnCharSel_803F0E8C[i].data != NULL && mnCharSel_803F0E8C[i].data->state != 0) {
                 mp_css_busy_now = 1;
             }
+            /* only this console's cursor acts here, so a held slider is ours whichever door it belongs to */
+            if (mnCharSel_803F0DFC.doors[i].is_hold_cpu_slider || mnCharSel_803F0DFC.doors[i].is_hold_handicap_slider) {
+                mp_css_busy_now = 1;
+            }
         }
-    } else if (mnCharSel_804D6CF6 == 4) {
+    } else if (mnCharSel_804D6CF6 == 3 || mnCharSel_804D6CF6 == 4) {
         mp_css_busy_now = 1;
     }
     if (mp_css_busy_wait > 0) {
@@ -217,7 +244,7 @@ static void mp_css_busy_frame(void)
         return;
     }
     if ((int) ((mp_lob.busy >> my) & 1) != mp_css_busy_now) {
-        OSReport("GROUPCSS busy %d (name tag list / name entry)\n", mp_css_busy_now);
+        OSReport("GROUPCSS busy %d (name tag list / slider / name entry / rules)\n", mp_css_busy_now);
         mp_platform_group_lobby_busy(mp_css_busy_now);
         mp_css_busy_wait = 15;
     }
@@ -343,6 +370,7 @@ static void mp_css_put_door(int d, const u8* o)
         mnCharSel_804D6CB0->vs.start.players[d].handicap = o[14];   /* the fixed slider's value */
     }
     mp_css_show_hc(d);
+    mp_css_show_level(d);
     if (o[5] == 3) {
         mnCharSel_804A0BD0[d]->x5 = MP_CSS_REMOTE_HELD;   /* in someone's hand, over nothing: no puck here */
     }
@@ -514,10 +542,15 @@ static void mp_css_rules_frame(void)
                 for (d = 0; relayout && d < 4; d++) {
                     u8 save = mnCharSel_804D6CF6;
                     mnCharSel_804D6CF6 = 4;   /* no sounds */
-                    mnCharSel_803F0DFC.doors[d].p_kind_prev = 0xFF;
-                    mnCharSel_8025DB34(d);   /* the label's frame; its slider timer settles it 10 frames on */
+                    /* A closed door has no label or slider showing, and the change path would play its closing
+                     * animation again (8025DB34 with p_kind_prev 0xFF): only its sliders are placed, for when it opens. */
+                    if (mnCharSel_803F0DFC.doors[d].p_kind != 3) {
+                        mnCharSel_803F0DFC.doors[d].p_kind_prev = 0xFF;
+                        mnCharSel_8025DB34(d);   /* the label's frame; its slider timer settles it 10 frames on */
+                    }
                     mp_css_place_sliders(d);
                     mp_css_show_hc(d);
+                    mp_css_show_level(d);
                     mnCharSel_804D6CF6 = save;
                 }
                 OSReport("GROUPCSS the host's rules: mode %d time %d stocks %d handicap %d\n", mp_lob.rules.mode,
@@ -930,7 +963,7 @@ FIXES = {
          '    f32 stick_x = loadStickValue(&HSD_PadCopyStatus[(u8) port].stickX);\n'
          '    f32 stick_y = (f32) HSD_PadCopyStatus[(u8) port].stickY;\n',
          'HSD_PadStatus* mp_css_pad(int port);\nint mp_css_remote(int door);\nint mp_css_unplugged(int door);\n'
-         'int mp_css_can_edit_rules(void);\nint mp_css_busy_elsewhere(void);\nu32 mp_css_trigger(int hand, f32 x, f32 y, u32 trigger);\nint mp_css_start_intercept(void);\nint mp_css_back_intercept(void);\nint mp_css_hovering(int door);\nvoid mp_css_group_frame(void);\n'
+         'int mp_css_can_edit_rules(void);\nint mp_css_hide_ready(void);\nu32 mp_css_trigger(int hand, f32 x, f32 y, u32 trigger);\nint mp_css_start_intercept(void);\nint mp_css_back_intercept(void);\nint mp_css_hovering(int door);\nvoid mp_css_group_frame(void);\n'
          'void mp_css_group_reset(void);\n'
          'static inline void getStickDelta(int port, f32* dx, f32* dy)\n{\n'
          '    f32 stick_x = loadStickValue(&mp_css_pad((u8) port)->stickX);\n'
@@ -986,7 +1019,7 @@ FIXES = {
          '        gm_801A4B60();\n        sfxBack();\n        break;\n', 1),
         # READY also waits while another console is in its name tag list or name entry (the lobby's busy bits).
         ('                if (mnCharSel_804A0BC0[i]->x5 == 1 || tag[i].data->state != 0)\n',
-         '                if (mnCharSel_804A0BC0[i]->x5 == 1 || tag[i].data->state != 0 || mp_css_busy_elsewhere())\n', 1),
+         '                if (mnCharSel_804A0BC0[i]->x5 == 1 || tag[i].data->state != 0 || mp_css_hide_ready())\n', 1),
         ('                if (mnCharSel_803F0DFC.doors[i].sel_icon >= 0x19) {\n                    goto hide;\n',
          '                if (mnCharSel_803F0DFC.doors[i].sel_icon >= 0x19 || mp_css_hovering(i)) {\n                    goto hide;\n', 1),
         ('        if (mnCharSel_804D6CF6 != 0) {\n            gm_801A4B60();\n            if (mnCharSel_804D6CF5 == 4) {\n',
