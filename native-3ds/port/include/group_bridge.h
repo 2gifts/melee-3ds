@@ -58,7 +58,7 @@ typedef struct MpGroupLobby {
     unsigned char stage_hi, stage_lo, alt_stage;
     unsigned char watching;        /* 1: a match runs that this console is not in (it joined during it); its CSS is
                                     * read-only until that match ends */
-    unsigned char busy;            /* bit n: the console on port n is in its name tag list or name entry (READY waits) */
+    unsigned char busy;            /* bit n: the console on port n is busy: name tags, name entry, rules, a slider (READY waits) */
     unsigned char signal[4];       /* 0..3 bars per port */
     MpGroupRules rules;
     MpGroupDoor door[4];
@@ -90,7 +90,7 @@ void mp_platform_group_lobby_set_door(int port, const MpGroupDoor *door);
 void mp_platform_group_lobby_start(void);
 void mp_platform_group_lobby_stage(int stage, int alt_stage);
 void mp_platform_group_lobby_back(void);
-void mp_platform_group_lobby_busy(int busy);        /* this console's name tag list or name entry is open (1) or not */
+void mp_platform_group_lobby_busy(int busy);        /* this console is busy (1: a name tag list, name entry, the rules menu or a held slider) or not */
 void mp_platform_group_lobby_rules(const MpGroupRules *rules);
 
 /* The match. */

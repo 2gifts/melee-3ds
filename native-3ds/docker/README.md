@@ -65,16 +65,29 @@ Group play (Melee -> Group, local wireless lobbies; `port/3ds/group`, `tools/gro
 docker/emu-test.sh group --players 4 --games 2 --drop 50        # PC consoles: lobby, doors, Start, stage, matches
 docker/emu-test.sh group --players 4 --games 1 --crash 3:200    # a console vanishes mid-match: the others make it a CPU
 docker/emu-test.sh group --players 3 --via-menu                 # meeting through the Solo / Group pages
+docker/emu-test.sh group --players 4 --fifth                    # a fifth console sees the game as full and is refused
+docker/emu-test.sh group --players 3 --games 2 --late 3         # a console joins during game 1, watches, plays game 2
 docker/emu-test.sh run tools/localwireless/lw_lobby_test.py     # the localwireless module alone
 docker/emu-test.sh run tools/group/group_quad_test.py --players 3 --end-frame 600 --kill 3:60 --timeout-ms 20000   # engine, Azahar
 docker/emu-test.sh run tools/group/group_menu_test.py            # Melee -> Solo / Group in Azahar
-docker/emu-test.sh run tools/group/group_lobby_test.py           # the lobby CSS in Azahar against a PC console
+docker/emu-test.sh run tools/group/group_lobby_test.py           # Azahar hosts, a PC console joins: doors, Rules, Start, stage, match
+docker/emu-test.sh run tools/group/group_join_test.py            # a PC console hosts, Azahar joins: doors, CPU level, READY, handicap, rejoin
+docker/emu-test.sh run tools/group/group_late_test.py            # Azahar joins during a match: the read-only CSS, then the lobby
 ```
+
+`group` (group_test.py) runs the lobby rules' unit test (`lobby_unit`) first. The Azahar tests read the emulated
+console's memory through Azahar's GDB stub while it runs (the CSS doors, READY, the slider knobs: `tools/group/css_probe.py`)
+and save screenshots of each step. Nothing presses buttons by itself in these builds (`no-scripted-input`), so each
+test drives the console from the title screen; give a test about 2 to 5 minutes. Do not run them while the browser
+session (`emu-web.sh`) is up: both compete for the CPU.
 
 Results land in `native-3ds/build/emu-test/` (set `MELEE_TEST_OUT` to change it).
 It uses the `linuxserver/azahar` image (about 5 GB, amd64 only, so it is
-emulated on Apple Silicon) with Azahar headless: Qt `offscreen` and the software
-renderer, no desktop. `MELEE_GRAPHICS=opengl` selects the GL renderer instead.
+emulated on Apple Silicon) with Azahar headless: by default the OpenGL renderer,
+Azahar running as a Wayland client of a headless labwc compositor started in the
+test container (about full speed). `MELEE_GRAPHICS=software` selects Qt
+`offscreen` and Azahar's CPU rasterizer instead, which is about 1 engine frame a
+second in busy scenes such as the character select.
 The PC tools (`slippi_fake_mm`, `slippi_fake_peer`) are compiled with the image's
 gcc into the container's `/tmp` on every run.
 `docker/emu-test.sh --clean` removes the image. The emulator profiles live in the
@@ -111,8 +124,7 @@ Speed (learned the hard way, 2026-11-24): **it must use the OpenGL renderer** (t
 `MELEE_GRAPHICS=opengl`, Azahar's `graphics_api=1`). With `MELEE_GRAPHICS=software` the game ran at about 1.4 engine
 frames a second (2% of full speed) because every pixel is rasterized on the CPU under x86 emulation; it is not a
 resource limit (the Docker VM already has all 8 cores, Rosetta is on, the container uses about 1 GB) and not the game
-(the release build was just as slow). The headless tests (`docker/emu-test.sh`) deliberately use the software renderer
-because they only need correctness, not speed.
+(the release build was just as slow). The headless tests (`docker/emu-test.sh`) use the OpenGL renderer too, by default.
 
 Other options (environment variables of `emu-web.sh`):
 - `MELEE_WEB_DSX=/path/to/melee.3dsx` runs another build instead (for example the release `.3dsx` from
@@ -123,7 +135,8 @@ Other options (environment variables of `emu-web.sh`):
   against a headless instance.
 - `MELEE_WEB_PORT`, `MELEE_WEB_NAME` (to run a second container for two consoles), `MELEE_WEB_RES`, `MELEE_VOLUME`.
 
-Two consoles in the browser: start a second container with another port and name, for example
-`MELEE_WEB_NAME=melee3ds-emu-web2 MELEE_WEB_PORT=3189 docker/emu-web.sh`. UDS between separate emulators does not work
-headless; with `udp=1` in `group.ini` the consoles meet over the loopback link, which is **not shared between containers**, so
-use one container (or the PC tools) for lobby tests.
+A second container (another port and name, for example
+`MELEE_WEB_NAME=melee3ds-emu-web2 MELEE_WEB_PORT=3189 docker/emu-web.sh`) runs a console of its own, but it cannot meet
+the first one: UDS between separate emulators does not work headless, and the loopback link of `udp=1` is **not shared
+between containers**. For two consoles that play together use `MELEE_WEB_INSTANCES=2` (one container, above) or the PC
+tools.

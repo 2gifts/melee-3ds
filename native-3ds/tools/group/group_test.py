@@ -1,6 +1,7 @@
 """Group play on PC consoles (group_client, the 3DS's group code over the loopback link): a host and 1..3 joiners meet in
 a lobby, fill their doors (the host adds a CPU on a free port), start, pick a stage and play matches with test pads.
-Every console that stays must report the same bundle hash for every game.
+Every console that stays must report the same bundle hash for every game. The lobby rules' unit test (lobby_unit) runs
+first.
 
     python tools/group/group_test.py [--players 3] [--games 2] [--drop 30] [--via-menu] [--crash 3:200]
 --via-menu   meet through the Melee -> Group pages (group_menu.c) instead of joining directly
@@ -46,6 +47,12 @@ def main():
     ap.add_argument('--port', type=int, default=44200)
     ap.add_argument('--label', default='')
     args = ap.parse_args()
+    # The lobby rules alone first (group_lobby.c): a failure there makes the console runs below meaningless.
+    unit = subprocess.run([str(TOOLS / ('lobby_unit' + EXE))], capture_output=True, text=True)
+    print(unit.stdout.strip() or unit.stderr.strip(), flush=True)
+    if unit.returncode != 0:
+        print('RESULT: FAIL (lobby_unit)')
+        return 1
     n = args.players
     crash = {}
     if args.crash:

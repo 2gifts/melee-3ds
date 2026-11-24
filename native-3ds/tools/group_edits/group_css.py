@@ -12,8 +12,9 @@ untouched. What it does to the VS character select (mncharsel.c):
     player may change; the host enforces the same rule).
   * Start no longer ends the scene: it asks the host, which answers with the stage select for everyone.
   * Rules and the Teams switch are the host's only.
-  * A console in a name tag list or name entry is busy (the lobby's busy bit): READY waits on every console and the
-    host refuses Start until it is back.
+  * A console in a name tag list, name entry or the rules menu, or holding a CPU level or handicap slider, is busy (the
+    lobby's busy bit): READY waits on every console and the host refuses Start until it is done. A console watching a
+    match in progress shows no READY either.
   * A console that joined during a match watches it from a read-only CSS: its cursor moves, Back is its only action.
   * The Human/CPU/closed click ends on Human only where a console is present (a CPU elsewhere), as on a GameCube.
   * A joiner shows the host's rules: every rules read in mncharsel.c goes through mp_css_game_rules() (the banner, the
@@ -40,7 +41,7 @@ static int mp_css_go;             /* the host sent us to the stage select */
 static int mp_css_seen_css;       /* saw the lobby in its CSS phase since this scene began */
 static int mp_css_start_wait;
 static int mp_css_leave_asked;   /* Back is waiting for the host's answer to "End the session?" */
-static int mp_css_busy_now;      /* this console is in a name tag list or name entry (the lobby's busy bit) */
+static int mp_css_busy_now;      /* this console is busy: name tags, name entry, rules, a slider (the lobby's busy bit) */
 static int mp_css_busy_wait;
 #define MP_CSS_DOOR 15     /* a door as the lobby holds it: kind, fighter, costume, team, level, chosen, tag[8], handicap */
 static u8 mp_css_last_view[4][MP_CSS_DOOR], mp_css_last_view_ok[4];
@@ -422,7 +423,26 @@ static void mp_css_hide_held_pucks(void)
 /* The lobby decides; a local edit is sent to the host and held for a few frames so the answer does not undo it. */
 static void mp_css_sync(void)
 {
+    static int hc_mode = -1;
     int d;
+    if (mp_css_game_rules()->handicap != hc_mode) {
+        /* The host's handicap mode changed: every door's handicap now reads differently here (mp_css_read_hc), but no
+         * one moved a slider. Take the new reading as already applied, so it is not sent as an edit (a joiner's saved
+         * value would replace a CPU's handicap in the lobby), and show the lobby's value instead. This console's own
+         * Human door keeps the change: its handicap is this console's to give (its save or its slider). */
+        if (hc_mode != -1 && mp_css_applied_ok) {
+            for (d = 0; d < 4; d++) {
+                u8 now[MP_CSS_DOOR];
+                if (d == mp_css_my() && mnCharSel_803F0DFC.doors[d].p_kind == 0) {
+                    continue;
+                }
+                mp_css_read_door(d, now);
+                mp_css_applied[d][14] = now[14];
+                mp_css_last_view_ok[d] = 0;
+            }
+        }
+        hc_mode = mp_css_game_rules()->handicap;
+    }
     for (d = 0; d < 4; d++) {
         u8 now[MP_CSS_DOOR], view[MP_CSS_DOOR];
         mp_css_read_door(d, now);
@@ -1017,7 +1037,7 @@ FIXES = {
         ('    case 2:\n        gm_801A4B60();\n        sfxBack();\n        break;\n',
          '    case 2:\n        if (mp_css_back_intercept()) {\n            mnCharSel_804D6CF6 = 0;\n            break;\n        }\n'
          '        gm_801A4B60();\n        sfxBack();\n        break;\n', 1),
-        # READY also waits while another console is in its name tag list or name entry (the lobby's busy bits).
+        # READY also waits while another console is busy (the lobby's busy bits) or while this one watches a match.
         ('                if (mnCharSel_804A0BC0[i]->x5 == 1 || tag[i].data->state != 0)\n',
          '                if (mnCharSel_804A0BC0[i]->x5 == 1 || tag[i].data->state != 0 || mp_css_hide_ready())\n', 1),
         ('                if (mnCharSel_803F0DFC.doors[i].sel_icon >= 0x19) {\n                    goto hide;\n',

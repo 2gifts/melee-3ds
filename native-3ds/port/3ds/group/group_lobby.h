@@ -68,8 +68,9 @@ typedef struct {
     uint16_t stage;                /* the picked stage (phase STAGE once picked, and MATCH) */
     uint8_t stage_picked, alt_stage;
     uint8_t mode;                  /* 0 normal, 1 sudden death (second game of the same session) */
-    uint8_t busy;                  /* bit n: the console on port n has its name tag list open or is in name entry; READY
-                                    * is hidden everywhere and Start is refused while any bit is set */
+    uint8_t busy;                  /* bit n: the console on port n is busy (its name tag list, name entry, the host's
+                                    * rules menu or a held slider); READY is hidden everywhere and Start is refused
+                                    * while any bit is set */
     lobby_slot slot[LOBBY_SLOTS];
     lobby_status status;           /* the running match (host: lobby_host_set_status), at the end of the blob */
 } lobby_state;
@@ -84,7 +85,7 @@ int lobby_cmd_door(uint8_t *out, int slot, const lobby_slot *s);       /* set do
 int lobby_cmd_start(uint8_t *out);                                      /* Start from the CSS: go to the stage select */
 int lobby_cmd_stage(uint8_t *out, int stage, int alt_stage);            /* a stage pick */
 int lobby_cmd_back(uint8_t *out);                                       /* B at the stage select: back to the CSS */
-int lobby_cmd_busy(uint8_t *out, int busy);                             /* the sender's name tag list / name entry */
+int lobby_cmd_busy(uint8_t *out, int busy);                             /* the sender is busy (or no longer) */
 
 /* ---- the host ---- */
 typedef struct {
@@ -116,7 +117,7 @@ int lobby_host_set_status(lobby_host *h, const lobby_status *st);            /* 
 int lobby_host_match_over(lobby_host *h);                                    /* phase CSS again; applies waiting joins/leaves */
 
 /* Can Start take the lobby to the stage select? at least two doors in use and a fighter in every one, with Teams at
- * least two different teams (as vanilla's READY overlay asks), and no console busy in its name tag list or name entry. */
+ * least two different teams (as vanilla's READY overlay asks), and no console busy (lobby_state.busy). */
 int lobby_can_start(const lobby_state *s);
 
 /* ---- the match ---- */

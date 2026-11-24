@@ -252,7 +252,7 @@ int lobby_can_start(const lobby_state *s)
         teams |= 1u << (l->team % 3);
     }
     if (s->rules.teams && (teams & (teams - 1)) == 0) return 0;   /* everybody on one team */
-    if (s->busy & 0xF) return 0;                                  /* someone is in its name tag list or name entry */
+    if (s->busy & 0xF) return 0;                                  /* someone is busy (name tags, name entry, rules, a slider) */
     return used >= 2;
 }
 

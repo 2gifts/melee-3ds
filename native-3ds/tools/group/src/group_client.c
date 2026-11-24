@@ -14,6 +14,8 @@
  *                       data) until it ends, then play the next games (test_games counts only those)
  *   test_linger_ms=N    stay in the lobby N ms after the last game before closing it
  *   test_full=1         expect the lobby to be full: see it listed as full, try to join anyway, and pass when refused
+ *   test_control=1      host: take this console's door, then do what DIR/control.txt says, one line at a time as the
+ *                       test appends them (see control()), logging "group-test: control N done: LINE" for each
  * A host publishes made-up match status (timer, stocks, damage) during its games, as a real host's bottom screen does.
  * Every console prints "bundle hash" per game; consoles that stayed must agree. Exit 0 = PASS. */
 #include "group_bridge.h"
@@ -31,12 +33,24 @@
 
 #define FRAME_US 16683
 
-static struct { int host, via_menu, players, games, frames, character, crash_frame, delay, late, full, linger_ms; } T;
+static struct { int host, via_menu, players, games, frames, character, crash_frame, delay, late, full, linger_ms, control; } T;
 
 static const char *status_name(int s)
 {
     static const char *names[] = {"idle", "searching", "connecting", "connected", "failed", "disconnected"};
     return s >= 0 && s <= 5 ? names[s] : "?";
+}
+
+/* Logs the lobby's busy bits when they change ("group-test: busy now B"), so a test can see another console's busy
+ * state (its name tag list, name entry, rules menu or a held slider) arrive here. */
+static void log_busy(void)
+{
+    static int last = 0;
+    lobby_state v;
+    if (group_lobby_view(&v) && v.busy != last) {
+        last = v.busy;
+        sp_log("group-test: busy now %x", last);
+    }
 }
 
 /* Waits until cond() or timeout, servicing the network. 1 = condition met. */
@@ -49,6 +63,7 @@ static int wait_for(int (*cond)(void), int timeout_ms)
         int st = group_net_status();
         if (st != last) { sp_log("group-test: status %s", status_name(st)); last = st; }
         if (st == 4 || st == 5) return 0;
+        log_busy();
         if (cond()) return 1;
         sp_sleep_us(5000);
     }
@@ -140,6 +155,83 @@ static int expect_full(void)
         sp_sleep_us(10000);
     }
     sp_log("group-test: FAIL the join neither failed nor succeeded");
+    return 1;
+}
+
+/* The lobby as this console sees it, on one log line (the test reads ports, busy bits and doors from it). */
+static void dump_lobby(void)
+{
+    lobby_state v;
+    if (!group_lobby_view(&v)) { sp_log("group-test: lobby none"); return; }
+    char doors[160] = "";
+    for (int i = 0; i < LOBBY_SLOTS; ++i) {
+        char one[40];
+        snprintf(one, sizeof(one), " %d:%u/%u/%u/%u/%u", i, v.slot[i].kind, v.slot[i].fighter, v.slot[i].level,
+                 v.slot[i].chosen, v.slot[i].handicap);
+        strncat(doors, one, sizeof(doors) - strlen(doors) - 1);
+    }
+    sp_log("group-test: lobby present %x busy %x phase %u handicap %u doors%s", group_present(), v.busy, v.phase,
+           v.rules.handicap, doors);
+}
+
+/* A host driven by the test, a line at a time from DIR/control.txt (the test appends; each line is done once):
+ *   door P KIND FIGHTER LEVEL CHOSEN HANDICAP   set door P (0..3; kind 0 Human, 1 CPU, 2 closed)
+ *   rules HANDICAP MODE MINUTES STOCKS          the host's rules (handicap 0 off, 1 auto, 2 fixed; mode 0 time, 1 stock)
+ *   busy B                                      this console's busy bit (as its name tag list or rules menu would)
+ *   dump                                        log the lobby (dump_lobby)
+ *   quit                                        close the session and exit 0
+ * Gives up (exit 1) after 20 minutes without a quit. */
+static int control(const char *dir, int me)
+{
+    char path[512];
+    snprintf(path, sizeof(path), "%s/control.txt", dir);
+    int done = 0;
+    MpGroupDoor d;
+    memset(&d, 0, sizeof(d));
+    d.kind = 0; d.fighter = (unsigned char)((T.character + me) % 26); d.chosen = 1; d.level = 3;
+    group_lobby_set_door(me, &d);
+    uint64_t end = sp_time_us() + 1200000000ull;
+    while (sp_time_us() < end) {
+        group_net_poll();
+        if (group_net_status() == 4 || group_net_status() == 5) { sp_log("group-test: FAIL the session ended"); return 1; }
+        char *text = sp_read_file(path, NULL);
+        int line = 0;
+        for (char *s = text, *nl; s && *s; s = nl ? nl + 1 : s + strlen(s)) {
+            nl = strchr(s, '\n');
+            if (!nl) break;                     /* a line still being written */
+            *nl = 0;
+            if (line++ < done) continue;
+            int a[6] = {0};
+            if (sscanf(s, "door %d %d %d %d %d %d", &a[0], &a[1], &a[2], &a[3], &a[4], &a[5]) == 6) {
+                MpGroupDoor x;
+                memset(&x, 0, sizeof(x));
+                x.kind = (unsigned char)a[1]; x.fighter = (unsigned char)a[2]; x.level = (unsigned char)a[3];
+                x.chosen = (unsigned char)a[4]; x.handicap = (unsigned char)a[5];
+                group_lobby_set_door(a[0], &x);
+            } else if (sscanf(s, "rules %d %d %d %d", &a[0], &a[1], &a[2], &a[3]) == 4) {
+                MpGroupRules r;
+                memset(&r, 0, sizeof(r));
+                r.handicap = (unsigned char)a[0]; r.mode = (unsigned char)a[1]; r.time_limit = (unsigned char)a[2];
+                r.stock_count = (unsigned char)a[3]; r.time_mode = a[1] == 0; r.minutes = r.time_limit;
+                r.stocks = r.stock_count; r.melee_valid = 1;
+                group_lobby_rules(&r);
+            } else if (sscanf(s, "busy %d", &a[0]) == 1) {
+                group_lobby_busy(a[0]);
+            } else if (!strcmp(s, "dump")) {
+                dump_lobby();
+            } else if (!strcmp(s, "quit")) {
+                sp_log("group-test: control %d done: quit", done + 1);
+                free(text);
+                return 0;
+            } else {
+                sp_log("group-test: control: unknown line '%s'", s);
+            }
+            sp_log("group-test: control %d done: %s", ++done, s);
+        }
+        free(text);
+        sp_sleep_us(20000);
+    }
+    sp_log("group-test: FAIL control timed out");
     return 1;
 }
 
@@ -287,6 +379,7 @@ int main(int argc, char **argv)
     T.late = group_ini_int(s, "test_late", 0);
     T.full = group_ini_int(s, "test_full", 0);
     T.linger_ms = group_ini_int(s, "test_linger_ms", 0);
+    T.control = group_ini_int(s, "test_control", 0);
     free(ini);
 
     sp_log("group-test: starting as %s (data dir %s)", T.host ? "host" : "joiner", dir);
@@ -309,6 +402,12 @@ int main(int argc, char **argv)
     int me = group_net_local_index();
     sp_log("group-test: in the lobby on port %d", me + 1);
     int failed = 0;
+    if (T.control) {
+        failed = control(dir, me);
+        sp_log("group-test: %s", failed ? "FAIL" : "PASS");
+        group_session_stop();
+        return failed;
+    }
     if (T.late && !watch_match()) failed = 1;
     for (int game = 1; game <= T.games && !failed; ++game) {
         if (!lobby_dance(me, game)) { failed = 1; break; }

@@ -65,23 +65,38 @@ def save_bottom(src, out):
 
 
 class Stub:
+    """The emulated console's memory through Azahar's GDB stub. One connection stays open and the console keeps
+    running: Azahar answers memory reads and writes without stopping it. Stopping it for each access (Ctrl-C or a new
+    connection, then 'c') costs far more emulated time than the access: polling every 50 ms left the console at about
+    one frame a second, so the tests timed out or hung."""
+
     def __init__(self, sym):
         self.sym = sym
+        self.sock = None
+
+    def _close(self):
+        if self.sock is not None:
+            try:
+                self.sock.close()
+            except OSError:
+                pass
+        self.sock = None
 
     def _session(self, fn):
         last = None
         for _ in range(10):
             try:
-                with socket.create_connection(('127.0.0.1', PORT), 5) as s:
+                if self.sock is None:
+                    s = socket.create_connection(('127.0.0.1', PORT), 5)
                     s.settimeout(10)
-                    packet(s, '?')
+                    self.sock = s
+                    packet(s, '?')               # connecting stops the console: this is its stop reply
                     receive(s)
-                    try:
-                        return fn(s)
-                    finally:
-                        packet(s, 'c')
-            except (OSError, TimeoutError) as e:
+                    packet(s, 'c')               # and it runs on from here
+                return fn(self.sock)
+            except (OSError, TimeoutError, ValueError, ConnectionError) as e:
                 last = e
+                self._close()
                 time.sleep(1)
         raise last
 
@@ -146,6 +161,17 @@ class Stub:
             else:
                 self.press(KEY_B, 2, 30)
         return self.state()
+
+
+def to_main_menu(stub, timeout=360):
+    """Past the title (START) and the memory card prompt (A) to the main menus (scene 1), as a player would: nothing
+    presses them by itself (no-scripted-input)."""
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        if stub.state()['scene'] == 1:
+            return True
+        stub.press(KEY_START | KEY_A, 2, 30)
+    return False
 
 
 def main():
@@ -295,7 +321,7 @@ def main():
         # Let go as soon as the CSS is leaving (its pending scene byte is 2): B still held on the VS menu would go back
         # one more level, to the main menu.
         while time.monotonic() < deadline and stub.peek('mnCharSel_804D6CF6', 1)[0] != 2 and stub.frames() - start < 120:
-            time.sleep(0.02)
+            time.sleep(0.05)
         stub.poke('mp_test_keys', 0)
         s = wait(lambda s: s['scene'] == 1, 'back to the menus', 120)
         expect_log('Back from the CSS closes the session', 'group: left the lobby')

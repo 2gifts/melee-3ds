@@ -25,5 +25,7 @@ Around it:
 
 ## Tests
 
-`tools/group/`: `group_test.py` (PC consoles), `group_quad_test.py`, `group_menu_test.py` and `group_lobby_test.py`
-(Azahar), `uds_smoke.py` (one emulated console on the real UDS link), `src/lobby_unit.c`. See `docker/README.md`.
+`tools/group/`: `group_test.py` (PC consoles; runs `src/lobby_unit.c` first), `group_quad_test.py`, `group_menu_test.py`,
+`group_lobby_test.py` (the emulated console hosts), `group_join_test.py` (it joins a PC host the test drives) and
+`group_late_test.py` (it joins during a match), all in Azahar, reading the CSS from memory with `css_probe.py`;
+`uds_smoke.py` (one emulated console on the real UDS link). See `docker/README.md`.

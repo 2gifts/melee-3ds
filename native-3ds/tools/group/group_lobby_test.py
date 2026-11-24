@@ -2,8 +2,11 @@
 
 The emulated 3DS hosts (Melee -> Group -> Host, as group_menu_test.py); a PC console (tools/group/src/group_client.c) joins
 over the loopback link, fills its own door with a fighter and waits for the match. Then: the host's CSS must show the
-PC's door (a mirrored portrait, the PC's name and signal under it), the host picks a fighter, presses Start, the stage
-select appears, a stage is picked, and the match starts on both consoles. Screenshots of every step.
+PC's door (a mirrored portrait, the PC's name and signal under it), the host picks a fighter, opens its Rules menu (the
+host is busy on the PC console until it is back), presses Start, the stage select appears, a stage is picked, and the
+match starts on both consoles; after it, the lobby comes back with the doors as they were. Screenshots of every step.
+The PC console only simulates a game, so its checksums never match the real game's: the match ends on a desync after
+a few seconds, which is enough here (matches between emulated consoles: group_quad_test.py).
 
     docker/emu-test.sh run tools/group/group_lobby_test.py [--seconds 1500]
 Results: $MELEE_TEST_OUT/group-lobby/ (PNGs, game.log, the PC console's log)."""
@@ -23,6 +26,7 @@ sys.path.insert(0, str(HERE.parent))
 import emu  # noqa: E402
 KEY_L, KEY_R = 1 << 9, 1 << 8
 CPAD_LEFT, CPAD_DOWN = 1 << 29, 1 << 31
+from css_probe import Css  # noqa: E402
 from gdb_probe import packet, receive  # noqa: E402
 from group_menu_test import CPAD_RIGHT, CPAD_UP, KEY_A, KEY_B, KEY_DOWN, KEY_START, MENU_VS, PORT, Stub, save_bottom, save_top  # noqa: E402
 
@@ -56,6 +60,7 @@ def main():
         'role=join', 'udp=1', f'port={LINK_PORT}', 'delay=2', 'timeout_ms=15000', 'test_frames=900', 'test_games=1',
         f'test_character={args.character - 1}', '']) + '\n')
     stub = Stub(emu.elf_symbols(args.elf))
+    css = Css(stub)
     proc = emu.launch(home, Path(args.dsx).resolve(), hidden=not args.show)
     t0 = time.monotonic()
     results = []
@@ -91,6 +96,32 @@ def main():
                 keys |= CPAD_UP if y < cy else CPAD_DOWN
             stub.press(keys, 1, 1)
         return False
+
+    def steer_cursor(inside, target, steps=300):
+        """Move this console's cursor (empty hand) until inside(x, y), heading for target with the circle pad."""
+        for _ in range(steps):
+            _, x, y = css.cursor(0)
+            if inside(x, y):
+                return True
+            keys = 0
+            if abs(x - target[0]) > 1.0:
+                keys |= CPAD_RIGHT if x < target[0] else CPAD_LEFT
+            if abs(y - target[1]) > 1.0:
+                keys |= CPAD_UP if y < target[1] else CPAD_DOWN
+            stub.press(keys, 1, 1)
+        return False
+
+    def pc_text():
+        p = out / 'pc.log'
+        return p.read_text(errors='replace') if p.exists() else ''
+
+    def wait_pc(text, what, timeout=60):
+        end = time.monotonic() + timeout
+        while time.monotonic() < end:
+            if text in pc_text():
+                return check(what, True)
+            time.sleep(0.5)
+        return check(what, False, 'not in the PC console\'s log: ' + text)
 
     def capture(name):
         stub.poke('mp_test_capture', 1)
@@ -149,7 +180,6 @@ def main():
         touch(118, 50)                   # HOST
         s = wait(lambda s: s['scene'] == 8, 'host enters the lobby CSS', 120)
         check('the lobby CSS is the group scene (mode 8)', s['mode'] == 8, str(s))
-        host_rules = s   # this console's rules menu (stock_mode, rule_minutes): the group match must use them
         stub.until_frames(60)
         capture('01-lobby-alone')
 
@@ -161,18 +191,48 @@ def main():
         capture('02-pc-door')
 
         # The host takes a fighter: its hand holds its token; steer the token onto Fox (a starter) and A drops it.
+        def placed():
+            """The token is down on a fighter (read from memory: game.log can lag, and A again would pick it back up)."""
+            return css.cursor(0)[0] != 1 and css.doors()[0]['sel_icon'] < 0x19
+
         def picked():
             return any('send door 0' in l and 'chosen 1' in l for l in log_text().splitlines())
         for attempt in range(4):
+            if placed():
+                break
             if not steer_token(FOX_TILE):
                 print('the token did not reach the Fox tile; at', token(), flush=True)
             stub.press(KEY_A, 4, 30)
-            if picked():
-                break
+        check('the host\'s token is down on a fighter', placed(), f'cursor {css.cursor(0)}, door {css.doors()[0]}')
+        my_icon = css.doors()[0]['sel_icon']
         capture('03-picked')
-        check('the host\'s own pick reaches the lobby', picked(), 'token ' + str(token()))
+        end = time.monotonic() + 60
+        while time.monotonic() < end and not picked():
+            time.sleep(1)
+        check('the host\'s own pick reaches the lobby', picked())
         stub.until_frames(60)
         capture('03-both-chosen')
+
+        # The Rules menu makes the host busy (READY and Start wait on every console) until it is back on the CSS.
+        on_rules = lambda x, y: -15.0 < x < 13.0 and y > 23.0   # noqa: E731 (mncharsel.c: the Rules button's area)
+        if not steer_cursor(on_rules, (0.0, 26.0)):
+            print('the cursor did not reach the Rules button; at', css.cursor(0), flush=True)
+        for _ in range(4):
+            stub.press(KEY_A, 2, 20)
+            if stub.peek('mnCharSel_804D6CF6', 1)[0] in (3, 5) or stub.state()['scene'] != 8 or 'GROUPCSS busy 1' in log_text():
+                break
+        wait_log('GROUPCSS busy 1', 'opening the Rules menu sets this console busy', 60)
+        wait_pc('group-test: busy now 1', 'the PC console sees the host busy while its Rules menu is up')
+        stub.until_frames(60)
+        capture('03b-rules-menu')
+        for _ in range(10):              # B back to the CSS
+            if 'GROUPCSS busy 0' in log_text():
+                break
+            stub.press(KEY_B, 2, 40)
+        wait_log('GROUPCSS busy 0', 'back from the Rules menu this console is not busy', 120)
+        wait_pc('group-test: busy now 0', 'the PC console sees the host free again')
+        s = wait(lambda s: s['scene'] == 8 and stub.peek('mnCharSel_804D6CF6', 1)[0] == 0, 'back on the lobby CSS after the Rules menu', 120)
+        stub.until_frames(60)
 
         # Start (the READY overlay), then the stage select.
         for _ in range(5):
@@ -191,16 +251,11 @@ def main():
             stub.press(KEY_A, 4, 60)
         wait_log('group: starting a match', 'the host starts the match from the picked stage', 120)
         wait_log('Slippi online: match starts', 'the match loads and starts on the emulated console', 240)
-        stub.until_frames(300)
+        stub.until_frames(60)
         capture('05-match')
-        # The match runs on the host's rules (vanilla's own setup from its rules menu): a time match shows a running
-        # timer no longer than the host's limit; a stock match none unless the host set a stock time limit.
-        s = stub.state()
-        if host_rules['stock_mode'] == 0:
-            check('the match is a time match of the host\'s length', s['timer'] == 1 and 0 < s['seconds'] <= host_rules['rule_minutes'] * 60,
-                  f"timer {s['timer']} seconds {s['seconds']} (host rules: time, {host_rules['rule_minutes']} min)")
-        else:
-            check('the match is a stock match', s['stock_mode'] == 1, str(s))
+        # The match block carries the host's rules as vanilla builds them: the host compares the two before the match.
+        wait_log('the match block\'s rules checked against vanilla: 0 differences',
+                 'the match block\'s rules equal vanilla\'s for the host\'s rules menu', 60)
         # Quit the match with L+R+A+Start: the lobby comes back, and this console's door must keep its fighter.
         mark = len(log_text())
         stub.poke('mp_test_keys', KEY_L | KEY_R | KEY_A | KEY_START)
@@ -218,8 +273,9 @@ def main():
         before = [l for l in log_text()[:mark].splitlines() if 'send door 0' in l and 'chosen 1' in l]
         mine = before[-1].split('fighter ')[1].split()[0] if before else '?'
         sent = [l for l in after.splitlines() if 'send door 0' in l]
-        check('this console\'s door keeps its fighter after the match', all(f'fighter {mine} ' in l for l in sent),
-              f'picked fighter {mine}; sent after: {sent[:3]}')
+        door = css.doors()[0]
+        check('this console\'s door keeps its fighter after the match', door['p_kind'] == 0 and door['sel_icon'] == my_icon
+              and all(f'fighter {mine} ' in l for l in sent), f'tile {my_icon} -> {door["sel_icon"]}; sent after: {sent[:3]}')
         # The PC console's door is its own: the rebuilt CSS here must never change it and send that to the lobby (with
         # --character set to a fighter this save has not unlocked, the vanilla CSS once gave that door a random fighter).
         check('the other console\'s door is not changed from here after the match', 'GROUPCSS send door 1' not in after,

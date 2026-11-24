@@ -96,7 +96,7 @@ int main(void)
     CHECK(h.st.slot[3].kind == LOBBY_CPU);
     /* Start: any console; then the first stage pick wins, a second one is ignored */
     CHECK(lobby_can_start(&h.st));
-    /* a console in its name tag list or name entry: READY waits everywhere, so Start is refused until it is back */
+    /* a busy console (name tag list, name entry, rules menu, held slider): READY waits everywhere, so Start is refused until it is back */
     CHECK(lobby_host_command(&h, 2, cmd, lobby_cmd_busy(cmd, 1)) & LOBBY_CHANGED);
     CHECK(h.st.busy == 0x4 && !lobby_can_start(&h.st));
     CHECK(!lobby_host_command(&h, 1, (cmd[0] = LCMD_START, cmd), 1) && h.st.phase == LOBBY_CSS);

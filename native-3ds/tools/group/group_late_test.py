@@ -3,7 +3,9 @@
 A PC console (tools/group/src/group_client.c) hosts and starts a long match against a CPU once the emulated 3DS is on
 the Host / Join page. The emulated 3DS joins that game from the list while the match runs, and
 must: land on the lobby's character select, show the bottom-screen "Match in progress" page (screenshots), not take
-part in the match, see the lobby come back when the match ends (the host's door mirrored), and leave with Back.
+part in the match, keep its CSS read-only (A, B, Start and the stick send nothing) with no READY although the host's
+door and its CPU have fighters, see the lobby come back when the match ends (the host's door mirrored, READY back), and
+leave with Back.
 
     docker/emu-test.sh run tools/group/group_late_test.py [--match-seconds 60]
 Results: $MELEE_TEST_OUT/group-late/ (PNGs, game.log, the PC host's log)."""
@@ -20,7 +22,8 @@ sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parent / 'slippi'))
 sys.path.insert(0, str(HERE.parent))
 import emu  # noqa: E402
-from group_menu_test import KEY_A, KEY_B, MENU_VS, PORT, Stub, save_bottom, save_top  # noqa: E402
+from css_probe import Css  # noqa: E402
+from group_menu_test import to_main_menu, CPAD_RIGHT, CPAD_UP, KEY_A, KEY_B, KEY_START, MENU_VS, PORT, Stub, save_bottom, save_top  # noqa: E402
 
 KEY_UP = 0x40   # the D-pad up bit of the 3DS keys (KEY_DUP)
 
@@ -51,6 +54,7 @@ def main():
         'role=host', 'udp=1', f'port={LINK_PORT}', 'delay=2', 'timeout_ms=15000', 'test_players=1', 'test_games=1',
         f'test_frames={args.match_seconds * 60}', 'test_linger_ms=150000', '']) + '\n')
     stub = Stub(emu.elf_symbols(args.elf))
+    css = Css(stub)
     proc = emu.launch(home, Path(args.dsx).resolve(), hidden=not args.show)
     t0 = time.monotonic()
     results = []
@@ -95,6 +99,7 @@ def main():
     try:
         time.sleep(15)
         stub.poke('mp_test_frame_limit', 0)
+        check('reach the main menu', to_main_menu(stub))
         s = stub.goto_vs_menu()
         check('reached the VS menu', s['scene'] == 1 and stub.menu()[0] == MENU_VS, str(stub.menu()))
         for _ in range(8):               # the cursor on Melee (the top row)
@@ -114,7 +119,6 @@ def main():
         stub.until_frames(120)           # a few scans, so the game is in the list
         capture('01-games-list')
         touch(160, 108)                  # the first game in the list
-        wait_text(log_text, 'lw: joined the lobby', 'joined the running game\'s lobby', 60)
         s = None
         end = time.monotonic() + 120
         while time.monotonic() < end:
@@ -122,18 +126,38 @@ def main():
             if s['scene'] == 8:
                 break
             time.sleep(1)
-        check('the late joiner is on the lobby character select', s is not None and s['scene'] == 8 and s['mode'] == 8, str(s))
+        check('joined the running game: the late joiner is on the lobby character select', s is not None and s['scene'] == 8 and s['mode'] == 8, str(s))
         wait_text(log_text, 'group: watching a match in progress', 'the Match in progress page is up', 60)
         stub.until_frames(90)
         capture('02-match-in-progress')
         stub.until_frames(240)
         capture('03-match-in-progress-later')
         check('this console takes no part in the running match', 'group: match block' not in log_text())
+        # Read-only while watching: a door click, a puck grab, Start: nothing reaches the lobby; READY never shows.
+        mark = len(log_text())
+        ready_seen = 0
+        for keys in (KEY_A, CPAD_UP, KEY_A, CPAD_RIGHT, KEY_A, KEY_B, KEY_START, CPAD_UP | CPAD_RIGHT, KEY_A):
+            stub.press(keys, 6 if keys & (CPAD_UP | CPAD_RIGHT) else 2, 10)
+            ready_seen += css.ready() != 0
+        start = stub.frames()
+        while stub.frames() - start < 60:
+            ready_seen += css.ready() != 0
+        after = log_text()[mark:]
+        check('the watching CSS sends no door edit and no Start', 'GROUPCSS send door' not in after and 'GROUPCSS Start pressed' not in after,
+              '; '.join(l for l in after.splitlines() if 'GROUPCSS' in l)[:300])
+        check('no READY on the watching CSS (the host and its CPU have fighters)', ready_seen == 0, f'READY seen {ready_seen} times')
+        check('still watching after those presses', 'group: no match in progress here any more' not in log_text()
+              and 'group: left the lobby' not in log_text())
         wait_text(log_text, 'group: no match in progress here any more', 'the page goes when the match ends',
                   args.match_seconds + 60)
         wait_text(log_text, 'GROUPCSS apply door 0', 'the lobby is back: the host\'s door is mirrored', 60)
         stub.until_frames(60)
         capture('04-lobby-after-the-match')
+        ready_seen = 0
+        start = stub.frames()
+        while stub.frames() - start < 60:
+            ready_seen += css.ready() != 0
+        check('READY shows once the match is over (the host and its CPU are in)', ready_seen > 0)
         # Back: B released once, then held (vanilla wants 30 frames).
         stub.press(KEY_B, 2, 4)
         stub.press(KEY_B, 45, 4)
