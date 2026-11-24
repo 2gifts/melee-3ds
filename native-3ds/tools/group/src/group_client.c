@@ -144,7 +144,16 @@ static int expect_full(void)
 }
 
 static int all_here(void) { return __builtin_popcount(group_present()) >= T.players; }
-static int doors_ready(void) { lobby_state v; return group_lobby_view(&v) && lobby_can_start(&v); }
+/* Joining opens no door, so a console still on its way to opening its own would only sit the match out: the host
+ * waits, as a person would, for every console here to have a fighter in its door. */
+static int doors_ready(void)
+{
+    lobby_state v;
+    if (!group_lobby_view(&v) || !lobby_can_start(&v)) return 0;
+    for (int i = 0; i < LOBBY_SLOTS; ++i)
+        if ((group_present() >> i & 1) && v.slot[i].kind != LOBBY_HUMAN) return 0;
+    return 1;
+}
 static int in_stage(void) { lobby_state v; return group_lobby_view(&v) && v.phase == LOBBY_STAGE; }
 static unsigned char block[LOBBY_BLOCK_SIZE];
 static int block_ready(void) { return group_net_match_block(block); }

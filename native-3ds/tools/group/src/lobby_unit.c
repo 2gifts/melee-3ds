@@ -27,9 +27,9 @@ int main(void)
     uint8_t blob[LOBBY_BLOB_MAX], cmd[24];
     lobby_state d;
 
-    /* host alone: door 0 Human, the rest empty; cannot start */
+    /* host alone: every door closed (its console has not opened its own yet); cannot start */
     lobby_host_init(&h, 1);
-    CHECK(h.st.slot[0].kind == LOBBY_HUMAN && h.st.slot[1].kind == LOBBY_EMPTY);
+    CHECK(h.st.slot[0].kind == LOBBY_EMPTY && h.st.slot[1].kind == LOBBY_EMPTY);
     CHECK(!lobby_can_start(&h.st));
     CHECK(door(&h, 0, 0, fighter(LOBBY_HUMAN, 0x14, 1)) & LOBBY_CHANGED);
     CHECK(!door(&h, 0, 0, fighter(LOBBY_HUMAN, 0x14, 1)));                       /* no change, no flag */
@@ -49,8 +49,13 @@ int main(void)
     CHECK(h.st.slot[1].kind == LOBBY_EMPTY && h.st.slot[1].fighter == 0 && h.st.slot[1].handicap == 0);
     CHECK(!lobby_host_command(&h, 7, cmd, 17));
 
-    /* a console joins port 2 (index 1): the empty door becomes Human with no fighter; a CPU door stays */
-    CHECK(lobby_host_sync(&h, 0x3) & LOBBY_CHANGED);
+    /* a console joins port 2 (index 1): joining opens no door; its CSS opens it with an edit, as a player would */
+    CHECK(lobby_host_sync(&h, 0x3) == 0 && h.st.slot[1].kind == LOBBY_EMPTY);
+    {
+        lobby_slot open = fighter(LOBBY_HUMAN, 0, 0);
+        open.chosen = 0;
+        CHECK(door(&h, 1, 1, open) & LOBBY_CHANGED);
+    }
     CHECK(h.st.slot[1].kind == LOBBY_HUMAN && !h.st.slot[1].chosen);
     CHECK(!lobby_can_start(&h.st));
     CHECK(lobby_host_sync(&h, 0x7) == 0 && h.st.slot[2].kind == LOBBY_CPU);       /* joins onto a CPU door: it stays a CPU */
@@ -188,7 +193,7 @@ int main(void)
     CHECK(lobby_decode(&d, blob, short_len) == 0 && !d.status.valid);
     CHECK(lobby_host_match_over(&h) & LOBBY_CHANGED);
     CHECK(!h.st.status.valid && !lobby_host_set_status(&h, &ms));                    /* only during a match */
-    CHECK(h.st.phase == LOBBY_CSS && h.st.slot[1].kind == LOBBY_HUMAN && h.st.slot[0].kind == LOBBY_CPU);
+    CHECK(h.st.phase == LOBBY_CSS && h.st.slot[1].kind == LOBBY_EMPTY && h.st.slot[0].kind == LOBBY_CPU);   /* the late joiner's door stays closed */
     CHECK(!lobby_host_command(&h, 1, (cmd[0] = LCMD_STAGE, cmd), 1));               /* short command */
 
     /* Handicap: each door carries its own (set by the console that owns it); the host's mode decides whether the match

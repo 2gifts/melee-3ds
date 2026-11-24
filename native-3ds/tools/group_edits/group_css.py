@@ -36,7 +36,6 @@ static int mp_css_ctx = -1;
 static int mp_css_go;             /* the host sent us to the stage select */
 static int mp_css_seen_css;       /* saw the lobby in its CSS phase since this scene began */
 static int mp_css_start_wait;
-static int mp_css_my_seen_open;   /* our own door has been seen open since this scene began */
 static int mp_css_leave_asked;   /* Back is waiting for the host's answer to "End the session?" */
 #define MP_CSS_DOOR 15     /* a door as the lobby holds it: kind, fighter, costume, team, level, chosen, tag[8], handicap */
 static u8 mp_css_last_view[4][MP_CSS_DOOR], mp_css_last_view_ok[4];
@@ -217,15 +216,6 @@ static void mp_css_read_door(int d, u8* o)
     CSSDoor* dr = &mnCharSel_803F0DFC.doors[d];
     int kind = dr->p_kind == 0 ? 0 : dr->p_kind == 1 ? 1 : 2;
     int chosen;
-    if (d == mp_css_my()) {
-        /* A console sits here: its door starts out closed in the vanilla CSS, which means Human until the door has been
-         * seen open; after that a closed door is the player sitting this match out. */
-        if (kind == 2 && !mp_css_my_seen_open) {
-            kind = 0;
-        } else if (kind != 2) {
-            mp_css_my_seen_open = 1;
-        }
-    }
     int tok = mnCharSel_804A0BD0[d]->x5;
     if (tok == MP_CSS_REMOTE_HELD && mp_css_applied_ok) {
         memcpy(o, mp_css_applied[d], MP_CSS_DOOR);   /* another console holds this token: nothing here to report */
@@ -371,12 +361,13 @@ static void mp_css_sync(void)
             }
             memcpy(mp_css_applied[d], now, MP_CSS_DOOR);
             if (!mp_css_applied_ok && d == mp_css_my()) {
-                /* A CSS that was just (re)built, e.g. back from name entry: what this console's door holds (a new
-                 * name tag, a fighter) is authoritative, so tell the host if the lobby does not have it yet. */
+                /* A CSS that was just (re)built. Back from name entry (the door is Human in the lobby), what this
+                 * console's door holds (a new name tag, a fighter) is authoritative: tell the host if the lobby does
+                 * not have it yet. Otherwise the lobby's door wins: joining opens no door (a closed door stays closed
+                 * and a CPU stays a CPU until this player opens or clicks it, as with a controller plugged in), so
+                 * a door left open in this console's VS data, e.g. from an earlier session, is not sent. */
                 mp_css_view_door(d, view);
-                if (view[0] == 1 && now[5] == 0 && now[6] == 0) {
-                    /* Nothing of ours in the door (no fighter, no tag) and the lobby has a CPU on this port: a console
-                     * joining a CPU's port leaves the CPU, as a controller plugged into it does. Show the CPU. */
+                if (view[0] != 0 || (now[5] == 0 && now[6] == 0)) {
                     mp_css_put_door(d, view);
                     mp_css_read_door(d, mp_css_applied[d]);
                 } else if (memcmp(now, view, MP_CSS_DOOR) != 0) {
@@ -412,6 +403,27 @@ static void mp_css_sync(void)
 }
 
 /* ---- rules: the host sends its own, a joiner shows the host's teams switch ---- */
+/* Put a door's sliders where the CSS setup puts them for the handicap mode in force (mnCharSel setup, the
+ * cpuslider loop). The same joint changes job with the mode: with handicap on, cpuslider is the handicap slider and
+ * cpuslider2 the CPU level; with it off, cpuslider is the CPU level. Only the setup places them, so a joiner whose
+ * host changes the mode on its CSS must place them again, or a CPU level slider keeps the handicap's position. */
+static void mp_css_place_sliders(int d)
+{
+    HSD_JObj* j;
+    s32 level = mnCharSel_804D6CB0->vs.start.players[d].cpu_level;
+    u8 level_joint = mnCharSel_803F0DFC.doors[d].cpuslider_joint;
+    if (level == 0) {
+        level = 1;
+    }
+    if (mp_css_game_rules()->handicap != 0) {
+        lb_80011E24(mnCharSel_804D6CC0, &j, mnCharSel_803F0DFC.doors[d].cpuslider_joint, -1);
+        HSD_JObjSetTranslateX(j, 1.25f * (f32) (getHandicapValue(d) - 1));
+        level_joint = mnCharSel_803F0DFC.doors[d].cpuslider2_joint;
+    }
+    lb_80011E24(mnCharSel_804D6CC0, &j, level_joint, -1);
+    HSD_JObjSetTranslateX(j, 1.25f * (f32) (level - 1));
+}
+
 static void mp_css_rules_frame(void)
 {
     struct GameRules* gr = (gmMainLib_GetGameRules)();
@@ -441,7 +453,8 @@ static void mp_css_rules_frame(void)
                     u8 save = mnCharSel_804D6CF6;
                     mnCharSel_804D6CF6 = 4;   /* no sounds */
                     mnCharSel_803F0DFC.doors[d].p_kind_prev = 0xFF;
-                    mnCharSel_8025DB34(d);
+                    mnCharSel_8025DB34(d);   /* the label's frame; its slider timer settles it 10 frames on */
+                    mp_css_place_sliders(d);
                     mp_css_show_hc(d);
                     mnCharSel_804D6CF6 = save;
                 }
@@ -670,7 +683,6 @@ void mp_css_group_reset(void)
      * outside a group, none, so the rules are this console's own. */
     mp_lob_ok = mp_css_group() && mp_platform_group_lobby_get(&mp_lob);
     mp_css_go = 0;
-    mp_css_my_seen_open = 0;
     mp_css_leave_asked = 0;
     mp_css_seen_css = 0;
     mp_css_start_wait = 0;

@@ -2,10 +2,12 @@
  * StartEngineLoop's status texts): each player's name above their damage
  * display, "Delay: Nf", and DISCONNECTED / DESYNC DETECTED. A SIS canvas on
  * a copy of the HUD's camera (IfAll's ScInfDmg scene), so it follows the
- * HUD and hides with it (pause). Positions, sizes and colours are Slippi's.
+ * HUD and hides with it and with the damage digits (pause). Positions, sizes and colours are Slippi's.
  */
 #include <string.h>
 #include <melee/if/ifall.h>
+#include <melee/if/ifstatus.h>
+#include <melee/if/types.h>
 #include <melee/lb/lbarchive.h>
 #include <melee/lb/lbspdisplay.h>
 #include <melee/pl/player.h>
@@ -24,9 +26,12 @@ enum { TEXT_GXLINK = 12, TEXT_GXPRI = 80, COBJ_GXPRI = 8 };
 static HSD_Text* info_text;
 static int info_shown;
 
+/* Vanilla's pause (ifAll_802F3394) hides the damage digits one by one and
+ * never sets the HUD-hidden flag, so the text also follows the digits' own
+ * flag. Slippi online can't pause, so it never needed this. */
 static void hud_camera_draw(HSD_GObj* gobj, int code)
 {
-    if (!ifAll_IsHUDHidden()) {
+    if (!ifAll_IsHUDHidden() && !ifStatus_GetHUDInfo()->players[0].flags.hide_all_digits) {
         HSD_GObj_803910D8(gobj, code);
     }
 }

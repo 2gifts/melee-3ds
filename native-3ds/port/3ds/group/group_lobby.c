@@ -196,12 +196,13 @@ void lobby_host_init(lobby_host *h, unsigned present)
     lobby_host_sync(h, present);
 }
 
+/* Joining opens no door, as plugging in a controller does not in vanilla: a closed door stays closed and a CPU stays a
+ * CPU until the console's own CSS opens it (its cursor moves onto the fighters, or it clicks the door's label) and sends
+ * that as an ordinary door edit. */
 static int console_arrives(lobby_host *h, int i)
 {
-    lobby_slot *l = &h->st.slot[i];
-    if (l->kind != LOBBY_EMPTY) return 0;         /* a CPU waits for its player to click the CPU label */
-    reset_slot(l, LOBBY_HUMAN);
-    return 1;
+    (void)h; (void)i;
+    return 0;
 }
 
 static int console_leaves(lobby_host *h, int i)
