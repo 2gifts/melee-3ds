@@ -56,7 +56,8 @@ typedef struct MpGroupLobby {
     unsigned char stage_picked;
     unsigned char mode;            /* 0 normal, 1 sudden death */
     unsigned char stage_hi, stage_lo, alt_stage;
-    unsigned char spare;
+    unsigned char watching;        /* 1: a match runs that this console is not in (it joined during it); its CSS is
+                                    * read-only until that match ends */
     unsigned char signal[4];       /* 0..3 bars per port */
     MpGroupRules rules;
     MpGroupDoor door[4];

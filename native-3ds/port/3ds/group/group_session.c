@@ -397,6 +397,7 @@ int group_lobby_get(MpGroupLobby *out)
     out->me = (unsigned char)(G.my_port < 0 ? 0 : G.my_port);
     out->host = (unsigned char)G.host;
     out->present = (unsigned char)lw_present();
+    out->watching = (unsigned char)(G.status == ST_CONNECTED && lw_match_running() && !lw_in_match());   /* group_watching() */
     out->phase = v->phase; out->starter = v->starter; out->stage_picked = v->stage_picked; out->mode = v->mode;
     out->stage_hi = (unsigned char)(v->stage >> 8); out->stage_lo = (unsigned char)v->stage; out->alt_stage = v->alt_stage;
     out->rules.time_mode = v->rules.time_mode; out->rules.stocks = v->rules.stocks; out->rules.minutes = v->rules.minutes;

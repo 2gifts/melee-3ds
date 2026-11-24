@@ -163,6 +163,27 @@ int mp_css_can_edit_rules(void)
     return !mp_css_group() || !mp_lob_ok || mp_lob.host != 0;
 }
 
+/* A console that joined during a match watches it from the CSS until it ends: the CSS is read-only there. */
+static int mp_css_watching(void)
+{
+    return mp_css_group() && mp_lob_ok && mp_lob.watching;
+}
+
+/* The buttons a cursor acts on this frame (mnCharSel_CursorThink, after the cursor moved and before any action). While
+ * watching, the cursor still moves and its only action is A on the red Back button (top right, the vanilla test);
+ * nothing else responds: no puck, no Human / CPU / closed, no slider, no team, no name tag list, no costume. Holding B
+ * to leave reads the held buttons, not these, and stays. */
+u32 mp_css_trigger(int hand, f32 x, f32 y, u32 trigger)
+{
+    if (!mp_css_watching()) {
+        return trigger;
+    }
+    if (hand != 1 && x > 17.3f && y > 22.0f) {   /* hand 1: holding a puck or a slider */
+        return trigger & HSD_PAD_A;
+    }
+    return 0;
+}
+
 /* A fighter this save has not unlocked can be picked on another console. Every fighter has a fixed tile here (a "?" one,
  * or a hidden one at a row end), so the door and its puck use that tile; but applying a fighter flashes its tile
  * (texture frame 10, then frame 0, the portrait), which would show the locked fighter's face on a "?" tile. Put the
@@ -338,12 +359,14 @@ static void mp_css_sync(void)
     for (d = 0; d < 4; d++) {
         u8 now[MP_CSS_DOOR], view[MP_CSS_DOOR];
         mp_css_read_door(d, now);
-        if (mp_css_applied_ok && memcmp(now, mp_css_applied[d], MP_CSS_DOOR) != 0 && mp_css_owned_elsewhere(d)) {
+        if (mp_css_applied_ok && memcmp(now, mp_css_applied[d], MP_CSS_DOOR) != 0 &&
+            (mp_css_owned_elsewhere(d) || mp_css_watching())) {
             /* Another console's door changed here without that console: only Human / CPU / closed and the team are
              * anyone's to change. Anything else (its fighter, costume, tag or hand) is this CSS's own doing, never a
-             * player's edit: do not send it, show the lobby's door again. */
+             * player's edit: do not send it, show the lobby's door again. While watching a match, the CSS is read-only
+             * (mp_css_trigger) and no door is this console's to change: nothing is sent, every door is shown again. */
             mp_css_view_door(d, view);
-            if (now[0] == mp_css_applied[d][0] && now[3] == mp_css_applied[d][3]) {
+            if (mp_css_watching() || (now[0] == mp_css_applied[d][0] && now[3] == mp_css_applied[d][3])) {
                 OSReport("GROUPCSS door %d changed here without its console: restored\n", d);
                 mp_css_put_door(d, view);
                 mp_css_read_door(d, mp_css_applied[d]);
@@ -367,7 +390,7 @@ static void mp_css_sync(void)
                  * and a CPU stays a CPU until this player opens or clicks it, as with a controller plugged in), so
                  * a door left open in this console's VS data, e.g. from an earlier session, is not sent. */
                 mp_css_view_door(d, view);
-                if (view[0] != 0 || (now[5] == 0 && now[6] == 0)) {
+                if (view[0] != 0 || (now[5] == 0 && now[6] == 0) || mp_css_watching()) {
                     mp_css_put_door(d, view);
                     mp_css_read_door(d, mp_css_applied[d]);
                 } else if (memcmp(now, view, MP_CSS_DOOR) != 0) {
@@ -703,6 +726,9 @@ int mp_css_start_intercept(void)
     if (!mp_css_group() || mp_css_go) {
         return 0;
     }
+    if (mp_css_watching()) {
+        return 1;   /* a match is running without this console: Start does nothing */
+    }
     OSReport("GROUPCSS Start pressed: asking the host\n");
     mp_platform_group_lobby_start();
     mp_css_start_wait = 30;
@@ -864,7 +890,7 @@ FIXES = {
          '    f32 stick_x = loadStickValue(&HSD_PadCopyStatus[(u8) port].stickX);\n'
          '    f32 stick_y = (f32) HSD_PadCopyStatus[(u8) port].stickY;\n',
          'HSD_PadStatus* mp_css_pad(int port);\nint mp_css_remote(int door);\nint mp_css_unplugged(int door);\n'
-         'int mp_css_can_edit_rules(void);\nint mp_css_start_intercept(void);\nint mp_css_back_intercept(void);\nint mp_css_hovering(int door);\nvoid mp_css_group_frame(void);\n'
+         'int mp_css_can_edit_rules(void);\nu32 mp_css_trigger(int hand, f32 x, f32 y, u32 trigger);\nint mp_css_start_intercept(void);\nint mp_css_back_intercept(void);\nint mp_css_hovering(int door);\nvoid mp_css_group_frame(void);\n'
          'void mp_css_group_reset(void);\n'
          'static inline void getStickDelta(int port, f32* dx, f32* dy)\n{\n'
          '    f32 stick_x = loadStickValue(&mp_css_pad((u8) port)->stickX);\n'
@@ -894,6 +920,10 @@ FIXES = {
          '                                                            [(u8) door]\n'
          '                                                                .err != 0)\n',
          '                                                    if (mp_css_unplugged(door))\n', 1),
+        # A console watching a match it joined during: its cursor moves, and Back is its only action.
+        ('        {\n            u8 port = cursor->x4;\n            CSSTagData* tag = mnCharSel_803F0E8C[port].data;\n            if (tag->state == 0) {\n',
+         '        trigger = mp_css_trigger(cursor->x5, cursor->xC, cursor->x10, trigger);\n'
+         '        {\n            u8 port = cursor->x4;\n            CSSTagData* tag = mnCharSel_803F0E8C[port].data;\n            if (tag->state == 0) {\n', 1),
         ('                    trigger |= HSD_PadCopyStatus[tmp].trigger;\n',
          '                    trigger |= mp_css_pad(tmp)->trigger;\n', 1),
         ('        trigger = HSD_PadCopyStatus[tag->port].trigger;\n',
