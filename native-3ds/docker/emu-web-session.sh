@@ -19,7 +19,8 @@ printf 'menu=1\nudp=1\nport=44100\ndelay=2\n' > "$SD/slippi/group.ini"
 python3 - <<'PY'
 import os, re
 keys = dict(A='A', B='S', X='Z', Y='X', L='Q', R='W', START='M', SELECT='N', UP='T', DOWN='G', LEFT='F', RIGHT='H',
-            ZL='1', ZR='2', CUP='Up', CDOWN='Down', CLEFT='Left', CRIGHT='Right')
+            ZL='1', ZR='2', CUP='Up', CDOWN='Down', CLEFT='Left', CRIGHT='Right',
+            SUP='I', SDOWN='K', SLEFT='J', SRIGHT='L')
 for item in filter(None, os.environ.get('MELEE_KEYS', '').split(',')):
     k, v = item.split('=')
     keys[k.strip().upper()] = v.strip()
@@ -41,7 +42,7 @@ def stick(prefix):
     return ('"' + f'down:{enc("DOWN")},engine:analog_from_button,left:{enc("LEFT")},modifier:code$0{0x1000020}$1engine$0keyboard,'
             f'modifier_scale:0.500000,right:{enc("RIGHT")},up:{enc("UP")}' + '"')
 put(r'profiles\1\circle_pad', stick('C'))
-put(r'profiles\1\c_stick', '"engine:analog_from_button"')
+put(r'profiles\1\c_stick', stick('S'))
 g = {'software': 0, 'opengl': 1}[os.environ.get('MELEE_GRAPHICS', 'software')]
 put('graphics_api', g)
 put('use_vsync_new', 'false')

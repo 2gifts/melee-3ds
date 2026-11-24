@@ -92,6 +92,13 @@ void mp_platform_group_lobby_stage(int stage, int alt_stage);
 void mp_platform_group_lobby_back(void);
 void mp_platform_group_lobby_busy(int busy);        /* this console is busy (1: a name tag list, name entry, the rules menu or a held slider) or not */
 void mp_platform_group_lobby_rules(const MpGroupRules *rules);
+/* The C-stick that turns the character and stage selects' camera: this console's (x, y: -127..127, the stick times
+ * 127) goes to every console; out[2n], out[2n+1] is port n's newest (this console's own included), 0 when that port has
+ * none. Lossy and never waited for: a value nothing newer has replaced for a moment reads as 0. */
+void mp_platform_group_menu_sticks(int x, int y, signed char *out);
+/* 1: the character select draws each console's name and signal bars under its door; 0 in builds made with
+ * --no-door-names (the bottom screen shows both either way). */
+int mp_platform_group_door_names(void);
 
 /* The match. */
 int mp_platform_group_players(void);       /* 0 outside a group session, else the highest occupied port + 1 */

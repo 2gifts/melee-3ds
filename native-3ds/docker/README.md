@@ -117,7 +117,7 @@ What it is: the stock `linuxserver/azahar` image (a Selkies web desktop on Wayla
 
 Controls (click the page first so it captures the keyboard): the mouse is the touch screen; arrows = circle pad
 (Shift = half tilt); T / G / F / H = D-pad up / down / left / right; A S Z X = A B X Y; Q / W = L / R; M / N = Start /
-Select; 1 / 2 = ZL / ZR. Rebind with `MELEE_KEYS="A=Space,B=Left" docker/emu-web.sh` (buttons are listed in the script
+Select; 1 / 2 = ZL / ZR; I / K / J / L = C-stick up / down / left / right (Shift = half tilt). Rebind with `MELEE_KEYS="A=Space,B=Left" docker/emu-web.sh` (buttons are listed in the script
 header).
 
 Speed (learned the hard way, 2026-11-24): **it must use the OpenGL renderer** (the script's default,

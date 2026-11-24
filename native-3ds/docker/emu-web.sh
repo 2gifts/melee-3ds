@@ -23,7 +23,7 @@
 #   ZL / ZR (New 3DS)              1 / 2
 # Rebind with MELEE_KEYS, a comma list of BUTTON=KEY, KEY being a letter/digit or Left Right Up Down Space Return
 # Tab Shift, e.g.  MELEE_KEYS="A=Space,B=Left" docker/emu-web.sh   (buttons: A B X Y L R START SELECT UP DOWN
-# LEFT RIGHT ZL ZR CUP CDOWN CLEFT CRIGHT, where UP..RIGHT is the D-pad and C* is the circle pad)
+# LEFT RIGHT ZL ZR CUP CDOWN CLEFT CRIGHT SUP SDOWN SLEFT SRIGHT, where UP..RIGHT is the D-pad, C* the circle pad and S* the C-stick)
 #
 # Environment: MELEE_VOLUME (work volume, default melee3ds-slippi-work), MELEE_WEB_PORT (default 3188),
 # MELEE_WEB_NAME (container name, default melee3ds-emu-web), MELEE_GRAPHICS (software|opengl, default opengl: the software renderer is about 40x slower under emulation here),

@@ -5,7 +5,7 @@ supplies `lw_platform.h` (time, log, random, socket init) and calls the API in `
 
 | File | What |
 |---|---|
-| `localwireless.h` | Public API: open/poll, browsing and joining, the lobby (blob, commands, who is here), start blobs, per-frame submit and bundle |
+| `localwireless.h` | Public API: open/poll, browsing and joining, the lobby (blob, commands, who is here), lossy menu input (a few bytes per console, newest value only), start blobs, per-frame submit and bundle |
 | `lw_session.c` | The star protocol: the host's lobby and node-to-port table, host-built per-frame bundles, acks, keep-alive, the drop rule and CPU mask |
 | `lw_link.h`, `lw_link_uds.c` | The UDS link (3DS only; stubs elsewhere) |
 | `lw_link_udp.c` | Loopback UDP stand-in for PC tools and development builds (`use_udp`); left out when `LW_NO_UDP` is defined (release 3DS builds) |

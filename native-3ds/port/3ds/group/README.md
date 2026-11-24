@@ -13,7 +13,7 @@ Around it:
 - `port/3ds/net_select.c` hands the engine's online bridge (`slippi_net_bridge.h`) to this backend while a group
   session is open, and to Slippi Direct otherwise. The Slippi code itself knows nothing about group play.
 - `port/include/group_bridge.h` is the engine-facing API (`mp_platform_group_*`), `port/include/group_engine.h` and
-  `port/engine/group/group.c` the engine side (scene flow, CPU takeover, name tags), and `tools/group_edits/` the
+  `port/engine/group/group.c` the engine side (scene flow, CPU takeover, name tags, the CSS / stage select camera turned by every console's C-stick), and `tools/group_edits/` the
   patches to the decomp (VS menu, character select, stage select, name tags).
 - From Slippi it reuses the lockstep frame driver (`port/engine/slippi/online.c`, through a few hooks), the online scene
   table (`online_mode.c`), the match block format and the port's platform layer (`slippi_plat.c`).
@@ -22,6 +22,9 @@ Around it:
 
 `group.ini` in the data folder (`sdmc:/3ds/melee/slippi/` on the 3DS), all optional; see `group_session.h`.
 `menu=1` turns Melee -> Solo / Group on; without it the VS menu is vanilla.
+
+Build switch: `python tools/build_game.py ... --no-door-names` leaves out the console name and signal bars under the
+character select doors (the bottom-screen strip still shows both).
 
 ## Tests
 

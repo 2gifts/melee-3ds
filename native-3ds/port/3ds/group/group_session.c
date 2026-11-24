@@ -491,6 +491,29 @@ void group_lobby_rules(const MpGroupRules *r)
     sp_unlock();
 }
 
+/* Built with --no-door-names (MP_GROUP_NO_DOOR_NAMES): the character select draws nothing under its doors. */
+int group_door_names(void)
+{
+#ifdef MP_GROUP_NO_DOOR_NAMES
+    return 0;
+#else
+    return 1;
+#endif
+}
+
+void group_menu_sticks(int x, int y, signed char *out)
+{
+    uint8_t mine[2] = {(uint8_t)(int8_t)x, (uint8_t)(int8_t)y}, v[LW_MAX_MENU];
+    memset(out, 0, 8);
+    sp_lock();
+    if (G.open && G.status == ST_CONNECTED) {
+        lw_menu_input_set(mine, 2);
+        for (int k = 0; k < 4; ++k)
+            if (lw_menu_input_get(k, v)) { out[2 * k] = (signed char)v[0]; out[2 * k + 1] = (signed char)v[1]; }
+    }
+    sp_unlock();
+}
+
 int group_players(void) { sp_lock(); int n = G.open ? lw_players() : 0; sp_unlock(); return n; }
 
 int group_player_name(int port, char *buf, int len)

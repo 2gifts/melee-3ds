@@ -15,6 +15,9 @@
  *   0x19 lobby ack  client->host: u8 id, u8 seq
  *   0x1A command    client->host: u8 id, u8 seq, u8 len, blob  (one in flight, re-sent every 100 ms until acked)
  *   0x1B command ack host->client: u8 id, u8 seq
+ *   0x1C menu       client->host: u8 id, u8 seq, LW_MAX_MENU bytes        (on change, then every 100 ms while not zero;
+ *                   never acked)
+ *   0x1D menu all   host->client: u8 id, u8 seq, u8 current mask, 4 x LW_MAX_MENU bytes   (the same way)
  *
  * Ports and link nodes: the host gives each arriving node the lowest free port and keeps the node -> port table; the
  * lobby packet carries it, so a client finds its own port by its node id. Nothing assumes how the link numbers nodes.
@@ -27,7 +30,7 @@
 #include <string.h>
 
 enum { MSG_PAD = 0x10, MSG_PAD_ACK = 0x11, MSG_BUNDLE = 0x13, MSG_BUNDLE_ACK = 0x14, MSG_START = 0x15, MSG_KEEPALIVE = 0x16,
-       MSG_LOBBY = 0x18, MSG_LOBBY_ACK = 0x19, MSG_CMD = 0x1A, MSG_CMD_ACK = 0x1B };
+       MSG_LOBBY = 0x18, MSG_LOBBY_ACK = 0x19, MSG_CMD = 0x1A, MSG_CMD_ACK = 0x1B, MSG_MENU = 0x1C, MSG_MENU_ALL = 0x1D };
 
 #define RING 512                 /* frames kept per player / bundles (power of two) */
 #define LOCAL_RING 256
@@ -43,6 +46,11 @@ enum { MSG_PAD = 0x10, MSG_PAD_ACK = 0x11, MSG_BUNDLE = 0x13, MSG_BUNDLE_ACK = 0
 #define CMD_RESEND_US 100000ull
 #define ENDING_MAX_US 3000000ull /* host: longest wait for the last bundles to be acked after a game */
 #define JOIN_TIMEOUT_US 5000000ull
+#define MENU_REFRESH_US 100000ull  /* menu input: repeat a value that is not zero this often */
+#define MENU_GAP_US 15000ull       /* ... and send at most this often (about once a frame) */
+#define MENU_STALE_US 350000ull    /* a port's value with nothing newer for this long reads as zero */
+#define MENU_HOLD_US 200000ull     /* our own value, not set for this long, is zero */
+#define MENU_ZERO_REPEATS 2        /* a value that went back to zero is repeated this many times */
 
 #ifdef LW_NO_UDP
 #define LINK(fn, args) lw_uds_##fn args
@@ -118,6 +126,11 @@ static struct {
     uint64_t cmd_us;
     struct { int from, len; uint8_t data[LW_MAX_COMMAND]; } hcmd[HOST_CMD_RING];   /* host */
     int hcmd_count, hcmd_head;
+    /* menu input: our own value, what we last sent, and every port's newest value (the host's own is port 0 there) */
+    uint8_t menu_mine[LW_MAX_MENU], menu_sent[1 + LW_MAX_PLAYERS * LW_MAX_MENU], menu_seq, menu_in_seq;
+    int menu_set, menu_sent_ok, menu_repeats, menu_in_ok;
+    uint64_t menu_set_us, menu_sent_us;
+    struct { uint8_t data[LW_MAX_MENU], seq; int valid, have_seq; uint64_t us; } menu[LW_MAX_PLAYERS];
 } S;
 
 static void put32(uint8_t *p, uint32_t v) { p[0] = (uint8_t)(v >> 24); p[1] = (uint8_t)(v >> 16); p[2] = (uint8_t)(v >> 8); p[3] = (uint8_t)v; }
@@ -143,6 +156,19 @@ static int top_of(unsigned present)
     for (int k = 0; k < LW_MAX_PLAYERS; ++k) if (present & (1u << k)) top = k + 1;
     return top;
 }
+
+/* Forget every port's menu input (a game starts or ends); port < 0: all of them. */
+static void menu_forget(int port)
+{
+    for (int k = 0; k < LW_MAX_PLAYERS; ++k)
+        if (port < 0 || k == port) memset(&S.menu[k], 0, sizeof(S.menu[k]));
+    if (port < 0) S.menu_in_ok = 0;
+}
+
+static void client_menu_tick(uint64_t now);
+static void host_menu_tick(uint64_t now);
+static void on_menu(int idx, const uint8_t *d, size_t len);
+static void on_menu_all(const uint8_t *d, size_t len);
 
 /* ---- open / close ---- */
 
@@ -256,6 +282,7 @@ static void host_sync_roster(uint64_t now)
         p->present = 0;
         p->name[0] = 0;
         drop_commands_of(i);
+        menu_forget(i);
         lobby_bump();
         lw_platform_log("lw: port %d (node %d) left the lobby", i + 1, p->node);
     }
@@ -279,6 +306,7 @@ static void host_sync_roster(uint64_t now)
         p->cpu = was ? cpu : 0;
         snprintf(p->name, sizeof(p->name), "%s", LINK(node_name, (n)));
         p->heard_us = now;
+        menu_forget(idx);
         S.present |= 1u << idx;
         lobby_bump();
         lw_platform_log("lw: node %d (%s) joined the lobby on port %d%s", n, p->name, idx + 1, S.match_active ? " during a game" : "");
@@ -442,6 +470,7 @@ static void host_tick(uint64_t now)
             send_keepalive(p->node);
         }
     }
+    host_menu_tick(now);
 }
 
 /* ---- client ---- */
@@ -473,6 +502,7 @@ static void client_tick(uint64_t now)
         ++S.stats[LW_STAT_RESENDS];
         client_send_pads();
     }
+    client_menu_tick(now);
 }
 
 /* Prune what the host has acked and send the rest (newest first). */
@@ -511,6 +541,118 @@ static void client_send_pads(void)
     else ++S.ack_count;
     S.ack_t[slot].frame = newest;
     S.ack_t[slot].t = t;
+}
+
+/* ---- menu input ---- */
+
+#define MENU_ALL (1 + LW_MAX_PLAYERS * LW_MAX_MENU)   /* what the host sends: the current mask, then every port's value */
+
+static int menu_blocked(void) { return S.in_play || lw_in_match(); }
+static int menu_zero(const uint8_t *v, int n) { for (int k = 0; k < n; ++k) if (v[k]) return 0; return 1; }
+
+static void menu_own(uint64_t now, uint8_t *out)
+{
+    if (S.menu_set && now - S.menu_set_us <= MENU_HOLD_US) memcpy(out, S.menu_mine, LW_MAX_MENU);
+    else memset(out, 0, LW_MAX_MENU);
+}
+
+/* A port's value as it reads now (our own port: our own value); 1 when current. */
+static int menu_current(int k, uint64_t now, uint8_t *out)
+{
+    if (k == S.my_idx) { menu_own(now, out); return 1; }
+    if (!(S.present >> k & 1) || !S.menu[k].valid || now - S.menu[k].us > MENU_STALE_US) {
+        memset(out, 0, LW_MAX_MENU);
+        return 0;
+    }
+    memcpy(out, S.menu[k].data, LW_MAX_MENU);
+    return 1;
+}
+
+/* Whether this console's outgoing menu packet (its value, or the host's every-port packet) goes out now: it changed,
+ * it is not all zero and due a repeat, or it went back to zero lately. Then it counts as sent. */
+static int menu_due(const uint8_t *v, int n, uint64_t now)
+{
+    if (S.menu_sent_ok && now - S.menu_sent_us < MENU_GAP_US) return 0;
+    int zero = n == MENU_ALL ? menu_zero(v + 1, n - 1) : menu_zero(v, n);
+    if (!S.menu_sent_ok || memcmp(v, S.menu_sent, (size_t)n)) {
+        S.menu_repeats = zero ? MENU_ZERO_REPEATS : 0;
+    } else if (now - S.menu_sent_us < MENU_REFRESH_US) {
+        return 0;
+    } else if (zero) {
+        if (S.menu_repeats <= 0) return 0;
+        --S.menu_repeats;
+    }
+    memcpy(S.menu_sent, v, (size_t)n);
+    S.menu_sent_ok = 1;
+    S.menu_sent_us = now;
+    return 1;
+}
+
+static void client_menu_tick(uint64_t now)
+{
+    uint8_t pkt[2 + LW_MAX_MENU];
+    if (menu_blocked() || S.my_idx < 1) return;
+    menu_own(now, pkt + 2);
+    if (!menu_due(pkt + 2, LW_MAX_MENU, now)) return;
+    pkt[0] = MSG_MENU;
+    pkt[1] = ++S.menu_seq;
+    send_to(LW_LINK_HOST_NODE, pkt, sizeof(pkt));
+}
+
+static void host_menu_tick(uint64_t now)
+{
+    uint8_t pkt[2 + MENU_ALL];
+    if (menu_blocked()) return;
+    pkt[2] = 0;
+    for (int k = 0; k < LW_MAX_PLAYERS; ++k)
+        if (menu_current(k, now, pkt + 3 + k * LW_MAX_MENU)) pkt[2] |= (uint8_t)(1u << k);
+    if (!menu_due(pkt + 2, MENU_ALL, now)) return;
+    pkt[0] = MSG_MENU_ALL;
+    pkt[1] = ++S.menu_seq;
+    for (int i = 1; i < LW_MAX_PLAYERS; ++i)
+        if (S.pl[i].present && !in_game(&S.pl[i])) send_to(S.pl[i].node, pkt, sizeof(pkt));
+}
+
+static void on_menu(int idx, const uint8_t *d, size_t len)
+{
+    if (len < 2 + LW_MAX_MENU || menu_blocked()) return;
+    if (S.menu[idx].have_seq && (int8_t)(uint8_t)(d[1] - S.menu[idx].seq) <= 0) return;   /* older than what we have */
+    S.menu[idx].seq = d[1];
+    S.menu[idx].have_seq = S.menu[idx].valid = 1;
+    S.menu[idx].us = lw_platform_time_us();
+    memcpy(S.menu[idx].data, d + 2, LW_MAX_MENU);
+}
+
+static void on_menu_all(const uint8_t *d, size_t len)
+{
+    if (len < 2 + MENU_ALL || S.status != LW_CONNECTED || menu_blocked()) return;
+    if (S.menu_in_ok && (int8_t)(uint8_t)(d[1] - S.menu_in_seq) <= 0) return;
+    S.menu_in_seq = d[1];
+    S.menu_in_ok = 1;
+    uint64_t now = lw_platform_time_us();
+    for (int k = 0; k < LW_MAX_PLAYERS; ++k) {
+        if (k == S.my_idx) continue;
+        S.menu[k].valid = (d[2] >> k & 1) && (S.present >> k & 1);
+        S.menu[k].us = now;
+        memcpy(S.menu[k].data, d + 3 + k * LW_MAX_MENU, LW_MAX_MENU);
+    }
+}
+
+void lw_menu_input_set(const uint8_t *data, int len)
+{
+    if (len < 0) len = 0;
+    if (len > LW_MAX_MENU) len = LW_MAX_MENU;
+    memset(S.menu_mine, 0, LW_MAX_MENU);
+    if (len) memcpy(S.menu_mine, data, (size_t)len);
+    S.menu_set = 1;
+    S.menu_set_us = lw_platform_time_us();
+}
+
+int lw_menu_input_get(int port, uint8_t *out)
+{
+    memset(out, 0, LW_MAX_MENU);
+    if (!S.open || S.status != LW_CONNECTED || port < 0 || port >= LW_MAX_PLAYERS || menu_blocked()) return 0;
+    return menu_current(port, lw_platform_time_us(), out);
 }
 
 /* ---- receiving ---- */
@@ -629,6 +771,8 @@ static void on_lobby(const uint8_t *d, size_t len)
     S.lob_seq = d[1];
     S.present = present;
     S.lob_match = d[2] & 1;
+    for (int k = 0; k < LW_MAX_PLAYERS; ++k)   /* a port that emptied or changed console: its menu value is gone */
+        if (!(present >> k & 1) || d[8 + k] != S.pl[k].node) menu_forget(k);
     for (int k = 0; k < 4; ++k) {
         S.lob_signal[k] = d[4 + k];
         S.pl[k].node = d[8 + k];
@@ -692,6 +836,7 @@ static void on_data(const uint8_t *d, size_t len, int from)
                 return;
             case MSG_CMD: p->known = 1; on_cmd(idx, d, len); return;          /* it only sends one once it has the lobby */
             case MSG_KEEPALIVE: return;
+            case MSG_MENU: if (!in_game(p)) on_menu(idx, d, len); return;
             default: break;
         }
         if (!p->in_match || p->cpu) return;    /* not in this game, or dropped: nothing it says counts */
@@ -715,6 +860,7 @@ static void on_data(const uint8_t *d, size_t len, int from)
         case MSG_START: on_start(d, len); break;
         case MSG_BUNDLE: on_bundle(d, len); break;
         case MSG_PAD_ACK: on_pad_ack(d, len); break;
+        case MSG_MENU_ALL: on_menu_all(d, len); break;
         default: break;
     }
 }
@@ -778,6 +924,7 @@ static int host_start(const uint8_t *blob, int len, unsigned members)
     S.bundle_head = 0;
     S.ck_frame = 0;
     S.match_active = 1;
+    menu_forget(-1);
     for (int i = 0; i < LW_MAX_PLAYERS; ++i) {
         player_t *p = &S.pl[i];
         p->in_match = p->present && (i == 0 || p->known) && (members >> i & 1);   /* a console still joining cannot start this game */
@@ -806,6 +953,7 @@ int lw_get_start(uint8_t *out, int cap)
 void lw_game_begin(void)
 {
     S.in_play = 1;
+    menu_forget(-1);
     S.start_valid = 0;                 /* consumed; the host keeps sending its copy until every client plays */
     S.local_count = 0;
     S.local_head = 0;
@@ -905,6 +1053,7 @@ void lw_game_end(void)
 {
     if (!S.open) return;
     S.in_play = 0;
+    menu_forget(-1);
     if (S.is_host) {
         if (S.match_active && !S.ending) { S.ending = 1; S.ending_us = lw_platform_time_us(); }
         return;

@@ -73,6 +73,8 @@ void group_lobby_stage(int stage, int alt_stage);
 void group_lobby_back(void);
 void group_lobby_busy(int busy);
 void group_lobby_rules(const MpGroupRules *rules);
+void group_menu_sticks(int x, int y, signed char *out);
+int group_door_names(void);
 int group_players(void);
 int group_player_name(int port, char *buf, int len);
 void group_game_end(void);

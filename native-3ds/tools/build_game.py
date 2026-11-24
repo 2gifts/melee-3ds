@@ -15,6 +15,7 @@ def main():
     ap.add_argument('--release',action='store_true',help='Build a separate homebrew package with physical controls')
     ap.add_argument('--profile',choices=('unlocked','fresh','slippi'),default='unlocked',help='Save profile: everything unlocked (melee.3dsx), a fresh save earned by play (melee-fresh.3dsx), or the Slippi Direct beta (3ds/melee-slippi/melee-slippi.3dsx, everything unlocked); each keeps its own saves')
     ap.add_argument('--skip-engine',action='store_true')
+    ap.add_argument('--no-door-names',action='store_true',help='Group play: no console name and signal bars under the character select doors (the bottom screen still shows both)')
     ap.add_argument('--sanitize',action='store_true',help='Stop with a source location on original-engine null accesses')
     ap.add_argument('--boot',action='store_true',help='Enter Melee original main and scene loop')
     ap.add_argument('--output',type=Path,help='Alternate 3DSX destination, preserving an existing hardware test package')
@@ -136,6 +137,7 @@ def main():
         includes+=['-DMP_RENDER_WORKER']
         extra.append(ROOT/'port/3ds/render_worker.c')
     if args.clamped_shade:includes+=['-DMP_CLAMPED_SHADE_TEST']
+    if args.no_door_names:includes+=['-DMP_GROUP_NO_DOOR_NAMES']
     if args.render_rework:includes+=['-DMP_RENDER_REWORK_TEST']
     if args.async_presentation or args.release:
         from async_renderqueue import generate

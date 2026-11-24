@@ -99,6 +99,17 @@ int lw_poll_command(int *from, uint8_t *out, int cap);  /* host: the next comman
  * them (or a few seconds pass), then everyone is back in the lobby. */
 void lw_game_end(void);
 
+/* ---- menu input (outside games) ----
+ * A few bytes per console of which only the newest value matters (e.g. a stick that turns a menu's camera). Lossy: a
+ * value is never acknowledged; it goes out when it changes and is repeated a few times a second while it is not all
+ * zero. A client sends its value to the host, the host sends every port's value to every client, so a console only
+ * ever sees values that came through the host. A port's value reads as zero once nothing newer came for a moment (so a
+ * lost "back to zero" cannot stick), when its console leaves, and while a game runs; this console's own value reads
+ * as zero once it has not been set for a moment. Nothing goes out while this console is in a game. */
+#define LW_MAX_MENU 4
+void lw_menu_input_set(const uint8_t *data, int len);    /* this console's value (len <= LW_MAX_MENU, the rest zero) */
+int lw_menu_input_get(int port, uint8_t *out);           /* out: LW_MAX_MENU bytes; 1 when port has a current value */
+
 /* ---- starting a game ---- */
 /* Host: start a game with this blob (e.g. the match description). Resets all per-game state, so no input from an
  * earlier game is used, and sends the blob to every console that is present until it has started. Consoles that join

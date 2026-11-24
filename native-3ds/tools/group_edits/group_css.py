@@ -6,7 +6,8 @@ untouched. What it does to the VS character select (mncharsel.c):
     their cursors take the vanilla "no controller" branch and stay hidden (cursors are private).
   * mp_css_group_frame(), once per CSS frame: mirrors the host's lobby into the doors (portraits, costumes, Human/CPU,
     teams, CPU levels, closed doors) and sends this console's door edits to the host; draws each console's name and
-    signal under its door; sends the host's rules; leaves for the stage select when the host says so.
+    signal under its door (not in builds made with --no-door-names); sends the host's rules; leaves for the stage
+    select when the host says so.
   * A door another console sits on is that console's: vanilla's "no controller" branch never gives it a random fighter
     here, and this console never sends its fighter, costume or tag (only Human / CPU / closed and the team, which any
     player may change; the host enforces the same rule).
@@ -52,11 +53,12 @@ static int mp_css_banner_key = -1;
 static u8 mp_css_pending[4];
 static MpGroupRules mp_css_rules_sent;
 static int mp_css_rules_sent_ok;
-static HSD_Text* mp_css_dtext[4];
-static HSD_Text* mp_css_btext[4];
-static int mp_css_dname[4], mp_css_dbars[4];
-static char mp_css_name_now[4][32], mp_css_bars_now[4][8];
-static int mp_css_col_now[4], mp_css_barcol_now[4];
+static HSD_Text* mp_css_dtext[4];       /* the name under each door */
+static HSD_Text* mp_css_plate[4];       /* the dark plate behind it */
+static HSD_Text* mp_css_bar[4][3];      /* the three signal bars */
+static int mp_css_dname[4];
+static char mp_css_name_now[4][32];
+static int mp_css_col_now[4], mp_css_level_now[4];
 
 static int mp_css_group(void) { return mp_group_mode(); }
 static int mp_css_my(void) { int i = mp_platform_slippi_net_local_index(); return i < 0 || i > 3 ? 0 : i; }
@@ -604,7 +606,86 @@ static void mp_css_rules_frame(void)
     }
 }
 
-/* ---- the name and signal bars under each door ---- */
+/* ---- the name and signal bars under each door ----
+ * A dark plate under the door's own name plate: the signal icon on the left, drawn as the bottom screen draws it
+ * (bottom_draw.c group_bars: three bars of rising height, as many lit as the port's signal level, the rest grey), and
+ * the console's 3DS name in the cursor colour to its right. The plate and the bars are SIS texts with no characters,
+ * only their background box (bg_color). Sizes and offsets in CSS units, from the door's left edge and the door's name
+ * joint (the vanilla name plate). */
+#define MP_DOOR_PLATE_X 0.7f      /* from the door's left edge */
+#define MP_DOOR_PLATE_Y 6.4f      /* below the name joint: under the door, above the screen edge */
+#define MP_DOOR_PLATE_W 13.4f
+#define MP_DOOR_PLATE_H 2.4f
+#define MP_DOOR_BAR_X 0.6f        /* first bar, from the plate's left edge */
+#define MP_DOOR_BAR_W 0.5f
+#define MP_DOOR_BAR_STEP 0.8f     /* bar to bar */
+#define MP_DOOR_BAR_BOTTOM 0.4f   /* from the plate's bottom edge */
+#define MP_DOOR_NAME_X 3.4f       /* the name, from the plate's left edge */
+#define MP_DOOR_NAME_Y 0.45f      /* ... and from its top edge */
+#define MP_DOOR_NAME_SIZE 0.046f
+static const float mp_door_bar_h[3] = { 0.68f, 1.19f, 1.7f };   /* the bottom screen's 4 / 7 / 10 */
+
+/* A box with no characters: only its background shows. */
+static HSD_Text* mp_css_box(float w, float h)
+{
+    HSD_Text* t = HSD_SisLib_803A6754(0, mp_css_ctx);
+    if (t == NULL) {
+        return NULL;
+    }
+    t->font_size.x = 0.05f;
+    t->font_size.y = 0.05f;
+    t->box_size_x = w / 0.05f;
+    t->box_size_y = h / 0.05f;
+    HSD_SisLib_803A6B98(t, 0.0f, 0.0f, "");
+    return t;
+}
+
+static void mp_css_box_color(HSD_Text* t, u8 r, u8 g, u8 b, u8 a)
+{
+    t->bg_color.r = r;
+    t->bg_color.g = g;
+    t->bg_color.b = b;
+    t->bg_color.a = a;
+}
+
+static int mp_css_door_text_make(int d)
+{
+    HSD_Text* t;
+    int k;
+    /* drawn in the order made: the plate, then the bars and the name over it */
+    if ((mp_css_plate[d] = mp_css_box(MP_DOOR_PLATE_W, MP_DOOR_PLATE_H)) == NULL) {
+        return 0;
+    }
+    mp_css_box_color(mp_css_plate[d], 25, 36, 51, 0xE0);   /* the bottom screen's card colour */
+    for (k = 0; k < 3; k++) {
+        if ((mp_css_bar[d][k] = mp_css_box(MP_DOOR_BAR_W, mp_door_bar_h[k])) == NULL) {
+            return 0;
+        }
+    }
+    t = HSD_SisLib_803A6754(0, mp_css_ctx);
+    if (t == NULL) {
+        return 0;
+    }
+    t->default_fitting = 1;
+    t->default_alignment = 0;
+    t->font_size.x = MP_DOOR_NAME_SIZE;
+    t->font_size.y = MP_DOOR_NAME_SIZE;
+    t->box_size_x = (MP_DOOR_PLATE_W - MP_DOOR_NAME_X - 0.4f) / MP_DOOR_NAME_SIZE;
+    t->box_size_y = 32.0f;
+    mp_css_dname[d] = HSD_SisLib_803A6B98(t, 0.0f, 0.0f, "");
+    mp_css_dtext[d] = t;
+    mp_css_name_now[d][0] = 1;
+    mp_css_col_now[d] = mp_css_level_now[d] = -1;
+    return 1;
+}
+
+static void mp_css_door_text_gone(void)
+{
+    memset(mp_css_dtext, 0, sizeof mp_css_dtext);
+    memset(mp_css_plate, 0, sizeof mp_css_plate);
+    memset(mp_css_bar, 0, sizeof mp_css_bar);
+}
+
 static void mp_css_text_frame(void)
 {
     static const GXColor port_col[4] = { { 0xE5, 0x4C, 0x4C, 0xFF }, { 0x4B, 0x4C, 0xE5, 0xFF },
@@ -612,68 +693,60 @@ static void mp_css_text_frame(void)
     static const GXColor team_col[3] = { { 0xE5, 0x4C, 0x4C, 0xFF }, { 0x4B, 0x4C, 0xE5, 0xFF },
                                          { 0x00, 0xB2, 0x00, 0xFF } };
     int d;
-    if (mp_css_ctx < 0) {
-        return;
+    if (mp_css_ctx < 0 || !mp_platform_group_door_names()) {
+        return;   /* no canvas yet, or a build without door names (--no-door-names) */
     }
     for (d = 0; d < 4; d++) {
         HSD_JObj* j;
         HSD_JObj* dj;
         Vec3 pos, dp;
-        char raw[32], name[40], bars[8];
+        char raw[32], name[40];
         GXColor col;
-        int n, k, here = mp_css_present(d);
+        float px, py;
+        int k, level, here = mp_css_present(d);
         CSSDoor* dr = &mnCharSel_803F0DFC.doors[d];
-        if (mp_css_dtext[d] == NULL) {
-            HSD_Text* t = HSD_SisLib_803A6754(0, mp_css_ctx);
-            if (t == NULL) {
-                continue;
-            }
-            t->default_fitting = 1;
-            t->default_alignment = 0;
-            t->font_size.x = 0.046f;
-            t->font_size.y = 0.046f;
-            t->box_size_x = 160.0f;
-            t->box_size_y = 32.0f;
-            mp_css_dname[d] = HSD_SisLib_803A6B98(t, 0.0f, 0.0f, "");
-            mp_css_dtext[d] = t;
-            t = HSD_SisLib_803A6754(0, mp_css_ctx);
-            if (t == NULL) {
-                mp_css_dtext[d] = NULL;
-                continue;
-            }
-            t->default_fitting = 1;
-            t->default_alignment = 0;
-            t->font_size.x = 0.046f;
-            t->font_size.y = 0.046f;
-            t->box_size_x = 160.0f;
-            t->box_size_y = 32.0f;
-            mp_css_dbars[d] = HSD_SisLib_803A6B98(t, 0.0f, 0.0f, "");
-            mp_css_btext[d] = t;
-            mp_css_name_now[d][0] = 1;
-            mp_css_bars_now[d][0] = 1;
-            mp_css_col_now[d] = mp_css_barcol_now[d] = -1;
+        if (mp_css_dtext[d] == NULL && !mp_css_door_text_make(d)) {
+            mp_css_door_text_gone();   /* out of text objects: try again next frame */
+            continue;
         }
         lb_80011E24(mnCharSel_804D6CC0, &j, mnCharSel_803F0E8C[d].name_jointl, -1);
         lb_8000B1CC(j, NULL, &pos);
         lb_80011E24(mnCharSel_804D6CC0, &dj, dr->door_joint, -1);
         lb_8000B1CC(dj, NULL, &dp);
-        mp_css_dtext[d]->pos_x = dp.x + 0.6f;
-        mp_css_dtext[d]->pos_y = -pos.y + 3.0f;
+        px = dp.x + MP_DOOR_PLATE_X;
+        py = -pos.y + MP_DOOR_PLATE_Y;
+        mp_css_plate[d]->pos_x = px;
+        mp_css_plate[d]->pos_y = py;
+        mp_css_plate[d]->pos_z = pos.z;
+        mp_css_plate[d]->hidden = !here;
+        mp_css_dtext[d]->pos_x = px + MP_DOOR_NAME_X;
+        mp_css_dtext[d]->pos_y = py + MP_DOOR_NAME_Y;
         mp_css_dtext[d]->pos_z = pos.z;
-        mp_css_btext[d]->pos_x = dp.x + 0.6f + 8.0f;
-        mp_css_btext[d]->pos_y = -pos.y + 3.0f;
-        mp_css_btext[d]->pos_z = pos.z;
+        mp_css_dtext[d]->hidden = !here;
+        level = here ? mp_lob.signal[d] : 0;   /* 0..3, as the bottom screen shows it (this console's own door too) */
+        for (k = 0; k < 3; k++) {
+            HSD_Text* b = mp_css_bar[d][k];
+            b->pos_x = px + MP_DOOR_BAR_X + k * MP_DOOR_BAR_STEP;
+            b->pos_y = py + MP_DOOR_PLATE_H - MP_DOOR_BAR_BOTTOM - mp_door_bar_h[k];
+            b->pos_z = pos.z;
+            b->hidden = !here;
+        }
+        if (mp_css_level_now[d] != level) {
+            mp_css_level_now[d] = level;
+            for (k = 0; k < 3; k++) {
+                if (k < level) {
+                    mp_css_box_color(mp_css_bar[d][k], 51, 255, 47, 0xFF);   /* lit: the bottom screen's green */
+                } else {
+                    mp_css_box_color(mp_css_bar[d][k], 56, 70, 88, 0xFF);   /* unlit: its line colour */
+                }
+            }
+        }
         raw[0] = 0;
         if (here) {
-            mp_platform_group_player_name(d, raw, 9);
-            raw[8] = 0;
+            mp_platform_group_player_name(d, raw, 11);
+            raw[10] = 0;
         }
         mp_platform_slippi_ui_sis(raw, name, sizeof name);
-        n = !here ? 0 : d == mp_css_my() ? 4 : mp_lob.signal[d] + 1;
-        for (k = 0; k < n && k < 4; k++) {
-            bars[k] = 'i';   /* lowercase i is a thin bar in the CSS font ('|' and '#' draw nothing) */
-        }
-        bars[k] = 0;
         col = mnCharSel_804D6CB0->vs.start.rules.is_teams ? team_col[dr->team % 3] : port_col[d];
         if (strcmp(name, mp_css_name_now[d]) != 0) {
             strncpy(mp_css_name_now[d], name, 31);
@@ -683,23 +756,6 @@ static void mp_css_text_frame(void)
         if (mp_css_col_now[d] != *(int*) &col) {
             mp_css_col_now[d] = *(int*) &col;
             HSD_SisLib_803A74F0(mp_css_dtext[d], mp_css_dname[d], &col);
-        }
-        if (strcmp(bars, mp_css_bars_now[d]) != 0) {
-            strcpy(mp_css_bars_now[d], bars);
-            HSD_SisLib_803A70A0(mp_css_btext[d], mp_css_dbars[d], "%s", bars);
-        }
-        col.r = n >= 3 ? 0x33 : 0xFF;
-        col.g = n >= 2 ? 0xFF : 0x40;
-        col.b = n >= 3 ? 0x2F : 0x30;
-        col.a = 0xFF;
-        if (n == 2) {
-            col.r = 0xFF;
-            col.g = 0xE0;
-            col.b = 0x20;
-        }
-        if (mp_css_barcol_now[d] != *(int*) &col) {
-            mp_css_barcol_now[d] = *(int*) &col;
-            HSD_SisLib_803A74F0(mp_css_btext[d], mp_css_dbars[d], &col);
         }
     }
 }
@@ -781,8 +837,7 @@ void mp_css_group_reset(void)
     int d;
     mp_css_toast = NULL;
     mp_css_toast_col_now = -1;
-    memset(mp_css_dtext, 0, sizeof mp_css_dtext);
-    memset(mp_css_btext, 0, sizeof mp_css_btext);
+    mp_css_door_text_gone();
     memset(mp_css_last_view_ok, 0, sizeof mp_css_last_view_ok);
     memset(mp_css_pending, 0, sizeof mp_css_pending);
     for (d = 0; d < 4; d++) {
@@ -854,8 +909,7 @@ void mp_css_group_frame(void)
     if (mnCharSel_804D6CF6 > 1) {
         mp_css_toast = NULL;   /* name entry and the rules page free the CSS's texts; they are made again afterwards */
         mp_css_banner = NULL;
-        memset(mp_css_dtext, 0, sizeof mp_css_dtext);
-        memset(mp_css_btext, 0, sizeof mp_css_btext);
+        mp_css_door_text_gone();
     }
     if (mp_css_leave_asked && mnCharSel_804D6CF6 == 0) {
         int a = mp_platform_group_confirm_state();
@@ -1025,6 +1079,9 @@ FIXES = {
          '                    if (mp_css_can_edit_rules() && cx3 > -17.0f && cx3 < 15.0f && cursor->x10 > 22.0f) {\n', 1),
         ('                if (cursor->xC < -25.5f && cursor->x10 > 22.0f) {\n',
          '                if (mp_css_can_edit_rules() && cursor->xC < -25.5f && cursor->x10 > 22.0f) {\n', 1),
+        # The camera turns with every console's C-stick (group_engine.h).
+        ('    HSD_GObj_SetupProc(gobj, mn_8022BA1C, 5);\n    ctx = HSD_SisLib_803A611C(0, gobj, 7, 8, 0x80, 1, 0x80, 0);\n',
+         '    HSD_GObj_SetupProc(gobj, mp_group_camera_proc, 5);\n    ctx = HSD_SisLib_803A611C(0, gobj, 7, 8, 0x80, 1, 0x80, 0);\n', 1),
         ('    ctx = HSD_SisLib_803A611C(0, gobj, 7, 8, 0x80, 1, 0x80, 0);\n',
          '    ctx = HSD_SisLib_803A611C(0, gobj, 7, 8, 0x80, 1, 0x80, 0);\n    mp_css_ctx = ctx;\n    mp_css_group_reset();\n', 1),
         ('void mnCharSel_CursorThink(HSD_GObj* gobj)\n{\n', CODE + 'void mnCharSel_CursorThink(HSD_GObj* gobj)\n{\n', 1),
@@ -1063,10 +1120,18 @@ FIXES = {
         ('#include "mnnamenew.h"\n', '#include "mnnamenew.h"\n#include <group_engine.h>\n', 1),
         ('mn_80229624((u32) mnNameNew_PortInUse)', 'mn_80229624((u32) mp_group_menu_pad(mnNameNew_PortInUse))', 2),
     ],
+    # The menu camera reads each port's C-stick through the group (group_engine.h); nothing changes outside a group.
+    'melee/mn/mnmain.c': [
+        ('#include "mnmain.h"\n', '#include "mnmain.h"\n#include <group_engine.h>\n', 1),
+        ('        y = new_var[(u8) i].nml_subStickY;\n',
+         '        y = new_var[(u8) i].nml_subStickY;\n        mp_group_camera_stick(i, &x, &y);\n', 1),
+    ],
     # The puck's own think: a token held by another console (state 5) follows no cursor and is hidden.
     'melee/mn/mnstagesel.c': [
         ('#include "mnstagesel.h"\n',
          '#include <group_bridge.h>\n#include <group_engine.h>\n#include "mnstagesel.h"\n', 1),
+        ('            HSD_GObj_SetupProc(gobj, mn_8022BA1C, 5);\n',
+         '            HSD_GObj_SetupProc(gobj, mp_group_camera_proc, 5);\n', 1),
         ('void mnStageSel_Scene_OnFrame(void)\n{\n',
          SSS_CODE + 'void mnStageSel_Scene_OnFrame(void)\n{\n    if (mp_group_sss_frame()) {\n        return;\n    }\n', 1),
         ('        sfxBack();\n        gm_801A4B60();\n    }\n    if (mnStageSel_804D6CAF == 2) {\n',

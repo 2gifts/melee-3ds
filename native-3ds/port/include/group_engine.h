@@ -39,6 +39,14 @@ int mp_group_hud_name(int port, char* name, int size);
 int mp_group_sss_remote_exit(void);  /* the stage select ended because of another console (read and clear) */
 int mp_group_sss_sent(void);         /* this console already sent its pick (read and clear) */
 
+/* The character and stage selects' camera (mn_8022BA1C, which turns it by the first C-stick that is tilted, in port
+ * order): their camera proc is mp_group_camera_proc. In a group it runs mn_8022BA1C over every console's C-stick, by
+ * port (this console's own live, the others' as they last came), so every console turns its camera alike; anywhere else
+ * it is mn_8022BA1C. mp_group_camera_stick replaces port's stick inside it (it does nothing outside a group). */
+struct HSD_GObj;
+void mp_group_camera_proc(struct HSD_GObj* gobj);
+void mp_group_camera_stick(int port, float* x, float* y);
+
 /* Menus outside the CSS that read one port's buttons (name entry from the lobby): in a group, this console's own port
  * reads pad 0, its only pad; any other port is returned as it is. */
 int mp_group_menu_pad(int port);

@@ -9,6 +9,7 @@
 #include <melee/gm/gm_1B03.h>
 #include <melee/gm/gmvsmelee.h>
 #include <melee/gm/types.h>
+#include <melee/mn/mnmain.h>
 #include <melee/mn/mnname.h>
 #include <melee/mn/types.h>
 #include <melee/pl/player.h>
@@ -16,6 +17,7 @@
 #include <group_engine.h>
 #include <slippi_engine.h>
 #include <slippi_net_bridge.h>
+#include <sysdolphin/baselib/controller.h>
 
 void mp_platform_log(const char* text);
 void mp_platform_idle(void);
@@ -38,6 +40,50 @@ int mp_group_menu_pad(int port)
         return 0;
     }
     return port;
+}
+
+/* ---- the menu camera ---- */
+
+static int camera_group;              /* mn_8022BA1C is running for the group */
+static signed char camera_sticks[8];  /* every port's C-stick as it last came (x, y per port) */
+
+static int stick_byte(float v)
+{
+    v *= 127.0f;
+    if (v > 127.0f) {
+        v = 127.0f;
+    } else if (v < -127.0f) {
+        v = -127.0f;
+    }
+    return (int) (v < 0.0f ? v - 0.5f : v + 0.5f);
+}
+
+void mp_group_camera_proc(HSD_GObj* gobj)
+{
+    if (!mp_group_mode()) {
+        mn_8022BA1C(gobj);
+        return;
+    }
+    /* this console's only pad is pad 0, whatever its port */
+    mp_platform_group_menu_sticks(stick_byte(HSD_PadCopyStatus[0].nml_subStickX),
+                                  stick_byte(HSD_PadCopyStatus[0].nml_subStickY), camera_sticks);
+    camera_group = 1;
+    mn_8022BA1C(gobj);
+    camera_group = 0;
+}
+
+void mp_group_camera_stick(int port, float* x, float* y)
+{
+    if (!camera_group || port < 0 || port > 3) {
+        return;
+    }
+    if (port == mp_platform_slippi_net_local_index()) {
+        *x = HSD_PadCopyStatus[0].nml_subStickX;   /* our own stick, live: our camera never lags it */
+        *y = HSD_PadCopyStatus[0].nml_subStickY;
+    } else {
+        *x = camera_sticks[2 * port] / 127.0f;
+        *y = camera_sticks[2 * port + 1] / 127.0f;
+    }
 }
 
 /* ---- the scene flow ---- */
