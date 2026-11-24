@@ -13,7 +13,10 @@ untouched. What it does to the VS character select (mncharsel.c):
   * Start no longer ends the scene: it asks the host, which answers with the stage select for everyone.
   * Rules and the Teams switch are the host's only.
   * The Human/CPU/closed click ends on Human only where a console is present (a CPU elsewhere), as on a GameCube.
+  * A joiner shows the host's rules: every rules read in mncharsel.c goes through mp_css_game_rules() (the banner, the
+    handicap mode), and each door's handicap is the value of the console that owns it (mp_css_auto_hc, the lobby).
 The stage select (mnstagesel.c) forwards the first pick and Back to the lobby and leaves when the host does.
+Name entry (mnnamenew.c) opened for this console's door reads pad 0 (mp_group_menu_pad).
 """
 
 CODE = r'''
@@ -35,8 +38,12 @@ static int mp_css_seen_css;       /* saw the lobby in its CSS phase since this s
 static int mp_css_start_wait;
 static int mp_css_my_seen_open;   /* our own door has been seen open since this scene began */
 static int mp_css_leave_asked;   /* Back is waiting for the host's answer to "End the session?" */
-static u8 mp_css_last_view[4][14], mp_css_last_view_ok[4];
-static u8 mp_css_applied[4][14], mp_css_applied_ok;
+#define MP_CSS_DOOR 15     /* a door as the lobby holds it: kind, fighter, costume, team, level, chosen, tag[8], handicap */
+static u8 mp_css_last_view[4][MP_CSS_DOOR], mp_css_last_view_ok[4];
+static u8 mp_css_applied[4][MP_CSS_DOOR], mp_css_applied_ok;
+static u8 mp_css_hc_shown[4];    /* each door's handicap as the lobby last showed it (auto handicap of a door not ours) */
+HSD_Text* mp_css_banner;         /* the rules banner at the top (the CSS scene's setup keeps it here) */
+static int mp_css_banner_key = -1;
 static u8 mp_css_pending[4];
 static MpGroupRules mp_css_rules_sent;
 static int mp_css_rules_sent_ok;
@@ -52,6 +59,72 @@ static int mp_css_present(int d) { return mp_lob_ok && ((mp_lob.present >> d) & 
 /* Another console sits on this door's port and it is Human in the lobby: its fighter, costume and tag are that
  * console's own. */
 static int mp_css_owned_elsewhere(int d) { return d != mp_css_my() && mp_css_present(d) && mp_lob.door[d].kind == 0; }
+
+/* The rules this character select shows. Every gmMainLib_GetGameRules() in mncharsel.c comes here (a macro at the top
+ * of the file; this file calls the real one as (gmMainLib_GetGameRules)()). On a joiner it is a copy of its own rules
+ * with the host's mode, time and stock limits and handicap mode, so the banner and the handicap sliders show the
+ * host's rules. The joiner's own rules (and save) are never changed. */
+GameRules* mp_css_game_rules(void)
+{
+    static GameRules over;
+    GameRules* real = (gmMainLib_GetGameRules)();
+    if (!mp_lob_ok || mp_lob.host || !mp_lob.rules.melee_valid) {
+        return real;
+    }
+    over = *real;
+    over.mode = mp_lob.rules.mode;
+    over.time_limit = mp_lob.rules.time_limit;
+    over.stock_count = mp_lob.rules.stock_count;
+    over.stock_time_limit = mp_lob.rules.stock_time_limit;
+    over.handicap = mp_lob.rules.handicap;
+    return &over;
+}
+
+/* Auto handicap (every gm_801685D4 in mncharsel.c comes here). Each door's value comes from one console's save, the
+ * one the match will use: this console's own Human door from this save (its tag, or its port's value), a CPU door from
+ * the host's save, any other door as the lobby last showed it. */
+s8 mp_css_auto_hc(u8 port, u8 tag)
+{
+    s8* h;
+    int kind;
+    if (!mp_lob_ok || port > 3) {
+        return (gm_801685D4)(port, tag);
+    }
+    if (mp_css_game_rules()->handicap != 1) {
+        return 0;
+    }
+    kind = mnCharSel_803F0DFC.doors[port].p_kind;
+    if ((kind == 0 && port == mp_css_my()) || (kind == 1 && mp_lob.host)) {
+        h = gmMainLib_8015CE44(port, tag);
+        return h != NULL ? *h : 5;
+    }
+    return mp_css_hc_shown[port];
+}
+
+/* Move a door's handicap slider to the value the door holds now (as the name tag list does after a tag is chosen). */
+static void mp_css_show_hc(int d)
+{
+    HSD_JObj* j;
+    s32 h;
+    if (mp_css_game_rules()->handicap == 0 || mnCharSel_803F0DFC.doors[d].p_kind == 3) {
+        return;
+    }
+    h = getHandicapValue(d);
+    j = animateJoint(mnCharSel_804D6CC0, mnCharSel_803F0DFC.doors[d].cpuslider_joint, TOBJ_MASK, (f32) h);
+    HSD_JObjSetTranslateX(j, 1.25f * (f32) (h - 1));
+}
+
+/* A door's handicap as the lobby holds it: 0 with handicap off, else 1..9 (auto: mp_css_auto_hc; fixed: the slider). */
+static u8 mp_css_read_hc(int d, int kind)
+{
+    PlayerInitData* p = &mnCharSel_804D6CB0->vs.start.players[d];
+    int mode = mp_css_game_rules()->handicap, h;
+    if (kind == 2 || mode == 0) {
+        return 0;
+    }
+    h = mode == 1 ? mp_css_auto_hc(d, p->nametag) : p->handicap;
+    return h >= 1 && h <= 9 ? h : 0;
+}
 
 /* The pad a door's cursor reads: my door gets pad 0 (the only real pad), every other port an unplugged channel. */
 HSD_PadStatus* mp_css_pad(int port)
@@ -155,7 +228,7 @@ static void mp_css_read_door(int d, u8* o)
     }
     int tok = mnCharSel_804A0BD0[d]->x5;
     if (tok == MP_CSS_REMOTE_HELD && mp_css_applied_ok) {
-        memcpy(o, mp_css_applied[d], 14);   /* another console holds this token: nothing here to report */
+        memcpy(o, mp_css_applied[d], MP_CSS_DOOR);   /* another console holds this token: nothing here to report */
         return;
     }
     int placed = kind != 2 && dr->sel_icon < 0x19 && mnCharSel_804A0BD0[d]->x5 == 0 && p->ckind >= 0 &&
@@ -179,6 +252,7 @@ static void mp_css_read_door(int d, u8* o)
             strncpy((char*) o + 6, t, 8);   /* the tag's own text: an id means nothing in another save */
         }
     }
+    o[14] = mp_css_read_hc(d, kind);
 }
 
 static void mp_css_view_door(int d, u8* o)
@@ -192,14 +266,16 @@ static void mp_css_view_door(int d, u8* o)
     o[4] = v->kind == 1 ? v->level : 3;
     o[5] = chosen;
     memcpy(o + 6, v->tag, 8);
+    o[14] = v->kind != 2 ? v->handicap : 0;
 }
 
-/* A door as 14 bytes (kind, fighter, costume, team, level, chosen, tag[8]) to the host. */
+/* A door as 15 bytes (kind, fighter, costume, team, level, chosen, tag[8], handicap) to the host. */
 static void mp_css_send_door(int d, const u8* o)
 {
     MpGroupDoor door;
     memset(&door, 0, sizeof door);
     memcpy(&door, o, 14);
+    door.handicap = o[14];
     mp_platform_group_lobby_set_door(d, &door);
 }
 
@@ -212,6 +288,11 @@ static void mp_css_put_door(int d, const u8* o)
     t.team = o[3];
     t.cpu_level = o[4];
     mp_css_apply_door(d, &t);
+    mp_css_hc_shown[d] = o[14];
+    if (mp_css_game_rules()->handicap == 2 && o[14] >= 1 && o[14] <= 9) {
+        mnCharSel_804D6CB0->vs.start.players[d].handicap = o[14];   /* the fixed slider's value */
+    }
+    mp_css_show_hc(d);
     if (o[5] == 3) {
         mnCharSel_804A0BD0[d]->x5 = MP_CSS_REMOTE_HELD;   /* in someone's hand, over nothing: no puck here */
     }
@@ -265,9 +346,9 @@ static void mp_css_sync(void)
 {
     int d;
     for (d = 0; d < 4; d++) {
-        u8 now[14], view[14];
+        u8 now[MP_CSS_DOOR], view[MP_CSS_DOOR];
         mp_css_read_door(d, now);
-        if (mp_css_applied_ok && memcmp(now, mp_css_applied[d], 14) != 0 && mp_css_owned_elsewhere(d)) {
+        if (mp_css_applied_ok && memcmp(now, mp_css_applied[d], MP_CSS_DOOR) != 0 && mp_css_owned_elsewhere(d)) {
             /* Another console's door changed here without that console: only Human / CPU / closed and the team are
              * anyone's to change. Anything else (its fighter, costume, tag or hand) is this CSS's own doing, never a
              * player's edit: do not send it, show the lobby's door again. */
@@ -280,15 +361,15 @@ static void mp_css_sync(void)
                 continue;
             }
         }
-        if (!mp_css_applied_ok || memcmp(now, mp_css_applied[d], 14) != 0) {
+        if (!mp_css_applied_ok || memcmp(now, mp_css_applied[d], MP_CSS_DOOR) != 0) {
             if (mp_css_applied_ok) {
                 mp_css_send_door(d, now);
-                OSReport("GROUPCSS send door %d: kind %d fighter %d color %d team %d level %d chosen %d\n", d, now[0], now[1],
-                         now[2], now[3], now[4], now[5]);
+                OSReport("GROUPCSS send door %d: kind %d fighter %d color %d team %d level %d chosen %d handicap %d\n", d,
+                         now[0], now[1], now[2], now[3], now[4], now[5], now[14]);
                 mp_css_pending[d] = 12;
                 mp_css_last_view_ok[d] = 0;
             }
-            memcpy(mp_css_applied[d], now, 14);
+            memcpy(mp_css_applied[d], now, MP_CSS_DOOR);
             if (!mp_css_applied_ok && d == mp_css_my()) {
                 /* A CSS that was just (re)built, e.g. back from name entry: what this console's door holds (a new
                  * name tag, a fighter) is authoritative, so tell the host if the lobby does not have it yet. */
@@ -298,7 +379,7 @@ static void mp_css_sync(void)
                      * joining a CPU's port leaves the CPU, as a controller plugged into it does. Show the CPU. */
                     mp_css_put_door(d, view);
                     mp_css_read_door(d, mp_css_applied[d]);
-                } else if (memcmp(now, view, 14) != 0) {
+                } else if (memcmp(now, view, MP_CSS_DOOR) != 0) {
                     mp_css_send_door(d, now);
                     mp_css_pending[d] = 12;
                     mp_css_last_view_ok[d] = 0;
@@ -311,17 +392,17 @@ static void mp_css_sync(void)
             continue;
         }
         mp_css_view_door(d, view);
-        if (mp_css_last_view_ok[d] && memcmp(view, mp_css_last_view[d], 14) == 0) {
+        if (mp_css_last_view_ok[d] && memcmp(view, mp_css_last_view[d], MP_CSS_DOOR) == 0) {
             continue;
         }
-        memcpy(mp_css_last_view[d], view, 14);
+        memcpy(mp_css_last_view[d], view, MP_CSS_DOOR);
         mp_css_last_view_ok[d] = 1;
-        if (memcmp(view, now, 6) != 0) {
-            OSReport("GROUPCSS apply door %d: kind %d fighter %d color %d team %d level %d chosen %d\n", d, view[0], view[1],
-                     view[2], view[3], view[4], view[5]);
+        if (memcmp(view, now, 6) != 0 || view[14] != now[14]) {
+            OSReport("GROUPCSS apply door %d: kind %d fighter %d color %d team %d level %d chosen %d handicap %d\n", d,
+                     view[0], view[1], view[2], view[3], view[4], view[5], view[14]);
             mp_css_put_door(d, view);
             if (view[5] == 2) {
-                memcpy(mp_css_applied[d], view, 14);   /* a mirrored hover: what we show, not a local edit */
+                memcpy(mp_css_applied[d], view, MP_CSS_DOOR);   /* a mirrored hover: what we show, not a local edit */
             } else {
                 mp_css_read_door(d, mp_css_applied[d]);
             }
@@ -333,7 +414,7 @@ static void mp_css_sync(void)
 /* ---- rules: the host sends its own, a joiner shows the host's teams switch ---- */
 static void mp_css_rules_frame(void)
 {
-    struct GameRules* gr = gmMainLib_GetGameRules();
+    struct GameRules* gr = (gmMainLib_GetGameRules)();
     VsModeData* vs = &mnCharSel_804D6CB0->vs;
     static VsModeData scratch;
     MpGroupRules r;
@@ -341,6 +422,32 @@ static void mp_css_rules_frame(void)
         if (mp_lob.rules.teams != vs->start.rules.is_teams) {
             vs->start.rules.is_teams = mp_lob.rules.teams;
             mnCharSel_8025EE8C(mnCharSel_804D6CB0->match_type);
+        }
+        if (mp_lob.rules.melee_valid) {
+            /* The banner shows mp_css_game_rules(), the host's: write it again whenever those rules change (the scene's
+             * setup wrote it from whatever the lobby held then). A new handicap mode also redraws the doors' sliders,
+             * through the door's Human/CPU/closed change path. */
+            int key = mp_lob.rules.mode | mp_lob.rules.time_limit << 8 | mp_lob.rules.stock_count << 16 |
+                      (mp_lob.rules.stock_time_limit & 0x3F) << 24 | (mp_lob.rules.handicap & 3) << 30;
+            if (key != mp_css_banner_key) {
+                int d;
+                int relayout = mp_css_banner_key != -1 && ((mp_css_banner_key >> 30) & 3) != mp_lob.rules.handicap;
+                mp_css_banner_key = key;
+                if (mp_css_banner != NULL) {
+                    mnCharSel_8025BD30();
+                    HSD_SisLib_803A6368(mp_css_banner, 0x4A);
+                }
+                for (d = 0; relayout && d < 4; d++) {
+                    u8 save = mnCharSel_804D6CF6;
+                    mnCharSel_804D6CF6 = 4;   /* no sounds */
+                    mnCharSel_803F0DFC.doors[d].p_kind_prev = 0xFF;
+                    mnCharSel_8025DB34(d);
+                    mp_css_show_hc(d);
+                    mnCharSel_804D6CF6 = save;
+                }
+                OSReport("GROUPCSS the host's rules: mode %d time %d stocks %d handicap %d\n", mp_lob.rules.mode,
+                         mp_lob.rules.time_limit, mp_lob.rules.stock_count, mp_lob.rules.handicap);
+            }
         }
         return;
     }
@@ -357,6 +464,11 @@ static void mp_css_rules_frame(void)
     gm_80167BC8(&scratch);
     r.melee_valid = 1;
     memcpy(r.melee, &scratch.start.rules, sizeof r.melee);
+    r.mode = gr->mode;
+    r.time_limit = gr->time_limit;
+    r.stock_count = gr->stock_count;
+    r.stock_time_limit = gr->stock_time_limit;
+    r.handicap = gr->handicap;
     if (!mp_css_rules_sent_ok || memcmp(&r, &mp_css_rules_sent, sizeof r) != 0) {
         mp_css_rules_sent = r;
         mp_css_rules_sent_ok = 1;
@@ -551,6 +663,12 @@ void mp_css_group_reset(void)
     mp_css_applied_ok = 0;
     mp_css_rules_sent_ok = 0;
     memset(mp_css_puck_gone, 0, sizeof mp_css_puck_gone);
+    memset(mp_css_hc_shown, 0, sizeof mp_css_hc_shown);
+    mp_css_banner = NULL;
+    mp_css_banner_key = -1;
+    /* The lobby as it is now, before the scene's setup draws the banner and the doors' sliders (mp_css_game_rules);
+     * outside a group, none, so the rules are this console's own. */
+    mp_lob_ok = mp_css_group() && mp_platform_group_lobby_get(&mp_lob);
     mp_css_go = 0;
     mp_css_my_seen_open = 0;
     mp_css_leave_asked = 0;
@@ -604,6 +722,7 @@ void mp_css_group_frame(void)
      * did not look right and is not drawn. */
     if (mnCharSel_804D6CF6 > 1) {
         mp_css_toast = NULL;   /* name entry and the rules page free the CSS's texts; they are made again afterwards */
+        mp_css_banner = NULL;
         memset(mp_css_dtext, 0, sizeof mp_css_dtext);
         memset(mp_css_btext, 0, sizeof mp_css_btext);
     }
@@ -717,6 +836,18 @@ static int mp_group_sss_frame(void)
 
 FIXES = {
     'melee/mn/mncharsel.c': [
+        # A joiner's character select shows the host's rules (banner, handicap mode) and each door's auto handicap from
+        # the console that owns it: every read of the rules and of auto handicap in this file goes through the group
+        # code (inert outside a group). The group code calls the real functions as (gmMainLib_GetGameRules)() and
+        # (gm_801685D4)(...), which these function-like macros leave alone.
+        ('#include <sysdolphin/baselib/sislib.h>\n\nstatic u8 mnCharSel_804D50C8[4]',
+         '#include <sysdolphin/baselib/sislib.h>\n'
+         'GameRules* mp_css_game_rules(void);\ns8 mp_css_auto_hc(u8 port, u8 tag);\nextern HSD_Text* mp_css_banner;\n'
+         '#define gmMainLib_GetGameRules() mp_css_game_rules()\n#define gm_801685D4(port, tag) mp_css_auto_hc(port, tag)\n'
+         '\nstatic u8 mnCharSel_804D50C8[4]', 1),
+        # Keep the rules banner's text so a joiner can write it again when the host's rules change.
+        ('        HSD_SisLib_803A6368(text, 0x4A);\n        mnCharSel_8025BD30();\n',
+         '        HSD_SisLib_803A6368(text, 0x4A);\n        mp_css_banner = text;\n        mnCharSel_8025BD30();\n', 1),
         ('static inline void getStickDelta(int port, f32* dx, f32* dy)\n{\n'
          '    f32 stick_x = loadStickValue(&HSD_PadCopyStatus[(u8) port].stickX);\n'
          '    f32 stick_y = (f32) HSD_PadCopyStatus[(u8) port].stickY;\n',
@@ -786,6 +917,13 @@ FIXES = {
         ('        Player_GetNametagSlotID(slot) == NAMETAG_DISABLED)\n', '        mp_group_tag_off(slot))\n', 1),
         ('                    un_804D6D78, -5000.0f, 0.0f,\n                    GetNameText(Player_GetNametagSlotID(slot)));\n', '                    un_804D6D78, -5000.0f, 0.0f,\n                    mp_group_tag_text(slot));\n', 1),
         ('                                GetNameText(Player_GetNametagSlotID(slot)));\n', '                                mp_group_tag_text(slot));\n', 1),
+    ],
+    # Name entry opened from the lobby reads its buttons from the door's port (mnNameNew_PortInUse); a console's only pad
+    # is pad 0, so its own port reads pad 0 there, as on the CSS (mp_css_pad). PortInUse itself stays: the new tag is
+    # stored for that door and its rumble setting is read from that port.
+    'melee/mn/mnnamenew.c': [
+        ('#include "mnnamenew.h"\n', '#include "mnnamenew.h"\n#include <group_engine.h>\n', 1),
+        ('mn_80229624((u32) mnNameNew_PortInUse)', 'mn_80229624((u32) mp_group_menu_pad(mnNameNew_PortInUse))', 2),
     ],
     # The puck's own think: a token held by another console (state 5) follows no cursor and is hidden.
     'melee/mn/mnstagesel.c': [

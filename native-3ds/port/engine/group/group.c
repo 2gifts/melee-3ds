@@ -32,6 +32,14 @@ int mp_group_mode(void)
     return gm_GetCurrentGameMode() == GM_HANYU_CSS && mp_platform_group_active();
 }
 
+int mp_group_menu_pad(int port)
+{
+    if (mp_group_mode() && port == mp_platform_slippi_net_local_index()) {
+        return 0;
+    }
+    return port;
+}
+
 /* ---- the scene flow ---- */
 
 void mp_group_css_enter(GameModeState* state)

@@ -308,27 +308,6 @@ void group_leave(void)
     ++view.serial;
 }
 
-/* A name tag's text (the game's Shift-JIS-like encoding) as plain text; only what the text can say in ASCII. */
-static void tag_text(const uint8_t *t, char *out, int n)
-{
-    int o = 0;
-    for (int i = 0; i < LOBBY_TAG_BYTES && t[i] && o < n - 1; i++) {
-        unsigned c = t[i];
-        if (c >= 0x20 && c < 0x7F) { out[o++] = (char)c; continue; }
-        if ((c == 0x81 || c == 0x82) && i + 1 < LOBBY_TAG_BYTES) {
-            unsigned d = t[++i];
-            if (c == 0x82 && d >= 0x4F && d <= 0x58) out[o++] = (char)('0' + (d - 0x4F));
-            else if (c == 0x82 && d >= 0x60 && d <= 0x79) out[o++] = (char)('A' + (d - 0x60));
-            else if (c == 0x82 && d >= 0x81 && d <= 0x9A) out[o++] = (char)('A' + (d - 0x81));   /* the strip's font is capitals */
-            else if (c == 0x81 && d == 0x40) out[o++] = ' ';
-            else out[o++] = '?';
-            continue;
-        }
-        out[o++] = '?';
-    }
-    out[o] = 0;
-}
-
 /* Join and leave toasts: remember who was here, show the change for a few seconds. */
 static void toast_update(unsigned present, char names[LOBBY_SLOTS][32])
 {
@@ -379,12 +358,7 @@ int group_strip(GroupStrip *out)
         out->port[i].present = (int)(present >> i & 1);
         if (out->port[i].present) {
             out->port[i].signal = group_signal(i);
-            snprintf(out->port[i].name, sizeof(out->port[i].name), "%.31s", names[i]);
-            if (st.slot[i].kind == LOBBY_HUMAN && st.slot[i].tag[0]) {      /* a chosen name tag replaces the 3DS name here */
-                char t[24];
-                tag_text(st.slot[i].tag, t, sizeof(t));
-                if (strspn(t, "? ") != strlen(t)) snprintf(out->port[i].name, sizeof(out->port[i].name), "%s", t);
-            }
+            snprintf(out->port[i].name, sizeof(out->port[i].name), "%.31s", names[i]);   /* always the 3DS name: a tag only shows over the fighter in the match */
         }
     }
     return 1;

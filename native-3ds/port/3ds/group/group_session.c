@@ -403,12 +403,16 @@ int group_lobby_get(MpGroupLobby *out)
     out->rules.items = v->rules.items; out->rules.teams = v->rules.teams; out->rules.friendly_fire = v->rules.friendly_fire;
     out->rules.melee_valid = v->rules.melee_valid;
     memcpy(out->rules.melee, v->rules.melee, sizeof(out->rules.melee));
+    out->rules.mode = v->rules.mode; out->rules.time_limit = v->rules.time_limit;
+    out->rules.stock_count = v->rules.stock_count; out->rules.stock_time_limit = v->rules.stock_time_limit;
+    out->rules.handicap = v->rules.handicap;
     for (int i = 0; i < 4; ++i) {
         const lobby_slot *l = &v->slot[i];
         MpGroupDoor *d = &out->door[i];
         out->signal[i] = (unsigned char)lw_signal(i);
         d->kind = l->kind; d->fighter = l->fighter; d->color = l->color; d->team = l->team; d->level = l->level; d->chosen = l->chosen;
         memcpy(d->tag, l->tag, LOBBY_TAG_BYTES);
+        d->handicap = l->handicap;
     }
     sp_unlock();
     return 1;
@@ -420,6 +424,7 @@ void group_lobby_set_door(int port, const MpGroupDoor *d)
     memset(&l, 0, sizeof(l));
     l.kind = d->kind; l.fighter = d->fighter; l.color = d->color; l.team = d->team; l.level = d->level; l.chosen = d->chosen;
     memcpy(l.tag, d->tag, LOBBY_TAG_BYTES);
+    l.handicap = d->handicap;
     sp_lock();
     if (G.open && G.status == ST_CONNECTED) set_door(port, &l);
     sp_unlock();
@@ -465,6 +470,8 @@ void group_lobby_rules(const MpGroupRules *r)
     x.friendly_fire = r->friendly_fire;
     x.melee_valid = r->melee_valid ? 1 : 0;
     memcpy(x.melee, r->melee, LOBBY_MELEE_RULES);
+    x.mode = r->mode; x.time_limit = r->time_limit; x.stock_count = r->stock_count;
+    x.stock_time_limit = r->stock_time_limit; x.handicap = r->handicap;
     sp_lock();
     if (G.open && G.host) host_apply(lobby_host_set_rules(&G.host_lobby, &x));   /* only the host sets the rules */
     sp_unlock();

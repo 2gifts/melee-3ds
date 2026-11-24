@@ -32,8 +32,8 @@ static const unsigned char block_template[0x138] = {
 };
 
 #define BLOB_ID 0x4C
-#define BLOB_HEADER (13 + LOBBY_MELEE_RULES)
-#define SLOT_BYTES 14
+#define BLOB_HEADER (18 + LOBBY_MELEE_RULES)
+#define SLOT_BYTES 15
 #define MAX_FIGHTER 0x19            /* external character ids 0..0x19 (Melee's 26 fighters) */
 #define DEFAULT_CPU_LEVEL 3         /* the level a dropped console's fighter plays at (online.c take_over_slot) */
 
@@ -90,12 +90,18 @@ int lobby_encode(const lobby_state *s, uint8_t *out, int cap)
     out[10] = s->stage_picked;
     out[11] = s->alt_stage;
     out[12] = s->rules.melee_valid ? 1 : 0;
-    memcpy(out + 13, s->rules.melee, LOBBY_MELEE_RULES);
+    out[13] = s->rules.mode;
+    out[14] = s->rules.time_limit;
+    out[15] = s->rules.stock_count;
+    out[16] = s->rules.stock_time_limit;
+    out[17] = s->rules.handicap;
+    memcpy(out + 18, s->rules.melee, LOBBY_MELEE_RULES);
     for (int i = 0; i < LOBBY_SLOTS; ++i) {
         uint8_t *p = out + BLOB_HEADER + SLOT_BYTES * i;
         const lobby_slot *l = &s->slot[i];
         p[0] = l->kind; p[1] = l->fighter; p[2] = l->color; p[3] = l->team; p[4] = l->level; p[5] = l->chosen;
         memcpy(p + 6, l->tag, LOBBY_TAG_BYTES);
+        p[14] = l->handicap;
     }
     return need + put_status(&s->status, out + need, cap - need);
 }
@@ -108,7 +114,8 @@ static void sanitize_slot(lobby_slot *l)
     if (l->team > 2) l->team = 0;
     if (l->level < 1 || l->level > 9) l->level = DEFAULT_CPU_LEVEL;
     l->chosen = l->chosen > 3 ? 0 : l->chosen;   /* 2: the token is held over a fighter (a preview), 3: held over nothing */
-    if (l->kind == LOBBY_EMPTY) l->chosen = 0;
+    if (l->handicap > 9) l->handicap = 0;
+    if (l->kind == LOBBY_EMPTY) { l->chosen = 0; l->handicap = 0; }
 }
 
 int lobby_decode(lobby_state *s, const uint8_t *in, int len)
@@ -128,12 +135,18 @@ int lobby_decode(lobby_state *s, const uint8_t *in, int len)
     s->stage_picked = in[10] ? 1 : 0;
     s->alt_stage = in[11];
     s->rules.melee_valid = in[12] ? 1 : 0;
-    memcpy(s->rules.melee, in + 13, LOBBY_MELEE_RULES);
+    s->rules.mode = in[13] > 3 ? 1 : in[13];
+    s->rules.time_limit = in[14];
+    s->rules.stock_count = in[15];
+    s->rules.stock_time_limit = in[16];
+    s->rules.handicap = in[17] > 2 ? 0 : in[17];
+    memcpy(s->rules.melee, in + 18, LOBBY_MELEE_RULES);
     for (int i = 0; i < LOBBY_SLOTS; ++i) {
         const uint8_t *p = in + BLOB_HEADER + SLOT_BYTES * i;
         lobby_slot *l = &s->slot[i];
         l->kind = p[0]; l->fighter = p[1]; l->color = p[2]; l->team = p[3]; l->level = p[4]; l->chosen = p[5];
         memcpy(l->tag, p + 6, LOBBY_TAG_BYTES);
+        l->handicap = p[14];
         sanitize_slot(l);
     }
     const int doors_end = BLOB_HEADER + SLOT_BYTES * LOBBY_SLOTS;
@@ -146,7 +159,8 @@ int lobby_cmd_door(uint8_t *out, int slot, const lobby_slot *s)
     out[0] = LCMD_DOOR; out[1] = (uint8_t)slot;
     out[2] = s->kind; out[3] = s->fighter; out[4] = s->color; out[5] = s->team; out[6] = s->level; out[7] = s->chosen;
     memcpy(out + 8, s->tag, LOBBY_TAG_BYTES);
-    return 16;
+    out[16] = s->handicap;
+    return 17;
 }
 int lobby_cmd_start(uint8_t *out) { out[0] = LCMD_START; return 1; }
 int lobby_cmd_stage(uint8_t *out, int stage, int alt_stage)
@@ -278,19 +292,21 @@ int lobby_host_command(lobby_host *h, int from, const uint8_t *cmd, int len)
     if (len < 1 || from < 0 || from >= LOBBY_SLOTS) return 0;
     switch (cmd[0]) {
         case LCMD_DOOR: {
-            if (len < 16) return 0;
+            if (len < 17) return 0;
             lobby_slot s;
             memset(&s, 0, sizeof(s));
             s.kind = cmd[2]; s.fighter = cmd[3]; s.color = cmd[4]; s.team = cmd[5]; s.level = cmd[6]; s.chosen = cmd[7];
             memcpy(s.tag, cmd + 8, LOBBY_TAG_BYTES);
+            s.handicap = cmd[16];
             int slot = cmd[1];
             if (slot >= LOBBY_SLOTS) return 0;
             const lobby_slot *cur = &h->st.slot[slot];
             if (slot != from && (h->present & (1u << slot)) && cur->kind == LOBBY_HUMAN) {
-                /* Another console's Human door: its fighter, costume, tag and hand are that console's own. Anyone may
-                 * still flip it to CPU or closed, or change its team, as with a GameCube door. */
+                /* Another console's Human door: its fighter, costume, tag, hand and handicap are that console's own.
+                 * Anyone may still flip it to CPU or closed, or change its team, as with a GameCube door. */
                 s.fighter = cur->fighter; s.color = cur->color; s.chosen = cur->chosen;
                 memcpy(s.tag, cur->tag, LOBBY_TAG_BYTES);
+                s.handicap = cur->handicap;
             }
             return lobby_host_set_door(h, slot, &s);
         }
@@ -346,6 +362,20 @@ int lobby_host_match_over(lobby_host *h)
 
 static void put_u16(unsigned char *p, unsigned v) { p[0] = (unsigned char)(v >> 8); p[1] = (unsigned char)v; }
 
+static void put_f32(unsigned char *p, float f)
+{
+    uint32_t v;
+    memcpy(&v, &f, 4);
+    p[0] = (unsigned char)(v >> 24); p[1] = (unsigned char)(v >> 16); p[2] = (unsigned char)(v >> 8); p[3] = (unsigned char)v;
+}
+
+/* Handicap 1..9 -> attack and defense ratios: vanilla's table (gm_1601.static.h lbl_803B7930), used by gm_80167BC8 when a
+ * VS match starts with handicap on. Copied because the block is built natively, on the host. */
+static const float handicap_ratio[9][2] = {
+    { 0.35f, 2.857143f }, { 0.4f, 2.5f }, { 0.46f, 2.173913f }, { 0.53f, 1.8867925f }, { 0.61f, 1.6393442f },
+    { 0.7f, 1.4285715f }, { 0.8f, 1.25f }, { 0.93f, 1.0752689f }, { 1.07f, 0.9345794f },
+};
+
 void lobby_build_block(unsigned char *b, const lobby_state *s, unsigned rng_offset, int delay)
 {
     memcpy(b, block_template, 0x138);
@@ -375,6 +405,14 @@ void lobby_build_block(unsigned char *b, const lobby_state *s, unsigned rng_offs
         p[0xE] = 4;
         p[0xF] = l->kind == LOBBY_CPU ? l->level : 1;
         p[0x10] = p[0x11] = 0;
+        /* Handicap (PlayerInitData +8, attack ratio +0x18, defense ratio +0x1C): with the host's handicap on, each
+         * door's own value (auto: from the save of the console that owns the door; fixed: the door's slider). Off, the
+         * template's (9, ratios 1.0), as vanilla leaves them. */
+        if (r->handicap != 0 && l->handicap >= 1 && l->handicap <= 9) {
+            p[8] = l->handicap;
+            put_f32(p + 0x18, handicap_ratio[l->handicap - 1][0]);
+            put_f32(p + 0x1C, handicap_ratio[l->handicap - 1][1]);
+        }
     }
     /* Shades for the same character and costume (Sheik counts as Zelda). */
     unsigned keys[4], counts[4];

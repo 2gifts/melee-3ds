@@ -21,7 +21,10 @@ typedef struct MpGroupDoor {
     unsigned char level;           /* CPU level 1..9 */
     unsigned char chosen;          /* 0 no fighter, 1 placed, 2 held over a fighter (a preview), 3 held over nothing */
     unsigned char tag[8];          /* the name tag's game-encoded text, all zero = none */
-    unsigned char spare[2];
+    unsigned char handicap;        /* 1..9 under the host's handicap mode (0: off or not known yet); set by the console
+                                    * that owns the door: a Human door's own console, a CPU's slider, the host for a CPU's
+                                    * auto handicap */
+    unsigned char spare;
 } MpGroupDoor;
 
 /* The host's rules, as its console sets them (the host sends them; other consoles' are ignored). */
@@ -35,6 +38,11 @@ typedef struct MpGroupRules {
     unsigned char melee_valid;     /* 1: melee[] holds the host's rules */
     unsigned char melee[0x38];     /* the host's StartMeleeRules (bytes 0..0x37, big-endian) as vanilla builds them for a VS
                                     * match from its rules menu; the match block takes its rules fields from it */
+    unsigned char mode;            /* the host's GameRules: mode (0 time, 1 stock, 2 coin, 3 bonus) */
+    unsigned char time_limit;      /* minutes (0 none) */
+    unsigned char stock_count;
+    unsigned char stock_time_limit;
+    unsigned char handicap;        /* 0 off, 1 auto, 2 fixed */
 } MpGroupRules;
 
 /* The lobby as this console sees it (the host's newest snapshot). */

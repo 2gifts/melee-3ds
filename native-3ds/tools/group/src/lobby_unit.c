@@ -41,12 +41,13 @@ int main(void)
     CHECK(door(&h, 0, 3, fighter(LOBBY_HUMAN, 0x0A, 0)) & LOBBY_CHANGED);
     CHECK(h.st.slot[3].kind == LOBBY_CPU);
     /* garbage is ignored or clamped */
-    cmd[0] = LCMD_DOOR; cmd[1] = 9; memset(cmd + 2, 0xEE, 14);
-    CHECK(!lobby_host_command(&h, 0, cmd, 16));
+    cmd[0] = LCMD_DOOR; cmd[1] = 9; memset(cmd + 2, 0xEE, 15);
+    CHECK(!lobby_host_command(&h, 0, cmd, 17));
     cmd[1] = 1;
-    lobby_host_command(&h, 0, cmd, 16);
-    CHECK(h.st.slot[1].kind == LOBBY_EMPTY && h.st.slot[1].fighter == 0);
-    CHECK(!lobby_host_command(&h, 7, cmd, 16));
+    CHECK(!lobby_host_command(&h, 0, cmd, 16));                                   /* too short (no handicap byte) */
+    lobby_host_command(&h, 0, cmd, 17);
+    CHECK(h.st.slot[1].kind == LOBBY_EMPTY && h.st.slot[1].fighter == 0 && h.st.slot[1].handicap == 0);
+    CHECK(!lobby_host_command(&h, 7, cmd, 17));
 
     /* a console joins port 2 (index 1): the empty door becomes Human with no fighter; a CPU door stays */
     CHECK(lobby_host_sync(&h, 0x3) & LOBBY_CHANGED);
@@ -189,6 +190,57 @@ int main(void)
     CHECK(!h.st.status.valid && !lobby_host_set_status(&h, &ms));                    /* only during a match */
     CHECK(h.st.phase == LOBBY_CSS && h.st.slot[1].kind == LOBBY_HUMAN && h.st.slot[0].kind == LOBBY_CPU);
     CHECK(!lobby_host_command(&h, 1, (cmd[0] = LCMD_STAGE, cmd), 1));               /* short command */
+
+    /* Handicap: each door carries its own (set by the console that owns it); the host's mode decides whether the match
+     * block uses it, and another console's Human door keeps its owner's value. */
+    {
+        lobby_host k;
+        unsigned char blk[LOBBY_BLOCK_SIZE], tm[LOBBY_BLOCK_SIZE];
+        lobby_host_init(&k, 0x3);
+        lobby_slot a = fighter(LOBBY_HUMAN, 0x14, 0); a.handicap = 2;
+        lobby_slot b2 = fighter(LOBBY_HUMAN, 0x02, 1); b2.handicap = 8;
+        CHECK(door(&k, 0, 0, a) & LOBBY_CHANGED);
+        CHECK(door(&k, 1, 1, b2) & LOBBY_CHANGED);
+        CHECK(k.st.slot[0].handicap == 2 && k.st.slot[1].handicap == 8);
+        lobby_slot other = b2; other.handicap = 3;                                     /* console 0 edits console 1's door */
+        door(&k, 0, 1, other);
+        CHECK(k.st.slot[1].handicap == 8);
+        lobby_slot cpu = fighter(LOBBY_CPU, 0x0A, 0); cpu.handicap = 9;                /* a CPU's slider: anyone's */
+        CHECK(door(&k, 1, 2, cpu) & LOBBY_CHANGED);
+        cpu.handicap = 1;
+        CHECK(door(&k, 0, 2, cpu) & LOBBY_CHANGED);
+        CHECK(k.st.slot[2].handicap == 1);
+        lobby_slot bad = cpu; bad.handicap = 12;
+        door(&k, 0, 2, bad);
+        CHECK(k.st.slot[2].handicap == 0);                                              /* out of range: none */
+        door(&k, 0, 2, cpu);
+        /* the rules a joiner's character select shows, and the handicap mode, ride in the blob */
+        k.st.rules.mode = 0; k.st.rules.time_limit = 3; k.st.rules.stock_count = 2; k.st.rules.stock_time_limit = 6;
+        k.st.rules.handicap = 2;
+        CHECK(lobby_encode(&k.st, blob, sizeof(blob)) > 0 && lobby_decode(&d, blob, LOBBY_BLOB_MAX) == 0);
+        CHECK(!memcmp(&d, &k.st, sizeof(d)));
+        CHECK(d.slot[0].handicap == 2 && d.slot[1].handicap == 8 && d.rules.handicap == 2 && d.rules.time_limit == 3);
+        /* off: the template's handicap (9) and ratios (1.0) whatever the doors hold */
+        k.st.rules.handicap = 0;
+        lobby_build_block(tm, &k.st, 0, 2);
+        CHECK(tm[0x68] == 9 && tm[0x78] == 0x3F && tm[0x79] == 0x80 && tm[0x7C] == 0x3F && tm[0x7D] == 0x80);
+        /* on: each player's handicap and vanilla's ratios (2: 0.4 attack, 2.5 defense; 1: 0.35, 2.857143) */
+        k.st.rules.handicap = 1;
+        lobby_build_block(blk, &k.st, 0, 2);
+        CHECK(blk[0x68] == 2 && blk[0x68 + 0x24] == 8 && blk[0x68 + 0x48] == 1);
+        CHECK(blk[0x78] == 0x3E && blk[0x79] == 0xCC && blk[0x7A] == 0xCC && blk[0x7B] == 0xCD);   /* 0.4f */
+        CHECK(blk[0x7C] == 0x40 && blk[0x7D] == 0x20 && blk[0x7E] == 0 && blk[0x7F] == 0);           /* 2.5f */
+        CHECK(blk[0x80] == 0x3F && blk[0x81] == 0x80);                                  /* model scale untouched */
+        CHECK(!memcmp(blk, tm, 0x60) && blk[0x68 + 0x6C] == tm[0x68 + 0x6C]);           /* rules and the empty door */
+        /* a door with no handicap yet keeps the template's */
+        k.st.slot[1].handicap = 0;
+        lobby_build_block(blk, &k.st, 0, 2);
+        CHECK(blk[0x68 + 0x24] == 9 && blk[0x78 + 0x24] == 0x3F && blk[0x79 + 0x24] == 0x80);
+        /* a console leaving keeps its fighter's handicap for the CPU that plays on */
+        k.st.slot[1].handicap = 8;
+        lobby_host_sync(&k, 0x1);
+        CHECK(k.st.slot[1].kind == LOBBY_CPU && k.st.slot[1].handicap == 8);
+    }
 
     printf("lobby_unit: ok\n");
     return 0;

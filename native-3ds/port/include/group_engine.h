@@ -37,6 +37,10 @@ int mp_group_hud_name(int port, char* name, int size);
 int mp_group_sss_remote_exit(void);  /* the stage select ended because of another console (read and clear) */
 int mp_group_sss_sent(void);         /* this console already sent its pick (read and clear) */
 
+/* Menus outside the CSS that read one port's buttons (name entry from the lobby): in a group, this console's own port
+ * reads pad 0, its only pad; any other port is returned as it is. */
+int mp_group_menu_pad(int port);
+
 /* The name tag patch (ifnametag.c): a remote player's tag is its text from the lobby, never a local save id. */
 int mp_group_tag_off(int slot);
 char* mp_group_tag_text(int slot);

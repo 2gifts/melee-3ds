@@ -26,6 +26,7 @@ typedef struct {
     uint8_t level;                 /* CPU level 1..9 */
     uint8_t chosen;                /* 0 none, 1 a fighter is placed in the door, 2 the token is held over a fighter (preview), 3 held over nothing */
     uint8_t tag[LOBBY_TAG_BYTES];  /* name tag text, all zero = none */
+    uint8_t handicap;              /* 1..9 under the host's handicap mode, 0 = off / not known (the template's) */
 } lobby_slot;
 
 #define LOBBY_MELEE_RULES 0x38     /* bytes of StartMeleeRules before its callbacks */
@@ -41,6 +42,10 @@ typedef struct {
     uint8_t friendly_fire;
     uint8_t melee_valid;           /* 1 once the host's console has sent melee[] */
     uint8_t melee[LOBBY_MELEE_RULES];   /* StartMeleeRules bytes 0..0x37, big-endian, as in the match block */
+    /* The host's own GameRules fields, so a joiner's character select shows the host's banner and handicap sliders. */
+    uint8_t mode;                  /* 0 time, 1 stock, 2 coin, 3 bonus */
+    uint8_t time_limit, stock_count, stock_time_limit;
+    uint8_t handicap;              /* 0 off, 1 auto, 2 fixed: the match block takes each door's handicap unless 0 */
 } lobby_rules;
 
 /* The running match as the host sees it, for consoles that are not in it (they joined during it): the timer and every

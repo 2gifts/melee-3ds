@@ -55,7 +55,7 @@ typedef struct {
     struct {
         int present;           /* a console is on this port */
         int signal;            /* 0..3 bars */
-        char name[32];         /* its 3DS name, or its name tag when it has chosen one */
+        char name[32];         /* its 3DS system name (never its name tag) */
         lobby_slot door;       /* the port's door: Human, CPU or empty, and the fighter */
     } port[LOBBY_SLOTS];
     char toast[48];            /* "NAME JOINED" / "NAME LEFT" for a few seconds after a console came or went, else "" */
