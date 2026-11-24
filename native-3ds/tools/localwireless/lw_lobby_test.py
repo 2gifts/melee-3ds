@@ -1,11 +1,15 @@
 """Tests of the local wireless module alone (port/3ds/localwireless), no game: several lw_lobby_client processes
 over the loopback UDP link, joining and leaving at different times.
 
-    python tools/localwireless/lw_lobby_test.py [--scenario all|alone|churn] [--drop 40]
+    python tools/localwireless/lw_lobby_test.py [--scenario all|alone|browse|churn|again|menu|menujoin] [--drop 40]
 alone: the host sits in the lobby by itself and plays a one-console game, twice.
 churn: console 3 joins and leaves, another takes its slot, console 4 joins in the middle of game 1 (and must wait), game 2
        has everybody, and the console in slot 3 vanishes without a goodbye in the middle of it. Every console that stays must see
        identical bundles for each game, no lobby blob may be torn or go back, and every command must arrive in order.
+menu: menu input (the camera's C-stick): every console's value reaches the others in time, a console that vanishes
+       while tilted reads neutral soon, one that leaves at once, nothing is sent during a game and a held value comes
+       back after it.
+menujoin: a console that joins while another holds a tilt reads it soon after arriving.
 Build first: python tools/group/build_tools.py.
 """
 import argparse
@@ -120,6 +124,113 @@ def browse(port, drop):
     return [ok]
 
 
+def menu_reads(res, label):
+    """[(port, value, clock ms)] from a console's MENU lines."""
+    return [tuple(int(x) for x in l.split()) for l in lines(res, label, 'MENU ')]
+
+
+def clock_of(res, label, text):
+    found = [l for l in res[label][1] if text in l and '(clock ' in l]
+    return int(found[0].split('(clock ')[1].rstrip(')')) if found else None
+
+
+def first_read(res, label, port, value, after):
+    """When `label` first read `value` for `port` at or after the clock `after` (None: never)."""
+    for p, v, at in menu_reads(res, label):
+        if p == port and v == value and at >= after:
+            return at
+    return None
+
+
+def menu(port, drop):
+    # Menu input (the C-stick camera on the CSS and SSS): each console's value reaches every other console; a console
+    # that vanishes while tilted reads neutral soon (no refresh keeps it), one that leaves at once; nothing is sent
+    # while a game runs, and a value held through it comes back afterwards.
+    limit = 150 if not drop else 1000
+    res = run('menu', port, drop, [
+        ('host', ['--host', '--games', 1, '--start-at', 5000, '--frames', 120, '--run-ms', 10000, '--menu-log',
+                  '--menu', '20@1000', '--menu', '0@1600']),
+        ('c2', ['--join', '--join-at', 200, '--menu-log', '--menu', '50@1500', '--menu', '0@2200', '--menu', '60@4000']),
+        ('c3', ['--join', '--join-at', 350, '--menu-log', '--menu', '70@2500', '--crash-at', 3300]),
+        ('c4', ['--join', '--join-at', 500, '--menu-log', '--menu', '30@2600', '--leave-at', 3400]),
+    ])
+    ok = True
+    for label in ('host', 'c2'):
+        ok &= check(f'menu: {label} exits 0', res[label][0] == 0, str(res[label][0]))
+    ports = {label: int(l.split('console index ')[1].split(',')[0]) for label in ('host', 'c2', 'c3', 'c4')
+             for l in res[label][1] if 'console index ' in l}
+
+    def value_at(label, port_, at):
+        v = 0
+        for p, val, t in menu_reads(res, label):
+            if p == port_ and t <= at:
+                v = val
+        return v
+
+    def spread(setter, value, readers, after=0, what=''):
+        port_ = ports.get(setter)
+        set_at = first_read(res, setter, port_, value, after)
+        late = {}
+        for r in readers:
+            if value == 0:   # back to neutral: what it reads by then (under loss it may have read neutral earlier)
+                late[r] = limit if set_at and value_at(r, port_, set_at + limit) == 0 else None
+                continue
+            at = first_read(res, r, port_, value, set_at or 0) if set_at else None
+            late[r] = None if at is None else at - set_at
+        good = set_at is not None and all(v is not None and v <= limit for v in late.values())
+        return check(f'menu: {what or f"{setter} sets {value}"}: every other console reads it within {limit} ms', good,
+                     f'set at {set_at}, delays {late}'), set_at
+    r, _ = spread('host', 20, ['c2', 'c3', 'c4'])
+    ok &= r
+    r, t50 = spread('c2', 50, ['host', 'c3', 'c4'])
+    ok &= r
+    r, _ = spread('c2', 0, ['host', 'c3', 'c4'], (t50 or 0) + 1, 'c2 back to neutral')
+    ok &= r
+    # c3 vanishes holding 70: neutral within the staleness timeout (350 ms) and a refresh or two, long before it is
+    # known to be gone.
+    def stays_neutral(port_, since, within):
+        # neutral by since + within and never anything else after (under loss it may read neutral earlier: a value
+        # with no refresh for 350 ms is stale)
+        return {r: value_at(r, port_, since + within) == 0 and all(
+            v == 0 for p, v, t in menu_reads(res, r) if p == port_ and t > since + within) for r in ('host', 'c2')}
+    crash = clock_of(res, 'c3', 'vanishing at')
+    stale = 350 + 150 + (limit if drop else 0)
+    neutral = stays_neutral(ports.get('c3'), crash or 0, stale)
+    ok &= check(f'menu: a console that vanishes while tilted reads neutral within {stale} ms',
+                crash is not None and all(neutral.values()), f'vanished at {crash}: {neutral}')
+    left = clock_of(res, 'c4', 'leaving at')
+    neutral = stays_neutral(ports.get('c4'), left or 0, limit)
+    ok &= check(f'menu: a console that leaves reads neutral within {limit} ms',
+                left is not None and all(neutral.values()), f'left at {left}: {neutral}')
+    tx = {label: [int(l.split()[1]) for l in lines(res, label, 'MENUTX')] for label in ('host', 'c2')}
+    ok &= check('menu: no menu packet is sent while the game runs', all(v == [0] for v in tx.values()), str(tx))
+    # c2 holds 60 from before the game until the end: the host reads it, then neutral while the game runs (nothing is
+    # sent or read then), then 60 again.
+    reads = [v for p, v, _ in menu_reads(res, 'host') if p == ports.get('c2')]
+    held = [i for i, v in enumerate(reads) if v == 60]
+    ok &= check('menu: a value held through the game reads neutral during it and comes back after it',
+                len(held) >= 2 and 0 in reads[held[0]:held[-1]], str(reads))
+    return [ok]
+
+
+def menu_join(port, drop):
+    # A console joins while another holds a tilt: the 100 ms refresh brings it the held value soon after it arrives.
+    limit = 250 if not drop else 1500
+    res = run('menujoin', port, drop, [
+        ('host', ['--host', '--games', 0, '--run-ms', 5000, '--menu-log']),
+        ('c2', ['--join', '--join-at', 200, '--menu-log', '--menu', '45@800']),
+        ('c3', ['--join', '--join-at', 2500, '--menu-log']),
+    ])
+    ok = check('menu join: every console exits 0', all(res[x][0] == 0 for x in ('host', 'c2', 'c3')),
+               str({x: res[x][0] for x in res}))
+    c2 = int([l for l in res['c2'][1] if 'console index ' in l][0].split('console index ')[1].split(',')[0])
+    arrived = clock_of(res, 'c3', 'console index')
+    got = first_read(res, 'c3', c2, 45, 0)
+    ok &= check(f'menu join: a console that joins during a held tilt reads it within {limit} ms of arriving',
+                arrived is not None and got is not None and got - arrived <= limit, f'arrived {arrived}, read at {got}')
+    return [ok]
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--scenario', default='all')
@@ -138,6 +249,10 @@ def main():
         results += churn(args.port + 1, args.drop)
     if args.scenario in ('all', 'again'):
         results += again(args.port + 20, args.drop)
+    if args.scenario in ('all', 'menu'):
+        results += menu(args.port + 30, args.drop)
+    if args.scenario in ('all', 'menujoin'):
+        results += menu_join(args.port + 40, args.drop)
     print('RESULT:', 'PASS' if all(results) else 'FAIL', '->', OUT)
     return 0 if all(results) else 1
 

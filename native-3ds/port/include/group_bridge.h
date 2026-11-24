@@ -51,7 +51,7 @@ typedef struct MpGroupLobby {
     unsigned char me;              /* this console's port */
     unsigned char host;            /* 1: this console hosts */
     unsigned char present;         /* bit n: a console is on port n */
-    unsigned char phase;           /* 0 character select, 1 stage select, 2 match */
+    unsigned char phase;           /* 0 character select, 1 stage select, 2 match, 3 the match's results screen */
     unsigned char starter;         /* the port that pressed Start */
     unsigned char stage_picked;
     unsigned char mode;            /* 0 normal, 1 sudden death */
@@ -62,6 +62,12 @@ typedef struct MpGroupLobby {
     unsigned char signal[4];       /* 0..3 bars per port */
     MpGroupRules rules;
     MpGroupDoor door[4];
+    unsigned char played;          /* bit n: the console on port n played the match whose results are up (phase 3) */
+    unsigned char ready;           /* bit n: port n's player is ready on the results screen (a console that left is) */
+    unsigned char advance;         /* the results screen was moved on by a press: 1 past its wait, 2 past its intro */
+    unsigned char stars[4];        /* the stars over each door (KOs per port, as vanilla's VS mode counts them; the host keeps them) */
+    unsigned char since_end;       /* 1: this view arrived after this console's match ended (the host's: always), so a
+                                    * phase 0 in it means the results are over, not a view from before the match */
 } MpGroupLobby;
 
 /* Melee -> Solo / Group (the VS menu) and the session around the lobby (port/3ds/group/group_menu.c). */
@@ -103,7 +109,14 @@ int mp_platform_group_door_names(void);
 /* The match. */
 int mp_platform_group_players(void);       /* 0 outside a group session, else the highest occupied port + 1 */
 int mp_platform_group_player_name(int port, char *buf, int len);   /* the console on that port's 3DS name, "" if none */
-void mp_platform_group_game_end(void);     /* the match is over on this console: back to the lobby */
+void mp_platform_group_game_end(void);     /* the match is over on this console: its results screen follows */
+/* The results screen (as vanilla's: each Human player's Start toggles their "ready", and it ends when all are). This
+ * console's press: its port's ready and how far it moves the screen on (advance as in MpGroupLobby, 0 none); the host
+ * applies it, every console follows the lobby. */
+void mp_platform_group_results_press(int ready, int advance);
+/* The results screen ended on this console. The host reopens the lobby with these stars (new totals per port) and, with
+ * auto handicap, these door handicaps (1..9, 0 keeps the door's); other consoles' calls change nothing. */
+void mp_platform_group_results_end(const unsigned char *stars, const unsigned char *handicap);
 /* The match that just ended was tied (every console sees the same result): the host starts a sudden death game with the
  * same consoles (block trailer LOBBY_BLOCK_SUDDEN set; each console sets it up from its own copy of the result). Other
  * consoles do nothing here; they wait for that start. */

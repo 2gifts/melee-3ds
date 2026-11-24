@@ -28,7 +28,7 @@
 #include <slippi_engine.h>
 #include <slippi_net_bridge.h>
 
-enum { ST_CSS, ST_SSS, ST_VS, ST_SPLASH, ST_SUDDEN };
+enum { ST_CSS, ST_SSS, ST_VS, ST_SPLASH, ST_SUDDEN, ST_RESULTS };
 
 static CSSData online_css;
 static s8 saved_ckind = CKind_Fox;
@@ -58,6 +58,9 @@ static void vs_enter(GameModeState* state);
 static void vs_exit(GameModeState* state);
 static void splash_enter(GameModeState* state);
 static void splash_exit(GameModeState* state);
+static void sudden_exit(GameModeState* state);
+static void results_enter(GameModeState* state);
+static void results_exit(GameModeState* state);
 static u8 splash_data[0x20];
 static u32 splash_exit_data;
 
@@ -66,8 +69,10 @@ GameModeState mp_slippi_online_states[] = {
     { ST_SSS, lbDvdPreload_3, 0, sss_enter, sss_exit, { GS_SSS, &gmVsMelee_SssData, &gmVsMelee_SssData } },
     { ST_VS, lbDvdPreload_3, 0, vs_enter, vs_exit, { GS_VS, &gmVsMelee_StartData, &gmVsMelee_VsExitInfo } },
     { ST_SPLASH, lbDvdPreload_3, 0, splash_enter, splash_exit, { GS_INTRO_EASY, splash_data, &splash_exit_data } },
-    /* group play only (port/engine/group/group.c): a sudden death after a tied match */
-    { ST_SUDDEN, lbDvdPreload_3, 0, vs_enter, vs_exit, { GS_SUDDEN_DEATH, &gmVsMelee_StartData, &gmVsMelee_VsExitInfo } },
+    /* group play only (port/engine/group/group.c): a sudden death after a tied match, and the results screen, as in
+     * vanilla's VS mode */
+    { ST_SUDDEN, lbDvdPreload_3, 0, vs_enter, sudden_exit, { GS_SUDDEN_DEATH, &gmVsMelee_StartData, &gmVsMelee_SuddenDeathExitInfo } },
+    { ST_RESULTS, lbDvdPreload_3, 0, results_enter, results_exit, { GS_RESULTS, &gmVsMelee_ResultsEnterData, NULL } },
     { GM_GAMEMODESTATE_TERMINATE },
 };
 
@@ -322,7 +327,7 @@ static void vs_enter(GameModeState* state)
 static void vs_exit(GameModeState* state)
 {
     if (mp_group_mode()) {
-        mp_group_vs_exit(state, ST_CSS, ST_SUDDEN);   /* no results screen: back to the lobby, or a sudden death */
+        mp_group_vs_exit(state, ST_RESULTS, ST_SUDDEN);   /* the results screen, or a sudden death */
         return;
     }
     MatchExitInfo* exit = gm_GetGameModeStateExitData(state);
@@ -341,6 +346,22 @@ static void vs_exit(GameModeState* state)
     mp_platform_slippi_ui_event(4 /* RESULT */, won);
     css_quiet = 0;   /* after a game the announcer plays, as in VS mode */
     gm_SetNextGameModeStateId(ST_CSS);
+}
+
+/* Group play only: after a sudden death, its result is merged into the tied match's (vanilla), then the results. */
+static void sudden_exit(GameModeState* state)
+{
+    mp_group_sudden_exit(state, ST_RESULTS);
+}
+
+static void results_enter(GameModeState* state)
+{
+    mp_group_results_enter(state);
+}
+
+static void results_exit(GameModeState* state)
+{
+    mp_group_results_exit(state, ST_CSS);
 }
 
 /* ---- the VS splash before each game (Slippi's minor scene 4) ----

@@ -16,7 +16,10 @@ untouched. What it does to the VS character select (mncharsel.c):
   * A console in a name tag list, name entry or the rules menu, or holding a CPU level or handicap slider, is busy (the
     lobby's busy bit): READY waits on every console and the host refuses Start until it is done. A console watching a
     match in progress shows no READY either.
-  * A console that joined during a match watches it from a read-only CSS: its cursor moves, Back is its only action.
+  * A console that joined during a match watches it (and its results screen) from a read-only CSS: its cursor moves,
+    Back is its only action.
+  * The stars over the doors are the lobby's (the host counts them after each match, clears a port's when its name tag
+    changes, keeps them when a console leaves and comes back), so every console shows the same, late joiners included.
   * The Human/CPU/closed click ends on Human only where a console is present (a CPU elsewhere), as on a GameCube.
   * A joiner shows the host's rules: every rules read in mncharsel.c goes through mp_css_game_rules() (the banner, the
     handicap mode), and each door's handicap is the value of the console that owns it (mp_css_auto_hc, the lobby).
@@ -831,6 +834,27 @@ static void mp_css_toast_frame(void)
     }
 }
 
+/* The stars over the doors are the lobby's: the host counts them after each match and clears a port's when its name tag
+ * changes (vanilla's rules), so every console, late joiners included, shows the same. A door's are redrawn when they
+ * change. While the host's results screen is still up, this console's own count from the same match stands. */
+static void mp_css_stars_frame(void)
+{
+    u8* ko = mnCharSel_804D6CB0->ko_counts;
+    int d;
+    if (ko == NULL || mp_lob.phase == 3 || mnCharSel_804D6CF6 != 0) {
+        return;
+    }
+    for (d = 0; d < 4; d++) {
+        if (ko[d] == mp_lob.stars[d]) {
+            continue;
+        }
+        ko[d] = mp_lob.stars[d];
+        if (mnCharSel_803F0DFC.doors[d].p_kind != 3) {
+            mnCharSel_8025D1C4(d, 2);
+        }
+    }
+}
+
 /* A new CSS scene: nothing is applied or sent yet, the text objects are gone with the old scene. */
 void mp_css_group_reset(void)
 {
@@ -896,6 +920,7 @@ void mp_css_group_frame(void)
     if (mp_lob.phase == 0) {
         mp_css_seen_css = 1;
     }
+    mp_css_stars_frame();
     mp_css_busy_frame();
     if (mnCharSel_804D6CF6 == 0 || mnCharSel_804D6CF6 == 1) {
         mp_css_text_frame();
@@ -906,8 +931,11 @@ void mp_css_group_frame(void)
     }
     /* The join / leave toast stays on the bottom screen (the strip); mp_css_toast_frame is the top-screen version, which
      * did not look right and is not drawn. */
-    if (mnCharSel_804D6CF6 > 1) {
-        mp_css_toast = NULL;   /* name entry and the rules page free the CSS's texts; they are made again afterwards */
+    if (mnCharSel_804D6CF6 >= 3) {
+        /* name entry and the rules page (3, 4, then 5 while open) free the CSS's texts; they are made again afterwards.
+         * Not on 2 (Back): the texts stay, and Back is often answered by "End the session?" (back to 0), so dropping
+         * them there would make a new set each time without freeing the old one, until the text memory runs out. */
+        mp_css_toast = NULL;
         mp_css_banner = NULL;
         mp_css_door_text_gone();
     }

@@ -67,18 +67,26 @@ docker/emu-test.sh group --players 4 --games 1 --crash 3:200    # a console vani
 docker/emu-test.sh group --players 3 --via-menu                 # meeting through the Solo / Group pages
 docker/emu-test.sh group --players 4 --fifth                    # a fifth console sees the game as full and is refused
 docker/emu-test.sh group --players 3 --games 2 --late 3         # a console joins during game 1, watches, plays game 2
-docker/emu-test.sh run tools/localwireless/lw_lobby_test.py     # the localwireless module alone
+docker/emu-test.sh group --players 3 --games 2 --results-hold 3:2000     # nobody's results end before the last ready
+docker/emu-test.sh group --players 3 --games 2 --results-linger 2:2500   # Start waits for a console still on its results
+docker/emu-test.sh group --players 4 --games 2 --results-leave 3[:vanish] # a console leaves on the results screen
+docker/emu-test.sh group --players 3 --games 2 --stale-view 2    # a joiner's results start on a view from before the match
+docker/emu-test.sh run tools/localwireless/lw_lobby_test.py     # the localwireless module alone (incl. menu input)
 docker/emu-test.sh run tools/group/group_quad_test.py --players 3 --end-frame 600 --kill 3:60 --timeout-ms 20000   # engine, Azahar
 docker/emu-test.sh run tools/group/group_menu_test.py            # Melee -> Solo / Group in Azahar
 docker/emu-test.sh run tools/group/group_lobby_test.py           # Azahar hosts, a PC console joins: doors, Rules, Start, stage, match
 docker/emu-test.sh run tools/group/group_join_test.py            # a PC console hosts, Azahar joins: doors, CPU level, READY, handicap, rejoin
 docker/emu-test.sh run tools/group/group_late_test.py            # Azahar joins during a match: the read-only CSS, then the lobby
+docker/emu-test.sh run tools/group/group_cstick_test.py          # the CSS / stage select camera follows every console's C-stick; door plates
+docker/emu-test.sh run tools/group/group_results_test.py         # two emulated consoles: sudden death, the results screen, stars, auto handicap, Back
 ```
 
-`group` (group_test.py) runs the lobby rules' unit test (`lobby_unit`) first. The Azahar tests read the emulated
+`group` (group_test.py) runs the lobby rules' unit test (`lobby_unit`) and vanilla's auto handicap rule
+(`auto_handicap_unit`, compiled from the decomp's `gm_1601.c`) first. The Azahar tests read the emulated
 console's memory through Azahar's GDB stub while it runs (the CSS doors, READY, the slider knobs: `tools/group/css_probe.py`)
 and save screenshots of each step. Nothing presses buttons by itself in these builds (`no-scripted-input`), so each
-test drives the console from the title screen; give a test about 2 to 5 minutes. Do not run them while the browser
+test drives the console from the title screen; give a test about 2 to 5 minutes (`group_results_test.py`, two
+emulated consoles and a full match, about 15). Do not run them while the browser
 session (`emu-web.sh`) is up: both compete for the CPU.
 
 Results land in `native-3ds/build/emu-test/` (set `MELEE_TEST_OUT` to change it).

@@ -42,6 +42,8 @@ static const unsigned char block_template[0x138] = {
 /* The status section follows the doors: valid, timer, seconds (u16), then per port kind, stocks, damage (u16). An older or
  * shorter blob without it decodes as "no status". */
 #define STATUS_BYTES (4 + 4 * LOBBY_SLOTS)
+/* Then the results section: played, ready, advance, and each port's stars. A blob without it decodes as all zero. */
+#define RESULTS_BYTES (3 + LOBBY_SLOTS)
 
 static int put_status(const lobby_status *st, uint8_t *out, int cap)
 {
@@ -104,7 +106,13 @@ int lobby_encode(const lobby_state *s, uint8_t *out, int cap)
         memcpy(p + 6, l->tag, LOBBY_TAG_BYTES);
         p[14] = l->handicap;
     }
-    return need + put_status(&s->status, out + need, cap - need);
+    int n = need + put_status(&s->status, out + need, cap - need);
+    if (n != need + STATUS_BYTES || cap - n < RESULTS_BYTES) return n;
+    out[n] = s->played & 0xF;
+    out[n + 1] = s->ready & 0xF;
+    out[n + 2] = s->advance;
+    memcpy(out + n + 3, s->stars, LOBBY_SLOTS);
+    return n + RESULTS_BYTES;
 }
 
 /* Clamp a received slot to values the game can show. */
@@ -123,7 +131,7 @@ int lobby_decode(lobby_state *s, const uint8_t *in, int len)
 {
     if (len < BLOB_HEADER + SLOT_BYTES * LOBBY_SLOTS || in[0] != BLOB_ID) return -1;
     memset(s, 0, sizeof(*s));
-    s->phase = in[1] > LOBBY_MATCH ? LOBBY_CSS : in[1];
+    s->phase = in[1] > LOBBY_RESULTS ? LOBBY_CSS : in[1];
     s->starter = in[2] & 3;
     s->mode = in[3] ? 1 : 0;
     s->rules.time_mode = in[4] & 1;
@@ -153,6 +161,13 @@ int lobby_decode(lobby_state *s, const uint8_t *in, int len)
     }
     const int doors_end = BLOB_HEADER + SLOT_BYTES * LOBBY_SLOTS;
     get_status(&s->status, in + doors_end, len - doors_end);
+    const int results_at = doors_end + STATUS_BYTES;
+    if (len >= results_at + RESULTS_BYTES) {
+        s->played = in[results_at] & 0xF;
+        s->ready = in[results_at + 1] & 0xF;
+        s->advance = in[results_at + 2] > 2 ? 2 : in[results_at + 2];
+        memcpy(s->stars, in + results_at + 3, LOBBY_SLOTS);
+    }
     return 0;
 }
 
@@ -172,6 +187,11 @@ int lobby_cmd_stage(uint8_t *out, int stage, int alt_stage)
 }
 int lobby_cmd_back(uint8_t *out) { out[0] = LCMD_BACK; return 1; }
 int lobby_cmd_busy(uint8_t *out, int busy) { out[0] = LCMD_BUSY; out[1] = busy ? 1 : 0; return 2; }
+int lobby_cmd_results(uint8_t *out, int ready, int advance)
+{
+    out[0] = LCMD_RESULTS; out[1] = ready ? 1 : 0; out[2] = (uint8_t)(advance < 0 ? 0 : advance > 2 ? 2 : advance);
+    return 3;
+}
 
 /* ---- the host ---- */
 
@@ -228,9 +248,13 @@ int lobby_host_sync(lobby_host *h, unsigned present)
         unsigned bit = 1u << i;
         if (!(diff & bit)) continue;
         if (!(present & bit) && (h->st.busy & bit)) { h->st.busy &= ~bit; changed = 1; }   /* a stale bit would block Start */
-        if (h->st.phase == LOBBY_MATCH) {          /* the running game owns the doors: decide when it ends */
+        if (h->st.phase == LOBBY_MATCH || h->st.phase == LOBBY_RESULTS) {   /* the game owns the doors until its results end */
             if (present & bit) { h->joined_in_match |= bit; h->left_in_match &= ~bit; }
             else { h->left_in_match |= bit; h->joined_in_match &= ~bit; }
+            if (h->st.phase == LOBBY_RESULTS && !(present & bit) && (h->st.played & bit) && !(h->st.ready & bit)) {
+                h->st.ready |= (uint8_t)bit;      /* as an unplugged controller on vanilla's results screen */
+                changed = 1;
+            }
             continue;
         }
         changed |= (present & bit) ? console_arrives(h, i) : console_leaves(h, i);
@@ -263,7 +287,18 @@ int lobby_host_set_door(lobby_host *h, int slot, const lobby_slot *s)
     sanitize_slot(&n);
     if (n.kind != LOBBY_HUMAN) memset(n.tag, 0, sizeof(n.tag));       /* only a Human door shows a name tag */
     if (n.kind == LOBBY_HUMAN && !(h->present & (1u << slot)) && h->st.slot[slot].kind != LOBBY_HUMAN) n.kind = LOBBY_CPU;   /* no console there */
-    if (!memcmp(&n, &h->st.slot[slot], sizeof(n))) return 0;
+    int changed = 0;
+    if (n.kind == LOBBY_HUMAN) {
+        /* Vanilla clears a port's stars when its name tag changes (and never when its controller is unplugged or plugged
+         * in): compare with the port's last Human tag, so a console that leaves and comes back keeps them. */
+        if (h->last_tag_ok[slot] && memcmp(h->last_tag[slot], n.tag, LOBBY_TAG_BYTES) && h->st.stars[slot]) {
+            h->st.stars[slot] = 0;
+            changed = LOBBY_CHANGED;
+        }
+        memcpy(h->last_tag[slot], n.tag, LOBBY_TAG_BYTES);
+        h->last_tag_ok[slot] = 1;
+    }
+    if (!memcmp(&n, &h->st.slot[slot], sizeof(n))) return changed;
     h->st.slot[slot] = n;
     return LOBBY_CHANGED;
 }
@@ -337,6 +372,9 @@ int lobby_host_command(lobby_host *h, int from, const uint8_t *cmd, int len)
         case LCMD_BUSY:                            /* the sender's own bit only */
             if (len < 2) return 0;
             return lobby_host_set_busy(h, from, cmd[1]);
+        case LCMD_RESULTS:
+            if (len < 3) return 0;
+            return lobby_host_results(h, from, cmd[1], cmd[2]);
         case LCMD_BACK:
             if (h->st.phase != LOBBY_STAGE || h->st.stage_picked) return 0;
             h->st.phase = LOBBY_CSS;
@@ -345,10 +383,13 @@ int lobby_host_command(lobby_host *h, int from, const uint8_t *cmd, int len)
     }
 }
 
-void lobby_host_match_began(lobby_host *h)
+void lobby_host_match_began(lobby_host *h, int again)
 {
+    /* Joins and leaves still waiting (from the tied game before a sudden death) stay for lobby_host_match_over. */
     h->st.phase = LOBBY_MATCH;
-    h->joined_in_match = h->left_in_match = 0;
+    h->st.played = (uint8_t)((again ? h->st.played & h->present : h->present) & 0xF);
+    h->st.ready = 0;
+    h->st.advance = 0;
     memset(&h->st.status, 0, sizeof(h->st.status));
 }
 
@@ -368,6 +409,7 @@ int lobby_host_match_over(lobby_host *h)
     h->st.phase = LOBBY_CSS;
     h->st.stage_picked = 0;
     h->st.mode = 0;
+    h->st.played = h->st.ready = h->st.advance = 0;
     memset(&h->st.status, 0, sizeof(h->st.status));
     unsigned joined = h->joined_in_match, left = h->left_in_match;
     h->joined_in_match = h->left_in_match = 0;
@@ -378,6 +420,39 @@ int lobby_host_match_over(lobby_host *h)
         if (joined & bit) console_arrives(h, i);
     }
     h->present = now;
+    return changed;
+}
+
+int lobby_host_results_begin(lobby_host *h)
+{
+    if (h->st.phase != LOBBY_MATCH) return 0;
+    h->st.phase = LOBBY_RESULTS;
+    h->st.ready = (uint8_t)(h->st.played & ~h->present & 0xF);   /* a console that left during the match */
+    h->st.advance = 0;
+    return LOBBY_CHANGED;
+}
+
+int lobby_host_results(lobby_host *h, int from, int ready, int advance)
+{
+    if (h->st.phase != LOBBY_RESULTS || from < 0 || from >= LOBBY_SLOTS || !(h->st.played & (1u << from))) return 0;
+    uint8_t bit = (uint8_t)(1u << from);
+    uint8_t r = ready ? (uint8_t)(h->st.ready | bit) : (uint8_t)(h->st.ready & ~bit);
+    uint8_t a = advance > 2 ? 2 : advance > h->st.advance ? (uint8_t)advance : h->st.advance;
+    if (r == h->st.ready && a == h->st.advance) return 0;
+    h->st.ready = r;
+    h->st.advance = a;
+    return LOBBY_CHANGED;
+}
+
+int lobby_host_results_over(lobby_host *h, const uint8_t *stars, const uint8_t *handicap)
+{
+    if (h->st.phase != LOBBY_RESULTS && h->st.phase != LOBBY_MATCH) return 0;
+    int changed = lobby_host_match_over(h);
+    for (int i = 0; i < LOBBY_SLOTS; ++i) {
+        if (stars) h->st.stars[i] = stars[i];
+        lobby_slot *l = &h->st.slot[i];
+        if (handicap && handicap[i] >= 1 && handicap[i] <= 9 && l->kind != LOBBY_EMPTY) l->handicap = handicap[i];
+    }
     return changed;
 }
 

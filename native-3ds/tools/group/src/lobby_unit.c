@@ -206,7 +206,7 @@ int main(void)
     /* ...and in a match: joins and leaves wait for the end */
     h.st.slot[1] = fighter(LOBBY_EMPTY, 0, 0); h.st.slot[1].chosen = 0;
     h.st.slot[3] = fighter(LOBBY_CPU, 4, 0);
-    lobby_host_match_began(&h);
+    lobby_host_match_began(&h, 0);
     CHECK(h.st.phase == LOBBY_MATCH);
     CHECK(lobby_host_sync(&h, 0x7) == 0 && h.st.slot[1].kind == LOBBY_EMPTY);       /* late joiner: not touched yet */
     CHECK(lobby_host_sync(&h, 0x6) == 0 && h.st.slot[0].kind == LOBBY_HUMAN);       /* host? slot 0 left: still Human during the match */
@@ -275,6 +275,99 @@ int main(void)
         k.st.slot[1].handicap = 8;
         lobby_host_sync(&k, 0x1);
         CHECK(k.st.slot[1].kind == LOBBY_CPU && k.st.slot[1].handicap == 8);
+    }
+
+    /* The results screen after a match: who played, who is ready, how far a press moved it on, and the stars. */
+    {
+        lobby_host r;
+        lobby_state rd;
+        uint8_t rb[LOBBY_BLOB_MAX], c[8];
+        lobby_host_init(&r, 0x7);                                                       /* consoles 0, 1, 2 */
+        lobby_slot p0 = fighter(LOBBY_HUMAN, 0x14, 0); memcpy(p0.tag, "TAGZERO\0", 8);
+        lobby_slot p1 = fighter(LOBBY_HUMAN, 0x02, 0); memcpy(p1.tag, "TAGONE\0\0", 8);
+        lobby_slot p2 = fighter(LOBBY_HUMAN, 0x0A, 0);
+        CHECK(lobby_host_set_door(&r, 0, &p0) && door(&r, 1, 1, p1) && door(&r, 2, 2, p2));
+        CHECK(!lobby_host_results_begin(&r) && r.st.phase == LOBBY_CSS);                /* not from the CSS */
+        lobby_host_match_began(&r, 0);
+        CHECK(r.st.played == 0x7 && r.st.ready == 0 && r.st.advance == 0);
+        CHECK(!lobby_host_results(&r, 1, 1, 2));                                         /* not before the results */
+        CHECK(lobby_host_sync(&r, 0xF) == 0);                                            /* console 3 joins during the match */
+        CHECK(lobby_host_results_begin(&r) & LOBBY_CHANGED);
+        CHECK(r.st.phase == LOBBY_RESULTS && r.st.ready == 0 && r.st.advance == 0);
+        CHECK(!lobby_host_results(&r, 3, 1, 2) && r.st.ready == 0 && r.st.advance == 0); /* it did not play */
+        CHECK(!lobby_host_results(&r, 7, 1, 2));
+        CHECK(lobby_host_results(&r, 1, 0, 2) & LOBBY_CHANGED);                          /* past the intro */
+        CHECK(r.st.advance == 2 && r.st.ready == 0);
+        CHECK(!lobby_host_results(&r, 2, 0, 1) && r.st.advance == 2);                    /* never back */
+        CHECK(!lobby_host_command(&r, 2, c, lobby_cmd_results(c, 0, 0)) && r.st.advance == 2);
+        CHECK(lobby_host_command(&r, 2, c, lobby_cmd_results(c, 1, 0)) & LOBBY_CHANGED);
+        CHECK(r.st.ready == 0x4);
+        CHECK(lobby_host_command(&r, 2, c, lobby_cmd_results(c, 0, 0)) && r.st.ready == 0);   /* ready toggles back */
+        CHECK(lobby_host_command(&r, 2, c, lobby_cmd_results(c, 1, 9)) && r.st.ready == 0x4 && r.st.advance == 2);
+        CHECK(!lobby_host_command(&r, 2, c, 2));                                         /* too short */
+        CHECK(lobby_host_results(&r, 0, 1, 0) && r.st.ready == 0x5);
+        CHECK(!door(&r, 1, 1, fighter(LOBBY_HUMAN, 0x03, 0)) && r.st.slot[1].fighter == 0x02);   /* doors frozen */
+        /* the results section rides in the blob */
+        r.st.stars[2] = 7;
+        CHECK(lobby_encode(&r.st, rb, sizeof(rb)) > 0 && lobby_decode(&rd, rb, LOBBY_BLOB_MAX) == 0);
+        CHECK(!memcmp(&rd, &r.st, sizeof(rd)) && rd.phase == LOBBY_RESULTS && rd.played == 0x7 && rd.ready == 0x5);
+        CHECK(rd.advance == 2 && rd.stars[2] == 7);
+        {   /* an older blob without it: all zero */
+            int full = lobby_encode(&r.st, rb, sizeof(rb));
+            CHECK(lobby_decode(&rd, rb, full - (3 + LOBBY_SLOTS)) == 0);
+            CHECK(rd.played == 0 && rd.ready == 0 && rd.advance == 0 && !rd.stars[2] && rd.status.valid == r.st.status.valid);
+            CHECK(lobby_encode(&r.st, rb, full - 1) < full);                             /* no room: the section is left out */
+        }
+        r.st.stars[2] = 0;
+        /* console 1 leaves during the results: it counts as ready, its door waits for the results' end */
+        CHECK(lobby_host_sync(&r, 0xD) & LOBBY_CHANGED);
+        CHECK(r.st.ready == 0x7 && r.st.slot[1].kind == LOBBY_HUMAN && r.st.slot[3].kind == LOBBY_EMPTY);
+        {
+            uint8_t st[4] = { 1, 0, 2, 0 }, hc[4] = { 4, 6, 0, 3 };
+            CHECK(lobby_host_results_over(&r, st, hc) & LOBBY_CHANGED);
+            CHECK(r.st.phase == LOBBY_CSS && r.st.played == 0 && r.st.ready == 0 && r.st.advance == 0);
+            CHECK(r.st.stars[0] == 1 && r.st.stars[2] == 2);
+            CHECK(r.st.slot[0].handicap == 4 && r.st.slot[2].handicap == 0);             /* 0: keep */
+            CHECK(r.st.slot[3].kind == LOBBY_EMPTY && r.st.slot[3].handicap == 0);       /* not on an empty door */
+            CHECK(r.st.slot[1].kind == LOBBY_CPU && r.st.slot[1].handicap == 6);         /* the leave, applied now */
+            CHECK(!lobby_host_results_over(&r, st, hc));                                 /* only once */
+        }
+        /* stars: kept when a console leaves and comes back with the same tag, cleared on a tag change */
+        CHECK(lobby_host_sync(&r, 0xF) == 0);                                            /* console 1 back: the door stays a CPU */
+        r.st.stars[1] = 3;
+        CHECK(door(&r, 1, 1, p1) && r.st.slot[1].kind == LOBBY_HUMAN && r.st.stars[1] == 3);
+        p0 = r.st.slot[0];
+        CHECK(lobby_host_set_door(&r, 0, &p0) == 0 && r.st.stars[0] == 1);              /* the same door again */
+        p0.color = 3;
+        CHECK(lobby_host_set_door(&r, 0, &p0) && r.st.stars[0] == 1);                    /* a costume: kept */
+        lobby_slot untagged = p0; memset(untagged.tag, 0, 8);
+        CHECK(lobby_host_set_door(&r, 0, &untagged) && r.st.stars[0] == 0);              /* the tag removed: cleared */
+        r.st.stars[0] = 2;
+        CHECK(lobby_host_set_door(&r, 0, &untagged) == 0 && r.st.stars[0] == 2);         /* same (no) tag: kept */
+        lobby_slot cpu0 = fighter(LOBBY_CPU, 0x14, 0);
+        CHECK(lobby_host_set_door(&r, 0, &cpu0) && r.st.stars[0] == 2);                  /* a CPU in between: kept */
+        CHECK(lobby_host_set_door(&r, 0, &p0) && r.st.stars[0] == 0);                    /* back Human, another tag */
+        /* the first Human tag a port shows does not clear anything */
+        r.st.stars[3] = 4;
+        CHECK(door(&r, 3, 3, fighter(LOBBY_HUMAN, 0x05, 0)) && r.st.stars[3] == 4);
+        /* a new lobby has none */
+        lobby_host_init(&r, 0x3);
+        CHECK(!r.st.stars[0] && !r.st.stars[1] && !r.st.stars[2] && !r.st.stars[3]);
+
+        /* a sudden death: a follow-up game with the tied game's consoles; joins waiting from the tied game stay */
+        lobby_host_init(&r, 0x3);
+        CHECK(lobby_host_set_door(&r, 0, &p0) && door(&r, 1, 1, p1));
+        lobby_host_match_began(&r, 0);
+        CHECK(lobby_host_sync(&r, 0x7) == 0);                                            /* console 2 joins in the tied game */
+        lobby_host_match_began(&r, 1);
+        CHECK(r.st.played == 0x3 && r.st.phase == LOBBY_MATCH && (r.joined_in_match & 0x4));
+        CHECK(lobby_host_sync(&r, 0x5) == 0);                                            /* console 1 leaves in the sudden death */
+        lobby_host_match_began(&r, 1);                                                   /* (another tie) */
+        CHECK(r.st.played == 0x1);
+        CHECK(lobby_host_results_begin(&r) && r.st.ready == 0x0);                         /* console 1 left: not played any more */
+        CHECK(lobby_host_results(&r, 0, 1, 2) && r.st.ready == 0x1);
+        CHECK(lobby_host_results_over(&r, NULL, NULL) && r.st.phase == LOBBY_CSS);
+        CHECK(r.st.slot[1].kind == LOBBY_CPU && r.st.slot[2].kind == LOBBY_EMPTY && r.present == 0x5);
     }
 
     printf("lobby_unit: ok\n");

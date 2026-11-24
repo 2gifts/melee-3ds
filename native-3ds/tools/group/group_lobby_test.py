@@ -263,7 +263,14 @@ def main():
         while time.monotonic() < end and stub.state()['scene'] != 8 and stub.frames() - start < 1200:
             time.sleep(0.5)
         stub.poke('mp_test_keys', 0)
-        s = wait(lambda s: s['scene'] == 8, 'back on the character select after the match', 300)
+        # The results screen follows (the PC console presses ready by itself); this console's player presses through it:
+        # Start skips a cancelled match's wait, any press its intro, Start makes this player ready.
+        wait_log('Group: the results screen', 'the results screen follows the match', 120)
+        end = time.monotonic() + 300
+        while time.monotonic() < end and stub.state()['scene'] != 8:
+            stub.press(KEY_START, 4, 40)
+            stub.press(KEY_A, 4, 40)
+        s = wait(lambda s: s['scene'] == 8, 'back on the character select after the results', 300)
         stub.until_frames(240)
         capture('06-back-on-css')
         after = log_text()[mark:]

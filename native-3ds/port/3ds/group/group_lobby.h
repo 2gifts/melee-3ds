@@ -16,7 +16,7 @@
 #define LOBBY_BLOCK_SIZE 0x140     /* match block + trailer (SLIPPI_NET_MATCH_BLOCK_TOTAL rounded for the 3 flag bytes) */
 
 enum { LOBBY_HUMAN = 0, LOBBY_CPU = 1, LOBBY_EMPTY = 2 };
-enum { LOBBY_CSS = 0, LOBBY_STAGE = 1, LOBBY_MATCH = 2 };
+enum { LOBBY_CSS = 0, LOBBY_STAGE = 1, LOBBY_MATCH = 2, LOBBY_RESULTS = 3 };
 
 typedef struct {
     uint8_t kind;                  /* LOBBY_HUMAN / LOBBY_CPU / LOBBY_EMPTY */
@@ -62,7 +62,7 @@ typedef struct {
 } lobby_status;
 
 typedef struct {
-    uint8_t phase;                 /* LOBBY_CSS / LOBBY_STAGE / LOBBY_MATCH */
+    uint8_t phase;                 /* LOBBY_CSS / LOBBY_STAGE / LOBBY_MATCH / LOBBY_RESULTS */
     uint8_t starter;               /* console that pressed Start (phase STAGE) */
     lobby_rules rules;
     uint16_t stage;                /* the picked stage (phase STAGE once picked, and MATCH) */
@@ -73,6 +73,14 @@ typedef struct {
                                     * while any bit is set */
     lobby_slot slot[LOBBY_SLOTS];
     lobby_status status;           /* the running match (host: lobby_host_set_status), at the end of the blob */
+    /* The results screen after a match (phase RESULTS), the same on every console that played: vanilla's results end
+     * once every Human player has pressed Start (each press toggles that player's "ready"). */
+    uint8_t played;                /* bit n: the console on port n plays the running match (MATCH) or the one whose
+                                    * results are up (RESULTS); a console not in it waits until the lobby reopens */
+    uint8_t ready;                 /* bit n: port n's player is ready (RESULTS); a console that left counts as ready */
+    uint8_t advance;               /* how far the results screen was moved on by a press: 1 past its wait (a cancelled
+                                    * match), 2 past its intro (to the players' panels) */
+    uint8_t stars[LOBBY_SLOTS];    /* the stars over each door: each port's KOs, as vanilla's VS mode counts them */
 } lobby_state;
 
 /* ---- the wire ---- */
@@ -80,12 +88,14 @@ int lobby_encode(const lobby_state *s, uint8_t *out, int cap);          /* bytes
 int lobby_decode(lobby_state *s, const uint8_t *in, int len);           /* 0 ok, -1 not a lobby blob */
 
 /* A console's commands to the host. Each returns its length. */
-enum { LCMD_DOOR = 1, LCMD_START = 2, LCMD_STAGE = 3, LCMD_BACK = 4, LCMD_BUSY = 5 };
+enum { LCMD_DOOR = 1, LCMD_START = 2, LCMD_STAGE = 3, LCMD_BACK = 4, LCMD_BUSY = 5, LCMD_RESULTS = 6 };
 int lobby_cmd_door(uint8_t *out, int slot, const lobby_slot *s);       /* set door `slot` (any console may edit any door) */
 int lobby_cmd_start(uint8_t *out);                                      /* Start from the CSS: go to the stage select */
 int lobby_cmd_stage(uint8_t *out, int stage, int alt_stage);            /* a stage pick */
 int lobby_cmd_back(uint8_t *out);                                       /* B at the stage select: back to the CSS */
 int lobby_cmd_busy(uint8_t *out, int busy);                             /* the sender is busy (or no longer) */
+int lobby_cmd_results(uint8_t *out, int ready, int advance);            /* results screen: the sender's ready, and how far a
+                                                                         * press moved it on (0: no change) */
 
 /* ---- the host ---- */
 typedef struct {
@@ -93,6 +103,8 @@ typedef struct {
     unsigned present;              /* consoles the host last synced with */
     unsigned joined_in_match;      /* arrived during a match: their door is set when it ends */
     unsigned left_in_match;
+    uint8_t last_tag[LOBBY_SLOTS][LOBBY_TAG_BYTES];   /* each port's last Human tag (a change clears its stars) */
+    uint8_t last_tag_ok[LOBBY_SLOTS];
 } lobby_host;
 
 enum { LOBBY_CHANGED = 1, LOBBY_STAGE_REACHED = 2, LOBBY_START_MATCH = 4 };
@@ -112,9 +124,19 @@ int lobby_host_start(lobby_host *h, int from);                               /* 
 int lobby_host_pick_stage(lobby_host *h, int stage, int alt_stage);          /* the host's own stage pick */
 int lobby_host_set_rules(lobby_host *h, const lobby_rules *r);      /* the host changed the rules */
 int lobby_host_set_busy(lobby_host *h, int port, int busy);                  /* a console's busy bit (its own only) */
-void lobby_host_match_began(lobby_host *h);                                  /* phase MATCH; call after lw_host_start */
+/* Phase MATCH; call after lw_host_start. `again`: a follow-up game (sudden death) with the consoles of the last one. */
+void lobby_host_match_began(lobby_host *h, int again);
 int lobby_host_set_status(lobby_host *h, const lobby_status *st);            /* the running match's status; LOBBY_CHANGED if it differs */
 int lobby_host_match_over(lobby_host *h);                                    /* phase CSS again; applies waiting joins/leaves */
+/* The match is over and its results screen is up: phase RESULTS until lobby_host_results_over. Joins and leaves still
+ * wait; a console that left counts as ready. */
+int lobby_host_results_begin(lobby_host *h);
+/* Console `from`'s press on the results screen (only a console that played): its ready bit, and the screen moved on to
+ * `advance` (0..2; it never goes back). */
+int lobby_host_results(lobby_host *h, int from, int ready, int advance);
+/* The results screen ended: the stars (new totals per port) and, with auto handicap, each door's new handicap (0: keep)
+ * go into the lobby, then as lobby_host_match_over. */
+int lobby_host_results_over(lobby_host *h, const uint8_t *stars, const uint8_t *handicap);
 
 /* Can Start take the lobby to the stage select? at least two doors in use and a fighter in every one, with Teams at
  * least two different teams (as vanilla's READY overlay asks), and no console busy (lobby_state.busy). */

@@ -622,7 +622,7 @@ static void group_list_page(const GroupView* v){
     if(!v->count)center(160,GL_ROW_Y+22,"LOOKING FOR GAMES NEARBY...",12,muted);
     for(int i=0;i<v->count&&i<GROUP_ROWS;++i){
         const group_game* r=&v->row[i];char b[64],f[64];int y=GL_ROW_Y+i*GL_ROW_STEP;
-        int busy=r->lobby.phase==LOBBY_MATCH;
+        int busy=r->lobby.phase==LOBBY_MATCH||r->lobby.phase==LOBBY_RESULTS;
         rect(8,y,304,GL_ROW_H,card_color);rect(8,y,3,GL_ROW_H,busy?line_color:slippi_done);
         fit(19,y+2,r->host[0]?r->host:"3DS",14,170,ink);
         if(r->max>0&&r->players>=r->max)right(304,y+2,"FULL",13,slippi_red);
@@ -648,7 +648,7 @@ static void group_dialog_page(void){
 static void group_watch_page(const GroupStrip* g){
     char b[64];
     const lobby_status* st=&g->status;
-    header("GROUP","MATCH IN PROGRESS");
+    header("GROUP",g->phase==LOBBY_RESULTS?"RESULTS":"MATCH IN PROGRESS");
     if(!st->valid)center(160,44,"WAITING FOR THE MATCH...",13,muted);
     else if(st->timer){snprintf(b,sizeof(b),"%u:%02u",st->seconds/60,st->seconds%60);center(160,40,b,20,ink);}
     else center(160,44,"NO TIME LIMIT",13,muted);
@@ -669,7 +669,7 @@ static void group_watch_page(const GroupStrip* g){
 static void group_strip_page(const GroupStrip* g,unsigned scene){
     char b[64];
     if(g->watching){group_watch_page(g);if(group_dialog())group_dialog_page();return;}
-    header("GROUP",g->phase==LOBBY_MATCH?"IN MATCH":scene==9?"STAGE SELECT":"CHARACTER SELECT");
+    header("GROUP",g->phase==LOBBY_MATCH?"IN MATCH":g->phase==LOBBY_RESULTS?"RESULTS":scene==9?"STAGE SELECT":"CHARACTER SELECT");
     for(int i=0;i<LOBBY_SLOTS;++i){
         int y=36+i*38;const lobby_slot* d=&g->port[i].door;
         rect(8,y,304,34,card_color);rect(8,y,4,34,colors[i]);
@@ -679,7 +679,7 @@ static void group_strip_page(const GroupStrip* g,unsigned scene){
             group_bars(266,y+5,g->port[i].signal,slippi_done);
         }else text(20,y+3,"-",15,muted);
         if(d->kind==LOBBY_EMPTY)snprintf(b,sizeof(b),"%s",g->port[i].present?"CLOSED":"OPEN");
-        else if(g->phase==LOBBY_MATCH)snprintf(b,sizeof(b),"%s%s",d->kind==LOBBY_CPU?"CPU ":"",d->chosen==1&&d->fighter<26?names[d->fighter]:"PLAYING");
+        else if(g->phase==LOBBY_MATCH||g->phase==LOBBY_RESULTS)snprintf(b,sizeof(b),"%s%s",d->kind==LOBBY_CPU?"CPU ":"",d->chosen==1&&d->fighter<26?names[d->fighter]:"PLAYING");
         else if(d->chosen==1&&d->fighter<26)snprintf(b,sizeof(b),"%s%s",d->kind==LOBBY_CPU?"CPU: ":"",names[d->fighter]);
         else snprintf(b,sizeof(b),"%s",d->kind==LOBBY_CPU?"CPU":"CHOOSING");
         fit(20,y+19,b,11,270,muted);

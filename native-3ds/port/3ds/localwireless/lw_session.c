@@ -597,6 +597,7 @@ static void client_menu_tick(uint64_t now)
     pkt[0] = MSG_MENU;
     pkt[1] = ++S.menu_seq;
     send_to(LW_LINK_HOST_NODE, pkt, sizeof(pkt));
+    ++S.stats[LW_STAT_MENU_SENT];
 }
 
 static void host_menu_tick(uint64_t now)
@@ -611,6 +612,7 @@ static void host_menu_tick(uint64_t now)
     pkt[1] = ++S.menu_seq;
     for (int i = 1; i < LW_MAX_PLAYERS; ++i)
         if (S.pl[i].present && !in_game(&S.pl[i])) send_to(S.pl[i].node, pkt, sizeof(pkt));
+    ++S.stats[LW_STAT_MENU_SENT];
 }
 
 static void on_menu(int idx, const uint8_t *d, size_t len)

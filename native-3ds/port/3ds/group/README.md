@@ -6,15 +6,21 @@ Group play: Melee -> Group on the VS menu, a lobby of up to four nearby 3DS cons
 | File | What |
 |---|---|
 | `group_session.c/.h` | The session: the localwireless module carrying the Melee lobby and lockstep matches; the backend of the engine's online bridge while a group is open; settings (`group.ini`) |
-| `group_lobby.c/.h` | The lobby rules, pure logic: four doors (Human / CPU / empty), who may edit which door, Start and the first stage pick, the wire format, and the match block |
+| `group_lobby.c/.h` | The lobby rules, pure logic: four doors (Human / CPU / empty), who may edit which door, Start and the first stage pick, the results screen's ready bits, the stars, the wire format, and the match block |
 | `group_menu.c/.h` | Melee -> Solo / Group, the Host / Join page, "End the session?", the bottom-screen strip and toasts |
 
 Around it:
 - `port/3ds/net_select.c` hands the engine's online bridge (`slippi_net_bridge.h`) to this backend while a group
   session is open, and to Slippi Direct otherwise. The Slippi code itself knows nothing about group play.
 - `port/include/group_bridge.h` is the engine-facing API (`mp_platform_group_*`), `port/include/group_engine.h` and
-  `port/engine/group/group.c` the engine side (scene flow, CPU takeover, name tags, the CSS / stage select camera turned by every console's C-stick), and `tools/group_edits/` the
-  patches to the decomp (VS menu, character select, stage select, name tags).
+  `port/engine/group/group.c` the engine side (scene flow, CPU takeover, name tags, the CSS / stage select camera turned by every console's C-stick, the results screen,
+  stars and auto handicap after a match), and `tools/group_edits/` the patches to the decomp (VS menu, character
+  select, stage select, results screen, name tags).
+- After a match (or its sudden death) every console shows vanilla's results screen. Presses that move it on (Start,
+  and the press that leaves its intro) go to the host and come back through the lobby, so every screen takes the same
+  steps and ends once every Human player is ready; a console that left counts as ready. Then the host counts the stars
+  and reopens the lobby. Vanilla's own results exit is not run: it would record remote fighters in this console's save
+  and can start a "new challenger" fight or a trophy depending on the save.
 - From Slippi it reuses the lockstep frame driver (`port/engine/slippi/online.c`, through a few hooks), the online scene
   table (`online_mode.c`), the match block format and the port's platform layer (`slippi_plat.c`).
 

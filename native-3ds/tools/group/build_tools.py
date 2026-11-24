@@ -7,6 +7,9 @@ Tools:
   group_client      a console with test pads: lobby, doors, Start, stage, matches (group_test.py, group_lobby_test.py)
   lw_lobby_client   the localwireless module alone (tools/localwireless/lw_lobby_test.py)
   lobby_unit        the Melee lobby rules alone (group_lobby.c)
+  auto_handicap_unit  vanilla's auto handicap rule (fn_80169000, from the decomp's gm_1601.c) for the group's inputs;
+                    built only where the decomp's source is found ($MELEE_UPSTREAM_SRC, upstream/melee/src, the work
+                    volume's /work/src/upstream/melee/src, or the repository this checkout sits in)
 
 On Windows this uses the llvm-mingw clang in .toolchain; on Linux and macOS the system C compiler ($CC, else cc),
 which is what the Docker test runner (docker/emu-test.sh) does.
@@ -32,6 +35,21 @@ def clang():
     if not found:
         raise SystemExit('llvm-mingw clang not found under .toolchain')
     return str(found[-1])
+
+
+def upstream_function(name):
+    """A function's source text, taken from the decomp (gm_1601.c), or None if the decomp is not here."""
+    places = [os.environ.get('MELEE_UPSTREAM_SRC', ''), ROOT / 'upstream/melee/src', '/work/src/upstream/melee/src',
+              ROOT.parent / 'src']
+    for place in places:
+        path = Path(place) / 'melee/gm/gm_1601.c' if place else None
+        if path and path.is_file():
+            text = path.read_text(encoding='utf-8', errors='replace')
+            start = text.find(f'void {name}(')
+            end = text.find('\n}\n', start)
+            if start >= 0 and end >= 0:
+                return text[start:end + 3]
+    return None
 
 
 def main():
@@ -64,6 +82,15 @@ def main():
     link('group_client', [ROOT / 'tools/group/src/group_client.c'], lw + group + plat)
     link('lw_lobby_client', [ROOT / 'tools/localwireless/lw_lobby_client.c'], lw)
     link('lobby_unit', [ROOT / 'tools/group/src/lobby_unit.c', GROUP / 'group_lobby.c'], [])
+    rule = upstream_function('fn_80169000')
+    if rule:
+        gen = obj_dir / 'auto_handicap_vanilla.c'
+        gen.write_text('#include "auto_handicap_unit.h"\n' + rule, encoding='utf-8')
+        flags += ['-I' + str(ROOT / 'tools/group/src'), '-Wno-unused-variable']   # vanilla's own padding variable
+        link('auto_handicap_unit', [ROOT / 'tools/group/src/auto_handicap_unit.c', gen], [])
+    else:
+        (OUT / ('auto_handicap_unit' + EXE)).unlink(missing_ok=True)
+        print('auto_handicap_unit: the decomp\'s gm_1601.c is not here; not built')
 
 
 if __name__ == '__main__':

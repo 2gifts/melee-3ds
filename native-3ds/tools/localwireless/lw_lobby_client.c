@@ -4,12 +4,17 @@
  *
  *   lw_lobby_client --host --port N [--games G] [--again] [--start-at MS] [--frames F] [--run-ms MS] [--drop PCT]
  *   lw_lobby_client --join --port N [--want-tag T] [--join-at MS] [--leave-at MS] [--crash-at MS] [--drop PCT]
+ *   either with [--menu V@MS ...] [--menu-log]
  * A joiner browses and joins the first game listed (with --want-tag, the first whose beacon starts with T).
  *
  * The host sets a lobby blob (a counter and a pattern of it) every 100 ms, starts game 1 at --start-at and each next game
  * 500 ms after the previous one is over, then freezes the blob (counter 0xFFFFFFFF) at --run-ms and waits for the others.
  * Everybody sends the host a numbered command every 400 ms until it sees the frozen blob.
- * Prints (compared by the test): MATCH <game> <hash> ..., CMDS <last>, FINAL <present mask>, LATE ... */
+ * Prints (compared by the test): MATCH <game> <hash> ..., CMDS <last>, FINAL <present mask>, LATE ...
+ * Menu input: --menu V@MS makes this console's value V (its first byte) from MS on, set every loop as a game's menu
+ * would each frame (up to 8 of them). --menu-log prints "MENU <port> <value> <clock ms>" whenever the value this console
+ * reads for a port changes (the clock is CLOCK_MONOTONIC, shared by every console on this machine), and "MENUTX <game>
+ * <packets>": the menu packets this console sent while that game ran. */
 #include "localwireless.h"
 #include "lw_platform.h"
 #include <stdarg.h>
@@ -76,6 +81,9 @@ int main(int argc, char **argv)
     int games = 1, frames = 200, delay = 2, bad = 0;   /* clients take the frame count from the start blob */
     int want_tag = -1, beacon_tag = -1, again = 0;   /* again: games after the first with lw_host_start_again */
     unsigned start_at = 3000, run_ms = 12000, join_at = 0, leave_at = 0, crash_at = 0;
+    int menu_n = 0, menu_val[8], menu_log = 0, menu_seen[LW_MAX_PLAYERS];
+    unsigned menu_at[8], menu_tx_at_begin = 0;
+    for (int k = 0; k < LW_MAX_PLAYERS; ++k) menu_seen[k] = -1;
     setvbuf(stdout, NULL, _IONBF, 0);
     for (int i = 1; i < argc; ++i) {
         if (!strcmp(argv[i], "--host")) c.host = 1;
@@ -92,6 +100,11 @@ int main(int argc, char **argv)
         else if (i + 1 < argc && !strcmp(argv[i], "--join-at")) join_at = (unsigned)atoi(argv[++i]);
         else if (i + 1 < argc && !strcmp(argv[i], "--leave-at")) leave_at = (unsigned)atoi(argv[++i]);
         else if (i + 1 < argc && !strcmp(argv[i], "--crash-at")) crash_at = (unsigned)atoi(argv[++i]);
+        else if (i + 1 < argc && !strcmp(argv[i], "--menu") && menu_n < 8) {
+            const char *v = argv[++i], *at = strchr(v, '@');
+            menu_val[menu_n] = atoi(v);
+            menu_at[menu_n++] = at ? (unsigned)atoi(at + 1) : 0;
+        } else if (!strcmp(argv[i], "--menu-log")) menu_log = 1;
         else { fprintf(stderr, "unknown option %s\n", argv[i]); return 2; }
     }
     t0 = now_us();
@@ -116,8 +129,8 @@ int main(int argc, char **argv)
     for (;;) {
         uint64_t now = now_us();
         unsigned t = ms();
-        if (crash_at && t >= crash_at) { printf("vanishing at %u ms\n", t); fflush(stdout); _exit(0); }
-        if (leave_at && t >= leave_at) { printf("leaving at %u ms\n", t); lw_close(); return 0; }
+        if (crash_at && t >= crash_at) { printf("vanishing at %u ms (clock %llu)\n", t, (unsigned long long)(now / 1000)); fflush(stdout); _exit(0); }
+        if (leave_at && t >= leave_at) { printf("leaving at %u ms (clock %llu)\n", t, (unsigned long long)(now / 1000)); lw_close(); return 0; }
         int st = lw_poll();
         if (st == LW_SEARCHING) {
             if (lw_browsing()) {
@@ -147,7 +160,24 @@ int main(int argc, char **argv)
         if (!connected) {
             connected = 1;
             me = lw_my_index();
-            printf("console index %d, present %x, host %s\n", me, lw_present(), lw_player_name(0));
+            printf("console index %d, present %x, host %s (clock %llu)\n", me, lw_present(), lw_player_name(0),
+                   (unsigned long long)(now / 1000));
+        }
+        /* menu input: this console's scheduled value, set each loop as a menu does each frame; what it reads, logged */
+        {
+            int v = -1;
+            for (int k = 0; k < menu_n; ++k) if (t >= menu_at[k]) v = menu_val[k];
+            if (v >= 0) { uint8_t d[1] = {(uint8_t)v}; lw_menu_input_set(d, 1); }
+            if (menu_log) {
+                for (int k = 0; k < LW_MAX_PLAYERS; ++k) {
+                    uint8_t got[LW_MAX_MENU];
+                    lw_menu_input_get(k, got);
+                    if (got[0] != menu_seen[k]) {
+                        menu_seen[k] = got[0];
+                        printf("MENU %d %d %llu\n", k, got[0], (unsigned long long)(now_us() / 1000));
+                    }
+                }
+            }
         }
         uint8_t blob[LW_MAX_LOBBY];
 
@@ -232,6 +262,7 @@ int main(int argc, char **argv)
                 game_id = sb[0];
                 frames = (sb[2] << 8) | sb[3];
                 lw_game_begin();
+                menu_tx_at_begin = lw_stat(LW_STAT_MENU_SENT);
                 playing = 1;
                 frame = 1;
                 hash = 2166136261u ^ (uint32_t)game_id;
@@ -270,6 +301,7 @@ int main(int argc, char **argv)
                 if (next_frame < now) next_frame = now;
                 if (frame > frames) {
                     printf("MATCH %d %08x\n", game_id, (unsigned)hash);
+                    if (menu_log) printf("MENUTX %d %u\n", game_id, lw_stat(LW_STAT_MENU_SENT) - menu_tx_at_begin);
                     lw_game_end();
                     playing = 0;
                     next_start = now + 500000ull;

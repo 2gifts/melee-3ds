@@ -56,9 +56,15 @@ int group_scan(group_game *out, int max);      /* the games in range, in list or
 int group_join(uint32_t key);                  /* 0: joining; -1: failed (group_net_error) */
 
 /* The lobby, natively (the bottom screen). */
+void group_test_hold_view(int hold);           /* tests (PC): a joiner keeps its lobby view as it is while held,
+                                                * as if no snapshot got through */
+int group_view_since_game_end(void);           /* the lobby view arrived after this console's last match ended
+                                                * (always on the host): a character select phase in it is after the
+                                                * results, not from before the match */
 int group_lobby_view(lobby_state *out);        /* 1 when there is a lobby; fills the host's newest state */
 unsigned group_present(void);                  /* bit n: a console is on port n */
-int group_watching(void);                      /* a match runs that this console is not in (it joined during it) */
+int group_watching(void);                      /* a match runs that this console is not in (it joined during it), or
+                                                * that match's results screen is up */
 /* Host: the running match's timer, stocks and damage, for consoles that joined during it. Call as often as convenient
  * (the bottom screen's thread does, every frame); it goes out a few times a second, only during a match. */
 void group_match_status(const lobby_status *st);
@@ -78,6 +84,8 @@ int group_door_names(void);
 int group_players(void);
 int group_player_name(int port, char *buf, int len);
 void group_game_end(void);
+void group_results_press(int ready, int advance);
+void group_results_end(const unsigned char *stars, const unsigned char *handicap);
 void group_sudden_death(void);                 /* the match just ended tied: the host starts its sudden death */
 
 /* The online bridge's calls while a group session is open (slippi_net_bridge.h, through net_select.c). */

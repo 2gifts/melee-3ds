@@ -14,8 +14,18 @@
  *                       data) until it ends, then play the next games (test_games counts only those)
  *   test_linger_ms=N    stay in the lobby N ms after the last game before closing it
  *   test_full=1         expect the lobby to be full: see it listed as full, try to join anyway, and pass when refused
+ *   test_results_hold_ms=N    on the results screen, press ready only after N ms (the others must wait for it)
+ *   test_results_linger_ms=N  stay on the results screen (busy) N ms after the lobby is back in the character select,
+ *                       as a console whose screen ends later; a host tries Start meanwhile, which must be refused
+ *   test_results_leave=1|2    leave on the first results screen without pressing ready: 1 a goodbye, 2 vanish
+ *   test_stale_view=1   joiner: in game 1, keep the lobby view from before the host's Start until 1.5 s after the
+ *                       match ends (as if every snapshot in between was lost), so the results screen starts on a
+ *                       character select view from before the match, which must not count as the results' end
  *   test_control=1      host: take this console's door, then do what DIR/control.txt says, one line at a time as the
- *                       test appends them (see control()), logging "group-test: control N done: LINE" for each
+ *                       test appends them (see control()), logging "group-test: control N done: LINE" for each:
+ *                       door PORT KIND FIGHTER LEVEL CHOSEN HANDICAP, rules HANDICAP MODE TIME STOCKS, busy 0|1,
+ *                       stick X Y (this console's C-stick, -127..127, held until changed), start (Start on the CSS),
+ *                       back (B on the stage select), sticks (log every port's C-stick as read here), dump, quit
  * A host publishes made-up match status (timer, stocks, damage) during its games, as a real host's bottom screen does.
  * Every console prints "bundle hash" per game; consoles that stayed must agree. Exit 0 = PASS. */
 #include "group_bridge.h"
@@ -33,7 +43,13 @@
 
 #define FRAME_US 16683
 
-static struct { int host, via_menu, players, games, frames, character, crash_frame, delay, late, full, linger_ms, control; } T;
+static struct {
+    int host, via_menu, players, games, frames, character, crash_frame, delay, late, full, linger_ms, control;
+    int results_hold_ms, results_linger_ms, results_leave, stale_view;
+} T;
+
+/* A clock every console on this machine shares (CLOCK_MONOTONIC), so a test can order events across their logs. */
+static unsigned long long now_ms(void) { return (unsigned long long)(sp_time_us() / 1000); }
 
 static const char *status_name(int s)
 {
@@ -114,21 +130,25 @@ static int via_menu(void)
 /* A console that joined during a match: the host's status must arrive and move until the match is over. */
 static int watch_match(void)
 {
-    int updates = 0, last = -1, max_seconds = 0;
+    int updates = 0, last = -1, max_seconds = 0, saw_results = 0;
     uint64_t end = sp_time_us() + 120000000;
+    lobby_state v;
     if (!group_watching()) { sp_log("group-test: FAIL joined late but no match is running here"); return 0; }
     while (sp_time_us() < end && group_watching()) {
-        lobby_state v;
         group_net_poll();
         if (group_lobby_view(&v) && v.status.valid && (int)v.status.seconds != last) {
             last = v.status.seconds;
             ++updates;
             if (last > max_seconds) max_seconds = last;
         }
+        if (group_lobby_view(&v) && v.phase == LOBBY_RESULTS) saw_results = 1;
         sp_sleep_us(10000);
     }
     sp_log("group-test: watched the match in progress: %d status updates, timer up to %d s", updates, max_seconds);
     if (updates < 3) { sp_log("group-test: FAIL too few status updates while watching"); return 0; }
+    /* the results that follow are the players' own: this console watches until the lobby reopens */
+    if (!group_lobby_view(&v) || v.phase != LOBBY_CSS) { sp_log("group-test: FAIL stopped watching in phase %u", v.phase); return 0; }
+    sp_log("group-test: held through the results (%s) until the lobby reopened at %llu", saw_results ? "seen" : "not seen", now_ms());
     return 1;
 }
 
@@ -191,8 +211,11 @@ static int control(const char *dir, int me)
     d.kind = 0; d.fighter = (unsigned char)((T.character + me) % 26); d.chosen = 1; d.level = 3;
     group_lobby_set_door(me, &d);
     uint64_t end = sp_time_us() + 1200000000ull;
+    int sx = 0, sy = 0;
     while (sp_time_us() < end) {
+        signed char sticks[8];
         group_net_poll();
+        group_menu_sticks(sx, sy, sticks);      /* as a menu does each frame */
         if (group_net_status() == 4 || group_net_status() == 5) { sp_log("group-test: FAIL the session ended"); return 1; }
         char *text = sp_read_file(path, NULL);
         int line = 0;
@@ -217,6 +240,15 @@ static int control(const char *dir, int me)
                 group_lobby_rules(&r);
             } else if (sscanf(s, "busy %d", &a[0]) == 1) {
                 group_lobby_busy(a[0]);
+            } else if (sscanf(s, "stick %d %d", &a[0], &a[1]) == 2) {
+                sx = a[0]; sy = a[1];
+            } else if (!strcmp(s, "start")) {
+                group_lobby_start();
+            } else if (!strcmp(s, "back")) {
+                group_lobby_back();
+            } else if (!strcmp(s, "sticks")) {
+                sp_log("group-test: sticks %d,%d %d,%d %d,%d %d,%d", sticks[0], sticks[1], sticks[2], sticks[3], sticks[4],
+                       sticks[5], sticks[6], sticks[7]);
             } else if (!strcmp(s, "dump")) {
                 dump_lobby();
             } else if (!strcmp(s, "quit")) {
@@ -235,6 +267,69 @@ static int control(const char *dir, int me)
     return 1;
 }
 
+/* After a match: its results screen, as a player who presses Start at once. Every console waits until each console
+ * that played is ready; then the host reopens the lobby (with the stars unchanged: this test has no match result) and
+ * a joiner waits for that. While it is up this console is busy, as in the game, so the host cannot start the next
+ * match before every console is back. 0 = back in the lobby. */
+static int results_screen(int me, int game)
+{
+    uint64_t end = sp_time_us() + 60000000ull, hold = 0, release = 0;
+    int pressed = 0;
+    group_lobby_busy(1);                        /* as the game does: no Start until this console is back */
+    if (game == 1 && T.stale_view && !T.host) {
+        lobby_state v;
+        int ok = group_lobby_view(&v);
+        sp_log("group-test: stale view at the results: phase %u, after the match %d", ok ? v.phase : 255u,
+               group_view_since_game_end());
+        release = sp_time_us() + 1500000ull;
+    }
+    while (sp_time_us() < end) {
+        lobby_state v;
+        group_net_poll();
+        if (release && sp_time_us() >= release) {
+            release = 0;
+            group_test_hold_view(0);
+            sp_log("group-test: the lobby view is let through again at %llu", now_ms());
+        }
+        if (group_net_status() == 4 || group_net_status() == 5) { sp_log("group-test: FAIL the session ended in the results"); return 1; }
+        if (group_lobby_view(&v)) {
+            /* back in the character select: over (in a view from after this console's match: an older one, or a
+             * stage select or match phase, is from before the host reached its results) */
+            if (v.phase == LOBBY_CSS && group_view_since_game_end()) {
+                sp_log("group-test: the results are over at %llu (phase %u, stars %u/%u/%u/%u)", now_ms(), v.phase, v.stars[0],
+                       v.stars[1], v.stars[2], v.stars[3]);
+                for (uint64_t t = sp_time_us() + (uint64_t)T.results_linger_ms * 1000; sp_time_us() < t;) {
+                    group_net_poll();
+                    sp_sleep_us(5000);
+                }
+                group_lobby_busy(0);
+                return 0;
+            }
+            if (v.phase == LOBBY_RESULTS && group_view_since_game_end()) {
+                if (game == 1 && T.results_leave) {
+                    sp_log("group-test: leaving on the results screen at %llu (%s)", now_ms(), T.results_leave == 2 ? "vanish" : "goodbye");
+#ifndef _WIN32
+                    if (T.results_leave == 2) _exit(0);
+#endif
+                    group_session_stop();
+                    return 2;
+                }
+                if (!hold) hold = sp_time_us() + (uint64_t)T.results_hold_ms * 1000;
+                if (!pressed && (v.played >> me & 1) && sp_time_us() >= hold) {
+                    group_results_press(1, 2);
+                    pressed = 1;
+                    sp_log("group-test: ready on the results screen at %llu", now_ms());
+                }
+                if (group_is_host() && (v.ready & v.played) == v.played) group_results_end(v.stars, NULL);
+            }
+        }
+        sp_sleep_us(10000);
+    }
+    sp_log("group-test: FAIL the results screen did not end");
+    return 1;
+}
+
+static int nobody_busy(void) { lobby_state v; return group_lobby_view(&v) && v.busy == 0; }
 static int all_here(void) { return __builtin_popcount(group_present()) >= T.players; }
 /* Joining opens no door, so a console still on its way to opening its own would only sit the match out: the host
  * waits, as a person would, for every console here to have a fighter in its door. */
@@ -259,6 +354,10 @@ static int lobby_dance(int me, int game)
         memset(&d, 0, sizeof(d));
         d.kind = 0; d.fighter = (unsigned char)((T.character + me) % 26); d.color = (unsigned char)me; d.chosen = 1; d.level = 3;
         group_lobby_set_door(me, &d);
+        if (T.stale_view && !T.host) {
+            group_test_hold_view(1);           /* the view as it is now: the character select, before Start */
+            sp_log("group-test: holding the lobby view (phase CSS) until after the match");
+        }
         if (T.host && T.players < 4) {            /* a CPU on the first free port: no console there */
             MpGroupDoor c = d;
             c.kind = 1; c.fighter = 0x0A; c.color = 0; c.level = 7;
@@ -266,12 +365,21 @@ static int lobby_dance(int me, int game)
         }
     }
     if (T.host) {
+        lobby_state v;
+        if (game > 1 && group_lobby_view(&v) && v.busy) {
+            /* a console is still on its results screen: Start must not take the lobby to the stage select */
+            group_lobby_start();
+            for (uint64_t t = sp_time_us() + 200000; sp_time_us() < t;) { group_net_poll(); sp_sleep_us(5000); }
+            if (group_lobby_view(&v) && v.phase != LOBBY_CSS) { sp_log("group-test: FAIL Start taken while busy"); return 0; }
+            sp_log("group-test: Start refused while consoles %x are busy", v.busy);
+        }
         if (!wait_for(doors_ready, 30000)) { sp_log("group-test: FAIL the doors never filled"); return 0; }
         group_lobby_start();
         if (!wait_for(in_stage, 10000)) { sp_log("group-test: FAIL no stage select"); return 0; }
         group_lobby_stage(0x1F, 0);
     }
     if (!wait_for(block_ready, T.host ? 30000 : 600000)) { sp_log("group-test: FAIL no match block (game %d): %s", game, group_net_error()); return 0; }
+    sp_log("group-test: match block %d at %llu", game, now_ms());
     sp_log("group-test: match block ready: stage 0x%02x%02x slots %u/%u/%u/%u types %u/%u/%u/%u local %u delay %u", block[0xE], block[0xF],
            block[0x60], block[0x84], block[0xA8], block[0xCC], block[0x61], block[0x85], block[0xA9], block[0xCD], block[0x13C], block[0x13D]);
     return 1;
@@ -380,6 +488,10 @@ int main(int argc, char **argv)
     T.full = group_ini_int(s, "test_full", 0);
     T.linger_ms = group_ini_int(s, "test_linger_ms", 0);
     T.control = group_ini_int(s, "test_control", 0);
+    T.results_hold_ms = group_ini_int(s, "test_results_hold_ms", 0);
+    T.results_linger_ms = group_ini_int(s, "test_results_linger_ms", 0);
+    T.results_leave = group_ini_int(s, "test_results_leave", 0);
+    T.stale_view = group_ini_int(s, "test_stale_view", 0);
     free(ini);
 
     sp_log("group-test: starting as %s (data dir %s)", T.host ? "host" : "joiner", dir);
@@ -413,8 +525,13 @@ int main(int argc, char **argv)
         if (!lobby_dance(me, game)) { failed = 1; break; }
         if (play_game(me, game) != 0) { failed = 1; break; }
         group_game_end();
-        sp_log("group-test: back in the lobby");
+        int r = results_screen(me, game);
+        if (r == 2) { sp_log("group-test: PASS (left on the results screen)"); return 0; }
+        if (r != 0) { failed = 1; break; }
+        sp_log("group-test: back in the lobby at %llu", now_ms());
     }
+    /* the others may still be on their results screens: closing the lobby now would end their session there */
+    if (T.host && !failed && !wait_for(nobody_busy, 20000)) sp_log("group-test: consoles still busy at the end");
     for (uint64_t end = sp_time_us() + (uint64_t)T.linger_ms * 1000; sp_time_us() < end;) {
         group_net_poll();
         sp_sleep_us(5000);

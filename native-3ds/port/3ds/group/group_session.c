@@ -40,6 +40,8 @@ static struct {
     lobby_state view;
     int view_valid;
     unsigned view_version;
+    int view_since_end;            /* a lobby snapshot arrived after this console's match ended (the host's own: always) */
+    int view_held;                 /* tests: a joiner keeps its lobby view as it is (group_test_hold_view) */
     int match_pending;            /* host: the stage was picked; start the game once the module is free */
     int sudden_pending;           /* host: the last match was tied; start its sudden death once the module is free */
     unsigned char last_block[LOBBY_BLOCK_SIZE];   /* host: the block of the last game started */
@@ -108,7 +110,7 @@ static int lobby_start_match(void)
     if (lw_host_start(blk, sizeof(blk)) != 0) return 0;        /* the last game is still ending; try again */
     memcpy(G.last_block, blk, sizeof(blk));
     G.last_block_ok = 1;
-    lobby_host_match_began(&G.host_lobby);
+    lobby_host_match_began(&G.host_lobby, 0);
     sp_log("group: starting a match: stage 0x%02x, %d consoles present", G.host_lobby.st.stage, __builtin_popcount(lw_present()));
     lobby_publish();
     return 1;
@@ -127,7 +129,7 @@ static int sudden_start(void)
     blk[0x13A] = (unsigned char)(rng >> 8); blk[0x13B] = (unsigned char)rng;
     if (lw_host_start_again(blk, sizeof(blk)) != 0) return 0;  /* the last game is still ending; try again */
     memcpy(G.last_block, blk, sizeof(blk));
-    lobby_host_match_began(&G.host_lobby);
+    lobby_host_match_began(&G.host_lobby, 1);
     G.host_lobby.st.mode = 1;
     sp_log("group: starting a sudden death");
     lobby_publish();
@@ -180,12 +182,13 @@ static void lobby_service(void)
             G.match_pending = 0;
         }
         if (!G.view_valid) lobby_publish();
-    } else {
+    } else if (!(G.view_held && G.view_valid)) {
         unsigned v = lw_lobby_version();
         if (v != G.view_version || !G.view_valid) {
             uint8_t b[LW_MAX_LOBBY];
             int n = lw_get_lobby(b, sizeof(b));
             if (n > 0 && lobby_decode(&G.view, b, n) == 0) G.view_valid = 1;
+            if (v != G.view_version) G.view_since_end = 1;
             G.view_version = v;
         }
     }
@@ -342,6 +345,21 @@ int group_join(uint32_t key)
 
 /* ---- the lobby, natively ---- */
 
+void group_test_hold_view(int hold)
+{
+    sp_lock();
+    G.view_held = hold;
+    sp_unlock();
+}
+
+int group_view_since_game_end(void)
+{
+    sp_lock();
+    int r = G.open && (G.host || G.view_since_end);
+    sp_unlock();
+    return r;
+}
+
 int group_lobby_view(lobby_state *out)
 {
     sp_lock();
@@ -353,10 +371,18 @@ int group_lobby_view(lobby_state *out)
 
 unsigned group_present(void) { sp_lock(); unsigned p = G.open ? lw_present() : 0; sp_unlock(); return p; }
 
+/* A match runs that this console is not in, or the results screen of one is up (lock held). */
+static int watching_locked(void)
+{
+    if (!G.open || G.status != ST_CONNECTED) return 0;
+    if (lw_match_running() && !lw_in_match()) return 1;
+    return G.view_valid && G.view.phase == LOBBY_RESULTS && G.my_port >= 0 && !(G.view.played >> G.my_port & 1);
+}
+
 int group_watching(void)
 {
     sp_lock();
-    int w = G.open && G.status == ST_CONNECTED && lw_match_running() && !lw_in_match();
+    int w = watching_locked();
     sp_unlock();
     return w;
 }
@@ -398,7 +424,10 @@ int group_lobby_get(MpGroupLobby *out)
     out->host = (unsigned char)G.host;
     out->present = (unsigned char)lw_present();
     out->busy = v->busy;
-    out->watching = (unsigned char)(G.status == ST_CONNECTED && lw_match_running() && !lw_in_match());   /* group_watching() */
+    out->watching = (unsigned char)watching_locked();
+    out->played = v->played; out->ready = v->ready; out->advance = v->advance;
+    out->since_end = (unsigned char)(G.host || G.view_since_end);
+    memcpy(out->stars, v->stars, sizeof(out->stars));
     out->phase = v->phase; out->starter = v->starter; out->stage_picked = v->stage_picked; out->mode = v->mode;
     out->stage_hi = (unsigned char)(v->stage >> 8); out->stage_lo = (unsigned char)v->stage; out->alt_stage = v->alt_stage;
     out->rules.time_mode = v->rules.time_mode; out->rules.stocks = v->rules.stocks; out->rules.minutes = v->rules.minutes;
@@ -523,18 +552,39 @@ int group_player_name(int port, char *buf, int len)
     return (int)strlen(buf);
 }
 
-/* The match is over on this console (back to the lobby). */
+/* The match is over on this console: its results screen follows (group_results_end reopens the lobby). */
 void group_game_end(void)
 {
     sp_lock();
     if (G.open) {
         lw_game_end();
-        if (G.host) {
-            lobby_host_match_over(&G.host_lobby);
-            lobby_publish();
-        }
+        if (G.host && lobby_host_results_begin(&G.host_lobby)) lobby_publish();
+        /* A joiner's lobby view may still be from before the match (snapshots are not sent during it, and a newer one
+         * replaces any it missed): only one that arrives from now on tells where the host is. Snapshots arrive in
+         * order, and the host published its match phase before this match began, so none older comes after. */
+        G.view_since_end = G.host;
         G.last_queued_frame = 0;
         G.stall_frames = 0;
+    }
+    sp_unlock();
+}
+
+void group_results_press(int ready, int advance)
+{
+    sp_lock();
+    if (G.open && G.status == ST_CONNECTED) {
+        if (G.host) host_apply(lobby_host_results(&G.host_lobby, G.my_port < 0 ? 0 : G.my_port, ready, advance));
+        else { uint8_t c[LW_MAX_COMMAND]; lw_send_command(c, lobby_cmd_results(c, ready, advance)); }
+    }
+    sp_unlock();
+}
+
+void group_results_end(const unsigned char *stars, const unsigned char *handicap)
+{
+    sp_lock();
+    if (G.open && G.host) {
+        host_apply(lobby_host_results_over(&G.host_lobby, stars, handicap));
+        sp_log("group: the results are over: stars %u/%u/%u/%u", stars[0], stars[1], stars[2], stars[3]);
     }
     sp_unlock();
 }

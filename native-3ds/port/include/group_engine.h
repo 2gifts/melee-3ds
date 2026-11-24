@@ -2,8 +2,8 @@
  *
  * A group session reuses Slippi online's lockstep driver (port/engine/slippi/online.c) and its scene table
  * (online_mode.c, the GM_HANYU_CSS mode); those call the hooks below, and everything specific to group play is here.
- * In a group the scene table runs the vanilla four-door character select (the lobby), the stage select and the match,
- * then comes back to the character select. */
+ * In a group the scene table runs the vanilla four-door character select (the lobby), the stage select, the match (and a
+ * sudden death after a tie) and the results screen, then comes back to the character select. */
 #ifndef GROUP_ENGINE_H
 #define GROUP_ENGINE_H
 
@@ -19,7 +19,10 @@ void mp_group_css_exit(struct GameModeState* state, int sss_state);
 void mp_group_sss_enter(struct GameModeState* state);
 void mp_group_sss_exit(struct GameModeState* state, int css_state, int vs_state);
 void mp_group_vs_enter(struct GameModeState* state);
-void mp_group_vs_exit(struct GameModeState* state, int css_state, int sudden_state);
+void mp_group_vs_exit(struct GameModeState* state, int results_state, int sudden_state);
+void mp_group_sudden_exit(struct GameModeState* state, int results_state);
+void mp_group_results_enter(struct GameModeState* state);
+void mp_group_results_exit(struct GameModeState* state, int css_state);
 
 /* online.c's match. mp_group_check_block runs first, while `data` is still what vanilla built (the host logs where
  * its block differs from it). */
@@ -34,6 +37,18 @@ int mp_group_frame_mask(unsigned mask, int frame, int normal, int local_index, c
 /* online_hud.c: the name over port n's damage: 1 and `name` filled for a group's console, 0 for none, -1 when this is
  * not a group match (Slippi's names apply). */
 int mp_group_hud_name(int port, char* name, int size);
+
+/* The results screen patch (tools/group_edits/group_results.py, gmresultplayer.c): its state this frame, and the pads it
+ * reads instead of the real ones in a group (see group.c). */
+typedef struct MpGroupResults {
+    int stage;                 /* ResultsData.x1: 0 wait, 1 intro, 2 waiting for a press, 3 the players' panels, 4 end */
+    int panels_live;           /* the panels take Start (x0_23 == 2) */
+    unsigned char ready;       /* bit n: port n's player is ready (player_data[n].x0_0) */
+} MpGroupResults;
+struct HSD_PadStatus;
+struct MatchEnd;
+void mp_group_results_pads(const MpGroupResults* r, const struct MatchEnd* end, struct HSD_PadStatus* copy,
+                           struct HSD_PadStatus* master);
 
 /* The stage select patch (tools/group_edits/group_css.py, mnstagesel.c). */
 int mp_group_sss_remote_exit(void);  /* the stage select ended because of another console (read and clear) */
