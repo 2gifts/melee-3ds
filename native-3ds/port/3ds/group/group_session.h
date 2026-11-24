@@ -71,6 +71,7 @@ void group_lobby_set_door(int port, const MpGroupDoor *door);
 void group_lobby_start(void);
 void group_lobby_stage(int stage, int alt_stage);
 void group_lobby_back(void);
+void group_lobby_busy(int busy);
 void group_lobby_rules(const MpGroupRules *rules);
 int group_players(void);
 int group_player_name(int port, char *buf, int len);

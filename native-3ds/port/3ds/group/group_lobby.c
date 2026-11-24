@@ -81,7 +81,8 @@ int lobby_encode(const lobby_state *s, uint8_t *out, int cap)
     out[1] = s->phase;
     out[2] = s->starter;
     out[3] = s->mode;
-    out[4] = (uint8_t)((s->rules.time_mode & 1) | (s->rules.teams & 1) << 1 | (s->rules.friendly_fire & 1) << 2);
+    out[4] = (uint8_t)((s->rules.time_mode & 1) | (s->rules.teams & 1) << 1 | (s->rules.friendly_fire & 1) << 2 |
+                       (s->busy & 0xF) << 3);
     out[5] = s->rules.stocks;
     out[6] = s->rules.minutes;
     out[7] = s->rules.items;
@@ -128,6 +129,7 @@ int lobby_decode(lobby_state *s, const uint8_t *in, int len)
     s->rules.time_mode = in[4] & 1;
     s->rules.teams = (in[4] >> 1) & 1;
     s->rules.friendly_fire = (in[4] >> 2) & 1;
+    s->busy = (in[4] >> 3) & 0xF;
     s->rules.stocks = in[5];
     s->rules.minutes = in[6];
     s->rules.items = in[7];
@@ -169,6 +171,7 @@ int lobby_cmd_stage(uint8_t *out, int stage, int alt_stage)
     return 4;
 }
 int lobby_cmd_back(uint8_t *out) { out[0] = LCMD_BACK; return 1; }
+int lobby_cmd_busy(uint8_t *out, int busy) { out[0] = LCMD_BUSY; out[1] = busy ? 1 : 0; return 2; }
 
 /* ---- the host ---- */
 
@@ -224,6 +227,7 @@ int lobby_host_sync(lobby_host *h, unsigned present)
     for (int i = 0; i < LOBBY_SLOTS; ++i) {
         unsigned bit = 1u << i;
         if (!(diff & bit)) continue;
+        if (!(present & bit) && (h->st.busy & bit)) { h->st.busy &= ~bit; changed = 1; }   /* a stale bit would block Start */
         if (h->st.phase == LOBBY_MATCH) {          /* the running game owns the doors: decide when it ends */
             if (present & bit) { h->joined_in_match |= bit; h->left_in_match &= ~bit; }
             else { h->left_in_match |= bit; h->joined_in_match &= ~bit; }
@@ -248,6 +252,7 @@ int lobby_can_start(const lobby_state *s)
         teams |= 1u << (l->team % 3);
     }
     if (s->rules.teams && (teams & (teams - 1)) == 0) return 0;   /* everybody on one team */
+    if (s->busy & 0xF) return 0;                                  /* someone is in its name tag list or name entry */
     return used >= 2;
 }
 
@@ -288,6 +293,16 @@ int lobby_host_set_rules(lobby_host *h, const lobby_rules *r)
     return LOBBY_CHANGED;
 }
 
+int lobby_host_set_busy(lobby_host *h, int port, int busy)
+{
+    if (port < 0 || port >= LOBBY_SLOTS) return 0;
+    uint8_t bit = (uint8_t)(1u << port);
+    uint8_t n = busy ? (uint8_t)(h->st.busy | bit) : (uint8_t)(h->st.busy & ~bit);
+    if (n == h->st.busy) return 0;
+    h->st.busy = n;
+    return LOBBY_CHANGED;
+}
+
 int lobby_host_command(lobby_host *h, int from, const uint8_t *cmd, int len)
 {
     if (len < 1 || from < 0 || from >= LOBBY_SLOTS) return 0;
@@ -315,6 +330,9 @@ int lobby_host_command(lobby_host *h, int from, const uint8_t *cmd, int len)
         case LCMD_STAGE:
             if (len < 4) return 0;
             return lobby_host_pick_stage(h, (cmd[1] << 8) | cmd[2], cmd[3]);
+        case LCMD_BUSY:                            /* the sender's own bit only */
+            if (len < 2) return 0;
+            return lobby_host_set_busy(h, from, cmd[1]);
         case LCMD_BACK:
             if (h->st.phase != LOBBY_STAGE || h->st.stage_picked) return 0;
             h->st.phase = LOBBY_CSS;

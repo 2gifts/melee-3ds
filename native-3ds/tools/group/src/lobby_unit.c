@@ -88,6 +88,24 @@ int main(void)
     CHECK(h.st.slot[3].kind == LOBBY_CPU);
     /* Start: any console; then the first stage pick wins, a second one is ignored */
     CHECK(lobby_can_start(&h.st));
+    /* a console in its name tag list or name entry: READY waits everywhere, so Start is refused until it is back */
+    CHECK(lobby_host_command(&h, 2, cmd, lobby_cmd_busy(cmd, 1)) & LOBBY_CHANGED);
+    CHECK(h.st.busy == 0x4 && !lobby_can_start(&h.st));
+    CHECK(!lobby_host_command(&h, 1, (cmd[0] = LCMD_START, cmd), 1) && h.st.phase == LOBBY_CSS);
+    CHECK(!lobby_host_command(&h, 2, cmd, 1));                                    /* too short */
+    CHECK(lobby_encode(&h.st, blob, sizeof(blob)) > 0 && lobby_decode(&d, blob, LOBBY_BLOB_MAX) == 0 && d.busy == 0x4);
+    CHECK(lobby_host_command(&h, 2, cmd, lobby_cmd_busy(cmd, 0)) & LOBBY_CHANGED);
+    CHECK(h.st.busy == 0 && lobby_can_start(&h.st));
+    /* only the sender's own bit; a console that leaves takes its bit with it */
+    CHECK(lobby_host_command(&h, 1, cmd, lobby_cmd_busy(cmd, 1)) && h.st.busy == 0x2);
+    CHECK(!lobby_host_command(&h, 7, cmd, lobby_cmd_busy(cmd, 1)) && h.st.busy == 0x2);
+    {
+        lobby_host t = h;
+        CHECK(lobby_host_sync(&t, 0x5) & LOBBY_CHANGED);
+        CHECK(t.st.busy == 0);
+    }
+    CHECK(lobby_host_set_busy(&h, 1, 0) & LOBBY_CHANGED);
+    CHECK(lobby_can_start(&h.st));
     CHECK(lobby_host_command(&h, 1, (cmd[0] = LCMD_START, cmd), 1) & LOBBY_STAGE_REACHED);
     CHECK(h.st.phase == LOBBY_STAGE && h.st.starter == 1);
     CHECK(!door(&h, 0, 0, fighter(LOBBY_HUMAN, 3, 0)));                            /* doors are frozen at the stage select */

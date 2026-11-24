@@ -12,6 +12,9 @@ untouched. What it does to the VS character select (mncharsel.c):
     player may change; the host enforces the same rule).
   * Start no longer ends the scene: it asks the host, which answers with the stage select for everyone.
   * Rules and the Teams switch are the host's only.
+  * A console in a name tag list or name entry is busy (the lobby's busy bit): READY waits on every console and the
+    host refuses Start until it is back.
+  * A console that joined during a match watches it from a read-only CSS: its cursor moves, Back is its only action.
   * The Human/CPU/closed click ends on Human only where a console is present (a CPU elsewhere), as on a GameCube.
   * A joiner shows the host's rules: every rules read in mncharsel.c goes through mp_css_game_rules() (the banner, the
     handicap mode), and each door's handicap is the value of the console that owns it (mp_css_auto_hc, the lobby).
@@ -37,6 +40,8 @@ static int mp_css_go;             /* the host sent us to the stage select */
 static int mp_css_seen_css;       /* saw the lobby in its CSS phase since this scene began */
 static int mp_css_start_wait;
 static int mp_css_leave_asked;   /* Back is waiting for the host's answer to "End the session?" */
+static int mp_css_busy_now;      /* this console is in a name tag list or name entry (the lobby's busy bit) */
+static int mp_css_busy_wait;
 #define MP_CSS_DOOR 15     /* a door as the lobby holds it: kind, fighter, costume, team, level, chosen, tag[8], handicap */
 static u8 mp_css_last_view[4][MP_CSS_DOOR], mp_css_last_view_ok[4];
 static u8 mp_css_applied[4][MP_CSS_DOOR], mp_css_applied_ok;
@@ -182,6 +187,40 @@ u32 mp_css_trigger(int hand, f32 x, f32 y, u32 trigger)
         return trigger & HSD_PAD_A;
     }
     return 0;
+}
+
+/* READY waits while another console is in its name tag list or name entry (vanilla waits for this console's own). */
+int mp_css_busy_elsewhere(void)
+{
+    return mp_css_group() && mp_lob_ok && (mp_lob.busy & 0xF & ~(1u << mp_css_my())) != 0;
+}
+
+/* Tell the host while this console is in a name tag list or name entry; the host refuses Start until it is back.
+ * Name entry runs inside this scene (pending-scene byte 4, then 5 while it is up; 5 is also the rules page): the bit is
+ * set while a list is open or name entry begins and cleared only when the CSS is back (byte 0) with every list shut.
+ * The lobby's copy of the bit is checked every frame, so a lost command is sent again. */
+static void mp_css_busy_frame(void)
+{
+    int my = mp_css_my(), i;
+    if (mnCharSel_804D6CF6 == 0) {
+        mp_css_busy_now = 0;
+        for (i = 0; i < 4; i++) {
+            if (mnCharSel_803F0E8C[i].data != NULL && mnCharSel_803F0E8C[i].data->state != 0) {
+                mp_css_busy_now = 1;
+            }
+        }
+    } else if (mnCharSel_804D6CF6 == 4) {
+        mp_css_busy_now = 1;
+    }
+    if (mp_css_busy_wait > 0) {
+        mp_css_busy_wait--;
+        return;
+    }
+    if ((int) ((mp_lob.busy >> my) & 1) != mp_css_busy_now) {
+        OSReport("GROUPCSS busy %d (name tag list / name entry)\n", mp_css_busy_now);
+        mp_platform_group_lobby_busy(mp_css_busy_now);
+        mp_css_busy_wait = 15;
+    }
 }
 
 /* A fighter this save has not unlocked can be picked on another console. Every fighter has a fixed tile here (a "?" one,
@@ -749,6 +788,7 @@ void mp_css_group_frame(void)
     if (mp_lob.phase == 0) {
         mp_css_seen_css = 1;
     }
+    mp_css_busy_frame();
     if (mnCharSel_804D6CF6 == 0 || mnCharSel_804D6CF6 == 1) {
         mp_css_text_frame();
     }
@@ -890,7 +930,7 @@ FIXES = {
          '    f32 stick_x = loadStickValue(&HSD_PadCopyStatus[(u8) port].stickX);\n'
          '    f32 stick_y = (f32) HSD_PadCopyStatus[(u8) port].stickY;\n',
          'HSD_PadStatus* mp_css_pad(int port);\nint mp_css_remote(int door);\nint mp_css_unplugged(int door);\n'
-         'int mp_css_can_edit_rules(void);\nu32 mp_css_trigger(int hand, f32 x, f32 y, u32 trigger);\nint mp_css_start_intercept(void);\nint mp_css_back_intercept(void);\nint mp_css_hovering(int door);\nvoid mp_css_group_frame(void);\n'
+         'int mp_css_can_edit_rules(void);\nint mp_css_busy_elsewhere(void);\nu32 mp_css_trigger(int hand, f32 x, f32 y, u32 trigger);\nint mp_css_start_intercept(void);\nint mp_css_back_intercept(void);\nint mp_css_hovering(int door);\nvoid mp_css_group_frame(void);\n'
          'void mp_css_group_reset(void);\n'
          'static inline void getStickDelta(int port, f32* dx, f32* dy)\n{\n'
          '    f32 stick_x = loadStickValue(&mp_css_pad((u8) port)->stickX);\n'
@@ -944,6 +984,9 @@ FIXES = {
         ('    case 2:\n        gm_801A4B60();\n        sfxBack();\n        break;\n',
          '    case 2:\n        if (mp_css_back_intercept()) {\n            mnCharSel_804D6CF6 = 0;\n            break;\n        }\n'
          '        gm_801A4B60();\n        sfxBack();\n        break;\n', 1),
+        # READY also waits while another console is in its name tag list or name entry (the lobby's busy bits).
+        ('                if (mnCharSel_804A0BC0[i]->x5 == 1 || tag[i].data->state != 0)\n',
+         '                if (mnCharSel_804A0BC0[i]->x5 == 1 || tag[i].data->state != 0 || mp_css_busy_elsewhere())\n', 1),
         ('                if (mnCharSel_803F0DFC.doors[i].sel_icon >= 0x19) {\n                    goto hide;\n',
          '                if (mnCharSel_803F0DFC.doors[i].sel_icon >= 0x19 || mp_css_hovering(i)) {\n                    goto hide;\n', 1),
         ('        if (mnCharSel_804D6CF6 != 0) {\n            gm_801A4B60();\n            if (mnCharSel_804D6CF5 == 4) {\n',

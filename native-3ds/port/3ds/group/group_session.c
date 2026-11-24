@@ -397,6 +397,7 @@ int group_lobby_get(MpGroupLobby *out)
     out->me = (unsigned char)(G.my_port < 0 ? 0 : G.my_port);
     out->host = (unsigned char)G.host;
     out->present = (unsigned char)lw_present();
+    out->busy = v->busy;
     out->watching = (unsigned char)(G.status == ST_CONNECTED && lw_match_running() && !lw_in_match());   /* group_watching() */
     out->phase = v->phase; out->starter = v->starter; out->stage_picked = v->stage_picked; out->mode = v->mode;
     out->stage_hi = (unsigned char)(v->stage >> 8); out->stage_lo = (unsigned char)v->stage; out->alt_stage = v->alt_stage;
@@ -458,6 +459,18 @@ void group_lobby_back(void)
     sp_lock();
     if (G.open && G.status == ST_CONNECTED) {
         if (G.host) host_apply(lobby_host_command(&G.host_lobby, 0, c, n));
+        else lw_send_command(c, n);
+    }
+    sp_unlock();
+}
+
+void group_lobby_busy(int busy)
+{
+    uint8_t c[LW_MAX_COMMAND];
+    int n = lobby_cmd_busy(c, busy);
+    sp_lock();
+    if (G.open && G.status == ST_CONNECTED) {
+        if (G.host) host_apply(lobby_host_command(&G.host_lobby, G.my_port < 0 ? 0 : G.my_port, c, n));
         else lw_send_command(c, n);
     }
     sp_unlock();

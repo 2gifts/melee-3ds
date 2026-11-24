@@ -68,6 +68,8 @@ typedef struct {
     uint16_t stage;                /* the picked stage (phase STAGE once picked, and MATCH) */
     uint8_t stage_picked, alt_stage;
     uint8_t mode;                  /* 0 normal, 1 sudden death (second game of the same session) */
+    uint8_t busy;                  /* bit n: the console on port n has its name tag list open or is in name entry; READY
+                                    * is hidden everywhere and Start is refused while any bit is set */
     lobby_slot slot[LOBBY_SLOTS];
     lobby_status status;           /* the running match (host: lobby_host_set_status), at the end of the blob */
 } lobby_state;
@@ -77,11 +79,12 @@ int lobby_encode(const lobby_state *s, uint8_t *out, int cap);          /* bytes
 int lobby_decode(lobby_state *s, const uint8_t *in, int len);           /* 0 ok, -1 not a lobby blob */
 
 /* A console's commands to the host. Each returns its length. */
-enum { LCMD_DOOR = 1, LCMD_START = 2, LCMD_STAGE = 3, LCMD_BACK = 4 };
+enum { LCMD_DOOR = 1, LCMD_START = 2, LCMD_STAGE = 3, LCMD_BACK = 4, LCMD_BUSY = 5 };
 int lobby_cmd_door(uint8_t *out, int slot, const lobby_slot *s);       /* set door `slot` (any console may edit any door) */
 int lobby_cmd_start(uint8_t *out);                                      /* Start from the CSS: go to the stage select */
 int lobby_cmd_stage(uint8_t *out, int stage, int alt_stage);            /* a stage pick */
 int lobby_cmd_back(uint8_t *out);                                       /* B at the stage select: back to the CSS */
+int lobby_cmd_busy(uint8_t *out, int busy);                             /* the sender's name tag list / name entry */
 
 /* ---- the host ---- */
 typedef struct {
@@ -107,12 +110,13 @@ int lobby_host_set_door(lobby_host *h, int slot, const lobby_slot *s);       /* 
 int lobby_host_start(lobby_host *h, int from);                               /* the host's own Start press */
 int lobby_host_pick_stage(lobby_host *h, int stage, int alt_stage);          /* the host's own stage pick */
 int lobby_host_set_rules(lobby_host *h, const lobby_rules *r);      /* the host changed the rules */
+int lobby_host_set_busy(lobby_host *h, int port, int busy);                  /* a console's busy bit (its own only) */
 void lobby_host_match_began(lobby_host *h);                                  /* phase MATCH; call after lw_host_start */
 int lobby_host_set_status(lobby_host *h, const lobby_status *st);            /* the running match's status; LOBBY_CHANGED if it differs */
 int lobby_host_match_over(lobby_host *h);                                    /* phase CSS again; applies waiting joins/leaves */
 
-/* Can Start take the lobby to the stage select? at least two doors in use and a fighter in every one, and with Teams
- * at least two different teams (as vanilla's READY overlay asks). */
+/* Can Start take the lobby to the stage select? at least two doors in use and a fighter in every one, with Teams at
+ * least two different teams (as vanilla's READY overlay asks), and no console busy in its name tag list or name entry. */
 int lobby_can_start(const lobby_state *s);
 
 /* ---- the match ---- */
