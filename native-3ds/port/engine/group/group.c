@@ -205,6 +205,42 @@ char* mp_group_tag_text(int slot)
     return GetNameText(Player_GetNametagSlotID(slot));
 }
 
+/* The host's check of its own block against vanilla: the scene ran gmVsMelee_EnterVs from the host's VS data (its
+ * rules menu, and doors mirrored from the lobby), so `vanilla` is what a Solo VS match would start with. The rules
+ * bytes the block carries (0..0x37: kind, timer, stock flag, items, item mask, damage ratio, pause...) and each used
+ * door's stocks and handicap must equal it; a difference is logged, byte by byte. Not run for a sudden death, which
+ * vanilla sets up differently. */
+void mp_group_check_block(const StartMeleeData* vanilla, const unsigned char* block)
+{
+    static const unsigned char player_bytes[] = { 2, 8, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F };
+    const unsigned char* v = (const unsigned char*) vanilla;
+    int i, k, diffs = 0;
+    if ((block[0x13C] & 3) != 0 || block[0x13F] != 0) {
+        return;   /* joiners have no vanilla copy of the host's rules; a sudden death is not built from the rules */
+    }
+    for (i = 0; i < 0x38; i++) {
+        if (i == 0xE || i == 0xF || v[i] == block[i]) {
+            continue;   /* the stage: the lobby's first pick, which this console's stage select may not have made */
+        }
+        logf_("Group: rules byte 0x%02x differs from vanilla (vanilla/block %04x)\n", i, v[i] << 8 | block[i]);
+        diffs++;
+    }
+    for (i = 0; i < 4; i++) {
+        const unsigned char* p = block + 0x60 + 0x24 * i;
+        if (p[1] == 3) {
+            continue;   /* no player on this port */
+        }
+        for (k = 0; k < (int) sizeof player_bytes; k++) {
+            int at = 0x60 + 0x24 * i + player_bytes[k];
+            if (v[at] != block[at]) {
+                logf_("Group: player byte 0x%03x differs from vanilla (vanilla/block %04x)\n", at, v[at] << 8 | block[at]);
+                diffs++;
+            }
+        }
+    }
+    logf_("Group: the match block's rules checked against vanilla: %d differences\n", diffs, 0);
+}
+
 void mp_group_match_begin(StartMeleeData* data, int local_index, const unsigned char* block)
 {
     MpGroupLobby lobby;

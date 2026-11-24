@@ -306,6 +306,10 @@ int lobby_host_set_busy(lobby_host *h, int port, int busy)
 int lobby_host_command(lobby_host *h, int from, const uint8_t *cmd, int len)
 {
     if (len < 1 || from < 0 || from >= LOBBY_SLOTS) return 0;
+    /* Only a console this lobby has seen arrive (lobby_host_sync) may act. A command can still be queued from a
+     * console that has since left, or that sits on a port whose arrival is not applied yet: acting on it would edit a
+     * door on behalf of a console that is not there (a left console's door already turned into a CPU, say). */
+    if (!(h->present & (1u << from))) return 0;
     switch (cmd[0]) {
         case LCMD_DOOR: {
             if (len < 17) return 0;

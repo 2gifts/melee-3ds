@@ -21,7 +21,9 @@ void mp_group_sss_exit(struct GameModeState* state, int css_state, int vs_state)
 void mp_group_vs_enter(struct GameModeState* state);
 void mp_group_vs_exit(struct GameModeState* state, int css_state, int sudden_state);
 
-/* online.c's match. */
+/* online.c's match. mp_group_check_block runs first, while `data` is still what vanilla built (the host logs where
+ * its block differs from it). */
+void mp_group_check_block(const struct StartMeleeData* vanilla, const unsigned char* block);
 void mp_group_match_begin(struct StartMeleeData* data, int local_index, const unsigned char* block);
 void mp_group_match_exit(void);
 /* Each frame's CPU mask from the host's bundle (bit n: port n's input is not coming). A port that was Human in the

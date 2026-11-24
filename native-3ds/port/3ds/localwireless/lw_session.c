@@ -226,6 +226,20 @@ static int signal_level(uint64_t age)
     return age <= 300000ull ? 3 : age <= 700000ull ? 2 : age <= 1500000ull ? 1 : 0;
 }
 
+/* Forget the commands a port's console queued and the game has not read yet: commands are filed by port, so once that
+ * console has gone they would otherwise count as the next console's on the same port. */
+static void drop_commands_of(int idx)
+{
+    int kept = 0;
+    for (int k = 0; k < S.hcmd_count; ++k) {
+        int at = (S.hcmd_head + k) % HOST_CMD_RING;
+        if (S.hcmd[at].from == idx) continue;
+        int to = (S.hcmd_head + kept++) % HOST_CMD_RING;
+        if (to != at) S.hcmd[to] = S.hcmd[at];
+    }
+    S.hcmd_count = kept;
+}
+
 /* Consoles that arrived on or left the link join or leave the roster. */
 static void host_sync_roster(uint64_t now)
 {
@@ -241,6 +255,7 @@ static void host_sync_roster(uint64_t now)
         S.present &= ~(1u << i);
         p->present = 0;
         p->name[0] = 0;
+        drop_commands_of(i);
         lobby_bump();
         lw_platform_log("lw: port %d (node %d) left the lobby", i + 1, p->node);
     }

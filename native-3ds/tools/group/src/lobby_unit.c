@@ -48,6 +48,14 @@ int main(void)
     lobby_host_command(&h, 0, cmd, 17);
     CHECK(h.st.slot[1].kind == LOBBY_EMPTY && h.st.slot[1].fighter == 0 && h.st.slot[1].handicap == 0);
     CHECK(!lobby_host_command(&h, 7, cmd, 17));
+    /* a console the lobby has not seen arrive (or that has left) cannot act: no door edit, Start or busy bit */
+    {
+        lobby_slot open = fighter(LOBBY_HUMAN, 0, 0);
+        open.chosen = 0;
+        CHECK(!door(&h, 1, 1, open) && h.st.slot[1].kind == LOBBY_EMPTY);
+        CHECK(!door(&h, 1, 2, fighter(LOBBY_EMPTY, 0, 0)) && h.st.slot[2].kind == LOBBY_CPU);
+        CHECK(!lobby_host_command(&h, 1, cmd, lobby_cmd_busy(cmd, 1)) && h.st.busy == 0);
+    }
 
     /* a console joins port 2 (index 1): joining opens no door; its CSS opens it with an edit, as a player would */
     CHECK(lobby_host_sync(&h, 0x3) == 0 && h.st.slot[1].kind == LOBBY_EMPTY);
@@ -190,6 +198,10 @@ int main(void)
     h.st.phase = LOBBY_STAGE; h.st.stage_picked = 0; h.st.starter = 1;
     CHECK(lobby_host_sync(&h, 0x5) & LOBBY_CHANGED);                               /* the starter left */
     CHECK(h.st.phase == LOBBY_CSS && h.st.slot[1].kind == LOBBY_CPU);              /* ...its Human door plays on as a CPU */
+    {   /* a door edit it queued before leaving is not applied over that CPU */
+        lobby_slot late = fighter(LOBBY_HUMAN, 0x0C, 2);
+        CHECK(!door(&h, 1, 1, late) && h.st.slot[1].kind == LOBBY_CPU);
+    }
 
     /* ...and in a match: joins and leaves wait for the end */
     h.st.slot[1] = fighter(LOBBY_EMPTY, 0, 0); h.st.slot[1].chosen = 0;

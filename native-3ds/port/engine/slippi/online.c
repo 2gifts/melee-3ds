@@ -820,6 +820,9 @@ void mp_slippi_online_start_melee(StartMeleeData* data)
         return;
     }
     on.pending = 0;
+    if (mp_platform_group_players() > 0) {
+        mp_group_check_block(data, on.block);
+    }
     memcpy(data, on.block, BLOCK_SIZE);
     memset((u8*) data + 0x38, 0, 0x5C - 0x38);
     on.rng_offset = be32(on.block + BLOCK_SIZE);
