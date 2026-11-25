@@ -33,7 +33,7 @@ from group_menu_test import CPAD_RIGHT, CPAD_UP, KEY_A, KEY_B, KEY_START, KEY_UP
 from group_results_test import CPAD_DOWN, CPAD_LEFT, FOX_TILE, RULES, Console, DIALOG_YES  # noqa: E402
 
 LINK_PORT = 44170
-FIGHTERS, FIGHTERS_LEN = 0x1898 + 0x6C4, 0x1760 - 0x6C4   # gmm_x0.thing.x1F2C: every fighter's VS Records
+FIGHTERS, FIGHTERS_LEN = 0x1868 + 0x6C4, 0x1760 - 0x6C4   # gmm_x0.thing (at 0x1868 in this build, not the 0x1898 types.h says) + 0x6C4: every fighter's VS Records
 
 
 def default(name):

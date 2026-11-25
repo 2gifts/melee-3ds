@@ -35,7 +35,7 @@ from group_menu_test import CPAD_RIGHT, CPAD_UP, KEY_A, KEY_B, KEY_START, KEY_UP
 from group_results_test import CPAD_DOWN, CPAD_LEFT, FOX_TILE, RULES, Console, DIALOG_YES  # noqa: E402
 
 LINK_PORT = 44180
-THING = 0x1898                     # gmm_x0.thing (struct gmm_x1868): unk_8.x0 and unk_28.x0 are the VS match counters
+THING = 0x1868                     # gmm_x0.thing (struct gmm_x1868; types.h says 0x1898, the build has 0x1868): unk_8.x0 and unk_28.x0 are the VS match counters
 RANDOM_ICON = 29                   # mnStageSel_804D6CAE: the Random icon
 RECORD = re.compile(r'p(\d) f(\d+) m(\d+) w(\d+) l(\d+) t(\d+) tp(\d+) tk(\d+);')
 
@@ -189,9 +189,11 @@ def main():
             c.stub.press(CPAD_UP, 6, 4)
             c.stub.press(KEY_A, 4, 60)
 
-    def to_panels(c, n):
+    def to_panels(c):
+        def at_panels():                                     # this results screen only: earlier ones logged step 3 too
+            return 'Group: results step 3' in c.log().rpartition('Group: the results screen')[2]
         end = time.monotonic() + 240
-        while time.monotonic() < end and c.log().count('Group: results step 3') < n:
+        while time.monotonic() < end and not at_panels():
             c.stub.press(KEY_A, 4, 30)
         c.stub.until_frames(60)
         c.stub.press(KEY_START, 4, 30)
@@ -257,8 +259,8 @@ def main():
         for c in (a, b):
             wait_log(c, 'Group: the results screen', f'match 1 over: {c.name}\'s results screen', 900)
         a.stub.poke('mp_test_keys', 0)
-        to_panels(a, 1)
-        to_panels(b, 1)
+        to_panels(a)
+        to_panels(b)
         for c in (a, b):
             wait_log(c, 'Group: VS Records after', f'{c.name}: VS Records written', 120)
         ra0, ra1, rb0, rb1 = records(a, 'before'), records(a, 'after'), records(b, 'before'), records(b, 'after')
@@ -290,6 +292,9 @@ def main():
         for c in (a, b):
             c.stub.write(base + THING + 0x08, struct.pack('>I', 99))
             c.stub.write(base + THING + 0x28, struct.pack('>I', 99))
+            counters = (c.stub.read(base + THING + 0x08, 4), c.stub.read(base + THING + 0x28, 4))
+            check(f'{c.name}: both VS match counters read back 99', counters == (struct.pack('>I', 99),) * 2,
+                  f'read {counters[0].hex()} {counters[1].hex()}')
         pick_stage(a, 1)
         wait_log(a, 'group: starting a match', 'match 2: A picks and the host starts it', 120, 2)
         for c in (a, b):
@@ -299,8 +304,8 @@ def main():
         for c in (a, b):
             wait_log(c, 'Group: the results screen', f'match 2 over: {c.name}\'s results screen', 900, 2)
         b.stub.poke('mp_test_keys', 0)
-        to_panels(a, 2)
-        to_panels(b, 2)
+        to_panels(a)
+        to_panels(b)
         for c in (a, b):
             wait_log(c, 'Group: the prize screen', f'match 2: {c.name}\'s prize screen (the 100th VS match)', 240, 2)
         wait_scene(a, 8, 'A back on the character select, B still on its prize screen', 240, True, KEY_A)
