@@ -11,7 +11,7 @@
 #define LW_LINK_FAILED (-1)
 #define LW_LINK_HOST_NODE 1
 #define LW_LINK_MAX_NODE 16   /* node ids are 1..16 (UDS_MAXNODES); nodes() has bit n-1 for node n */
-#define LW_LINK_NAME_MAX 12
+#define LW_LINK_NAME_MAX 32   /* LW_NAME_MAX */
 #define LW_LINK_APPDATA_MAX 200   /* a UDS beacon carries up to 0xC8 bytes of application data */
 
 typedef struct {

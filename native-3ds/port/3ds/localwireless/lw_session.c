@@ -25,12 +25,14 @@
 #include "localwireless.h"
 #include "lw_link.h"
 #include "lw_platform.h"
+#include "../name_text.h"
 #include <limits.h>
 #include <stdio.h>
 #include <string.h>
 
 enum { MSG_PAD = 0x10, MSG_PAD_ACK = 0x11, MSG_BUNDLE = 0x13, MSG_BUNDLE_ACK = 0x14, MSG_START = 0x15, MSG_KEEPALIVE = 0x16,
-       MSG_LOBBY = 0x18, MSG_LOBBY_ACK = 0x19, MSG_CMD = 0x1A, MSG_CMD_ACK = 0x1B, MSG_MENU = 0x1C, MSG_MENU_ALL = 0x1D };
+       MSG_LOBBY = 0x18, MSG_LOBBY_ACK = 0x19, MSG_CMD = 0x1A, MSG_CMD_ACK = 0x1B, MSG_MENU = 0x1C, MSG_MENU_ALL = 0x1D,
+       MSG_LOBBY2 = 0x1E };   /* MSG_LOBBY with 32-byte names (Phase 6); MSG_LOBBY (12-byte names) is no longer sent */
 
 #define RING 512                 /* frames kept per player / bundles (power of two) */
 #define LOCAL_RING 256
@@ -40,7 +42,9 @@ enum { MSG_PAD = 0x10, MSG_PAD_ACK = 0x11, MSG_BUNDLE = 0x13, MSG_BUNDLE_ACK = 0
 #define RESEND_US 200000ull
 #define KEEPALIVE_US 100000ull
 #define BUNDLE_HEADER 15
-#define LOBBY_HEADER 61
+#define LOBBY_NAME 32                   /* bytes per name in the lobby header (LW_NAME_MAX), 31 used */
+#define LOBBY_LEN_AT (12 + 4 * LOBBY_NAME)   /* the blob's length */
+#define LOBBY_HEADER (LOBBY_LEN_AT + 1)
 #define CMD_RING 8               /* client: queued commands */
 #define HOST_CMD_RING 32         /* host: commands not yet read by the game */
 #define CMD_RESEND_US 100000ull
@@ -388,7 +392,7 @@ static void send_lobby(int idx, uint64_t now)
 {
     player_t *p = &S.pl[idx];
     uint8_t pkt[LOBBY_HEADER + LW_MAX_LOBBY];
-    pkt[0] = MSG_LOBBY;
+    pkt[0] = MSG_LOBBY2;
     pkt[1] = S.lob_seq;
     pkt[2] = (uint8_t)(S.match_active ? 1 : 0);
     pkt[3] = (uint8_t)S.present;
@@ -396,10 +400,10 @@ static void send_lobby(int idx, uint64_t now)
         int here = (S.present >> k) & 1;
         pkt[4 + k] = S.lob_signal[k];
         pkt[8 + k] = here ? (uint8_t)S.pl[k].node : 0;
-        memset(pkt + 12 + k * 12, 0, 12);
-        if (here) memcpy(pkt + 12 + k * 12, S.pl[k].name, 11);
+        memset(pkt + 12 + k * LOBBY_NAME, 0, LOBBY_NAME);
+        if (here) memcpy(pkt + 12 + k * LOBBY_NAME, S.pl[k].name, strlen(S.pl[k].name)   /* at most 31: LW_NAME_MAX */);
     }
-    pkt[60] = (uint8_t)S.lob_len;
+    pkt[LOBBY_LEN_AT] = (uint8_t)S.lob_len;
     memcpy(pkt + LOBBY_HEADER, S.lob_blob, (size_t)S.lob_len);
     send_to(p->node, pkt, (size_t)(LOBBY_HEADER + S.lob_len));
     p->lobby_us = now;
@@ -765,7 +769,7 @@ static void on_pad(int idx, const uint8_t *d, size_t len)
 
 static void on_lobby(const uint8_t *d, size_t len)
 {
-    if (len < LOBBY_HEADER || d[60] > LW_MAX_LOBBY || len < (size_t)(LOBBY_HEADER + d[60])) return;
+    if (len < LOBBY_HEADER || d[LOBBY_LEN_AT] > LW_MAX_LOBBY || len < (size_t)(LOBBY_HEADER + d[LOBBY_LEN_AT])) return;
     int me = LINK(my_node, ()), idx = -1;
     unsigned present = d[3] & 0xF;
     for (int k = 1; k < LW_MAX_PLAYERS; ++k)
@@ -783,13 +787,15 @@ static void on_lobby(const uint8_t *d, size_t len)
     for (int k = 0; k < 4; ++k) {
         S.lob_signal[k] = d[4 + k];
         S.pl[k].node = d[8 + k];
-        memcpy(S.pl[k].name, d + 12 + k * 12, 11);
-        S.pl[k].name[11] = 0;
+        char got[LOBBY_NAME];
+        memcpy(got, d + 12 + k * LOBBY_NAME, LOBBY_NAME - 1);
+        got[LOBBY_NAME - 1] = 0;
+        name_clean(got, S.pl[k].name, sizeof(S.pl[k].name), NAME_MAX_CHARS);   /* never invalid UTF-8 in the roster */
         S.pl[k].present = (present >> k) & 1;
     }
     S.players = top_of(present);
-    S.lob_len = d[60];
-    memcpy(S.lob_blob, d + LOBBY_HEADER, d[60]);
+    S.lob_len = d[LOBBY_LEN_AT];
+    memcpy(S.lob_blob, d + LOBBY_HEADER, d[LOBBY_LEN_AT]);
     ++S.lob_version;
     if (S.status != LW_CONNECTED) {
         S.my_idx = idx;
@@ -862,7 +868,7 @@ static void on_data(const uint8_t *d, size_t len, int from)
     if (from != LW_LINK_HOST_NODE) return;
     S.host_heard_us = now;
     switch (d[0]) {
-        case MSG_LOBBY: on_lobby(d, len); break;
+        case MSG_LOBBY2: on_lobby(d, len); break;
         case MSG_CMD_ACK: on_cmd_ack(d, len); break;
         case MSG_START: on_start(d, len); break;
         case MSG_BUNDLE: on_bundle(d, len); break;

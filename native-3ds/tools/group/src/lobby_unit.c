@@ -458,6 +458,57 @@ int main(void)
         CHECK(lobby_host_command(&u, 2, old, 2) && u.st.in_use == 0);
     }
 
+    /* Phase 6, step 5: the match status carries each port's live fighter (Zelda <-> Sheik), and the blob still fits */
+    {
+        lobby_host u;
+        lobby_state x;
+        uint8_t b[LOBBY_BLOB_MAX];
+        lobby_status st;
+        lobby_host_init(&u, 0x3);
+        lobby_host_match_began(&u, 0);
+        memset(&st, 0, sizeof(st));
+        st.timer = 1; st.seconds = 90;
+        st.port[0].kind = 0; st.port[0].stocks = 3; st.port[0].damage = 42; st.port[0].fighter = 18; st.port[0].costume = 2;
+        st.port[1].kind = 1; st.port[1].stocks = 4; st.port[1].fighter = 2; st.port[1].costume = 1;
+        st.port[2].kind = st.port[3].kind = 3;
+        CHECK(lobby_host_set_status(&u, &st) & LOBBY_CHANGED);
+        CHECK(lobby_host_set_status(&u, &st) == 0);
+        st.port[0].fighter = 19;                                                          /* Zelda transforms */
+        CHECK(lobby_host_set_status(&u, &st) & LOBBY_CHANGED);
+        u.st.in_use = 0xF; u.st.busy = 0xF; u.st.played = 0xF; u.st.ready = 0xF; u.st.advance = 2;
+        for (int i = 0; i < 4; ++i) { u.st.slot[i] = fighter(LOBBY_HUMAN, 0x19, 5); memset(u.st.slot[i].tag, 0x82, 8); u.st.stars[i] = 99; }
+        int n = lobby_encode(&u.st, b, sizeof(b));
+        CHECK(n > 0 && n <= LOBBY_BLOB_MAX);
+        printf("lobby_unit: the lobby blob is %d of %d bytes\n", n, LOBBY_BLOB_MAX);
+        CHECK(lobby_decode(&x, b, n) == 0 && x.status.valid && x.status.port[0].fighter == 19 && x.status.port[0].costume == 2 &&
+              x.status.port[1].fighter == 2 && x.status.port[1].costume == 1 && x.status.port[0].damage == 42 &&
+              x.status.seconds == 90 && x.in_use == 0xF && x.played == 0xF && x.stars[3] == 99);
+        b[0] = 0x4C;                                                                      /* the blob of an older build */
+        CHECK(lobby_decode(&x, b, n) == -1);
+    }
+
+    /* Phase 6, step 7: why a console is busy */
+    {
+        lobby_host u;
+        lobby_state x;
+        uint8_t b[LOBBY_BLOB_MAX];
+        lobby_host_init(&u, 0xF);
+        for (int code = 0; code <= LOBBY_BUSY_NAMING; ++code) {
+            busy_cmd(&u, 2, code, 0);
+            CHECK(u.st.busy_why[2] == code && ((u.st.busy >> 2) & 1) == (code != 0));
+            int n = lobby_encode(&u.st, b, sizeof(b));
+            CHECK(lobby_decode(&x, b, n) == 0 && x.busy_why[2] == code && ((x.busy >> 2) & 1) == (code != 0));
+        }
+        CHECK(busy_cmd(&u, 1, 9, 0) && u.st.busy_why[1] == LOBBY_BUSY_SLIDER && (u.st.busy & 0x2));   /* unknown: 1 */
+        CHECK(busy_cmd(&u, 3, LOBBY_BUSY_TAGS, 0) && busy_cmd(&u, 3, LOBBY_BUSY_NAMING, 0) && u.st.busy_why[3] == LOBBY_BUSY_NAMING);
+        CHECK(!lobby_can_start(&u.st));                                                   /* busy: no Start, as before */
+        CHECK(lobby_host_sync(&u, 0x7) & LOBBY_CHANGED);                                   /* port 3 leaves */
+        CHECK(u.st.busy_why[3] == 0 && !(u.st.busy & 0x8) && u.st.busy_why[1] == LOBBY_BUSY_SLIDER);
+        CHECK(busy_cmd(&u, 1, 0, 0) && !(u.st.busy & 0x2) && u.st.busy_why[1] == 0);
+        uint8_t old[2] = {LCMD_BUSY, 1};                                                  /* an older console's command */
+        CHECK(lobby_host_command(&u, 2, old, 2) && u.st.busy_why[2] == LOBBY_BUSY_SLIDER);
+    }
+
     printf("lobby_unit: ok\n");
     return 0;
 }

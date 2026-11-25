@@ -14,6 +14,7 @@
  */
 #include "slippi_ui.h"
 #include "slippi_internal.h"
+#include "../name_text.h"   /* names in the game's font */
 #include <3ds.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -898,9 +899,16 @@ static void sis(char *out, int len, const char *in)
             continue;
         }
         if (c >= 0x80) {
-            /* UTF-8 sequence: one full-width '?' for the whole character. */
-            while ((in[1] & 0xC0) == 0x80) in++;
-            w = 0x8148;
+            /* A UTF-8 character: its glyph in the game's font (kana, some kanji), a folded letter (é -> e), or a
+             * full-width "？" (port/3ds/name_text.c). */
+            const char *at = in;
+            char b[8];
+            int k = name_char_to_game(name_utf8_next(&at), b);
+            in = at - 1;
+            if (n + k + 1 > len) break;
+            memcpy(out + n, b, (size_t) k);
+            n += k;
+            continue;
         } else {
             for (i = 0; i < sizeof wide / sizeof wide[0]; i++)
                 if (wide[i].c == (char) c) w = wide[i].sjis;

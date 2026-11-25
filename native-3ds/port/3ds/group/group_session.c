@@ -5,11 +5,17 @@
 #include "group_bridge.h"
 #include "localwireless.h"
 #include "lw_platform.h"
+#include "../name_text.h"
 #include "slippi_plat.h"   /* the port's platform layer (time, lock, thread, log, data folder); nothing else of Slippi */
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef __3DS__
+#include <3ds.h>                 /* frd (the Mii name), cfgu (the system name) */
+#elif !defined(_WIN32)
+#include <unistd.h>              /* gethostname */
+#endif
 
 /* What the localwireless module needs from its host project. */
 uint64_t lw_platform_time_us(void) { return sp_time_us(); }
@@ -108,8 +114,73 @@ void group_config_load(group_config *c)
     c->net_thread_core = group_ini_int(s, "net_thread_core", -2);
     c->auto_players = group_ini_int(s, "auto_players", 2);
     c->test_wireless_off = group_ini_int(s, "test_wireless_off", 0);
-    group_ini_str(s, "name", c->name, sizeof(c->name));
+    c->test_screen_name_fail = group_ini_int(s, "test_screen_name_fail", 0);
+    {
+        char raw[64];
+        group_ini_str(s, "test_screen_name", raw, sizeof(raw));
+        name_clean(raw, c->test_screen_name, sizeof(c->test_screen_name), NAME_MAX_CHARS);
+    }
+    {
+        char raw[64];
+        group_ini_str(s, "name", raw, sizeof(raw));
+        name_clean(raw, c->name, sizeof(c->name), NAME_MAX_CHARS);
+    }
     free(t);
+}
+
+/* ---- this console's name ---- */
+
+/* The Mii name (the friend list's screen name). 1 with a name, 0 when there is none or the call failed. */
+static int mii_name(const group_config *c, char *out, int cap)
+{
+    out[0] = 0;
+    if (c->test_screen_name_fail) return 0;
+    if (c->test_screen_name[0]) { snprintf(out, (size_t)cap, "%s", c->test_screen_name); return 1; }
+#ifdef __3DS__
+    MiiScreenName n;
+    memset(n, 0, sizeof(n));
+    if (R_FAILED(frdInit(true))) return 0;
+    Result r = FRD_GetMyScreenName(&n);
+    frdExit();
+    if (R_FAILED(r)) return 0;
+    return name_from_utf16(n, NAME_MAX_CHARS, out, cap, NAME_MAX_CHARS) > 0;
+#else
+    return 0;                                     /* the PC tools have no Friends service */
+#endif
+}
+
+/* The system's user name (3DS: the config block 0x000A0000; PC: the host name). */
+static int system_name(char *out, int cap)
+{
+    out[0] = 0;
+#ifdef __3DS__
+    u16 blk[14];
+    memset(blk, 0, sizeof(blk));
+    if (R_FAILED(cfguInit())) return 0;
+    Result r = CFGU_GetConfigInfoBlk2(0x1C, 0x000A0000, blk);
+    cfguExit();
+    if (R_FAILED(r)) return 0;
+    return name_from_utf16(blk, NAME_MAX_CHARS, out, cap, NAME_MAX_CHARS) > 0;
+#elif defined(_WIN32)
+    return 0;
+#else
+    char h[256];
+    if (gethostname(h, sizeof(h)) != 0) return 0;
+    h[sizeof(h) - 1] = 0;
+    return name_clean(h, out, cap, NAME_MAX_CHARS) > 0;
+#endif
+}
+
+/* This console's name, the first of: group.ini name= (tests), the Mii name, the system name, "3DS". Both links show the
+ * same one (UDS: in the node info; the loopback link: in its handshake). */
+static void pick_name(const group_config *c, char *out, int cap)
+{
+    const char *from;
+    if (c->name[0]) { snprintf(out, (size_t)cap, "%s", c->name); from = "ini"; }
+    else if (mii_name(c, out, cap)) from = "Mii";
+    else if (system_name(out, cap)) from = "system";
+    else { snprintf(out, (size_t)cap, "3DS"); from = "default"; }
+    sp_log("group: name from %s \"%s\"", from, out);
 }
 
 /* ---- the lobby (lock held) ---- */
@@ -312,7 +383,7 @@ int group_session_start(int host, int automatic)
     c.port = G.cfg.port;
     c.test_drop_pct = G.cfg.drop_pct;
     c.test_wireless_off = G.cfg.test_wireless_off;
-    memcpy(c.name, G.cfg.name, sizeof(c.name));
+    pick_name(&G.cfg, c.name, sizeof(c.name));
     if (host) lobby_host_init(&G.host_lobby, 1);
     sp_log("group: %s (delay %d)", host ? "hosting a game" : "looking for games", G.cfg.delay);
     if (lw_open(&c, err, sizeof(err)) != 0) {
@@ -472,6 +543,7 @@ int group_lobby_get(MpGroupLobby *out)
     out->present = (unsigned char)lw_present();
     out->busy = v->busy;
     out->in_use = v->in_use;
+    memcpy(out->busy_why, v->busy_why, sizeof(out->busy_why));
     out->watching = (unsigned char)watching_locked();
     out->played = v->played; out->ready = v->ready; out->advance = v->advance;
     out->since_end = (unsigned char)(G.host || G.view_since_end);
@@ -544,7 +616,7 @@ void group_lobby_back(void)
 void group_lobby_busy(int busy)
 {
     uint8_t c[LW_MAX_COMMAND];
-    int n = lobby_cmd_busy(c, busy & 1, (busy >> 4) & 0xF);   /* bit 0: busy; bits 4..7: the doors in use */
+    int n = lobby_cmd_busy(c, busy & 0xF, (busy >> 4) & 0xF);   /* bits 0..3: why (LOBBY_BUSY_*); 4..7: the doors in use */
     sp_lock();
     if (G.open && G.status == ST_CONNECTED) {
         if (G.host) host_apply(lobby_host_command(&G.host_lobby, G.my_port < 0 ? 0 : G.my_port, c, n));

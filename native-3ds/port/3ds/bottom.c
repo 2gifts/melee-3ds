@@ -79,7 +79,9 @@ void mp_native_bottom_frame(unsigned fps,unsigned expanded,unsigned rate,unsigne
         st.timer=state.timer?1:0;st.seconds=(uint16_t)(state.seconds>65535?65535:state.seconds);
         for(unsigned i=0;i<4;++i){const MPBottomPlayer* p=&state.players[i];
             st.port[i].kind=(uint8_t)(p->kind>3?3:p->kind);st.port[i].stocks=(uint8_t)(p->stocks>255?255:p->stocks);
-            st.port[i].damage=(uint16_t)(p->damage>999?999:p->damage);}
+            st.port[i].damage=(uint16_t)(p->damage>999?999:p->damage);
+            /* the fighter shown now: the snapshot says Sheik (19) while Zelda is transformed */
+            st.port[i].fighter=(uint8_t)(p->character<26?p->character:0);st.port[i].costume=(uint8_t)(p->costume<6?p->costume:0);}
         group_match_status(&st);
     }
     /* Reuse the HUD snapshot instead of traversing fighter objects again.

@@ -5,7 +5,9 @@ the Host / Join page. The emulated 3DS joins that game from the list while the m
 must: land on the lobby's character select, show the bottom-screen "Match in progress" page (screenshots), not take
 part in the match, keep its CSS read-only (A, B, Start and the stick send nothing) with no READY although the host's
 door and its CPU have fighters, see the lobby come back when the match ends (the host's door mirrored, READY back), and
-leave with Back.
+leave with Back. Phase 6: the host plays Zelda and transforms halfway (its match status says Sheik from then on,
+test_zelda=1): the Match in progress page's badge for the host shows Zelda's stock icon, then Sheik's within a few
+seconds (mp_group_badge_drawn: the fighter each badge last drew, + 1).
 
     docker/emu-test.sh run tools/group/group_late_test.py [--match-seconds 60]
 Results: $MELEE_TEST_OUT/group-late/ (PNGs, game.log, the PC host's log)."""
@@ -52,7 +54,7 @@ def main():
     pc.mkdir()
     (pc / 'group.ini').write_text('\n'.join([
         'role=host', 'udp=1', f'port={LINK_PORT}', 'delay=2', 'timeout_ms=15000', 'test_players=1', 'test_games=1',
-        f'test_frames={args.match_seconds * 60}', 'test_linger_ms=150000', '']) + '\n')
+        f'test_frames={args.match_seconds * 60}', 'test_linger_ms=150000', 'test_zelda=1', '']) + '\n')
     stub = Stub(emu.elf_symbols(args.elf))
     css = Css(stub)
     proc = emu.launch(home, Path(args.dsx).resolve(), hidden=not args.show)
@@ -133,6 +135,12 @@ def main():
         stub.until_frames(240)
         capture('03-match-in-progress-later')
         check('this console takes no part in the running match', 'group: match block' not in log_text())
+
+        def badge(port):
+            return int.from_bytes(stub.peek('mp_group_badge_drawn', 8)[2 * port:2 * port + 2], 'little') - 1
+        zelda = badge(0)
+        check('the host\'s badge on the Match in progress page is Zelda (18) before she transforms',
+              zelda == 18 or 'Zelda becomes Sheik' in pc_text(), f'badge fighter {zelda}')
         # Read-only while watching: a door click, a puck grab, Start: nothing reaches the lobby; READY never shows.
         mark = len(log_text())
         ready_seen = 0
@@ -148,6 +156,12 @@ def main():
         check('no READY on the watching CSS (the host and its CPU have fighters)', ready_seen == 0, f'READY seen {ready_seen} times')
         check('still watching after those presses', 'group: no match in progress here any more' not in log_text()
               and 'group: left the lobby' not in log_text())
+        wait_text(pc_text, 'Zelda becomes Sheik', 'the host\'s Zelda transforms halfway', args.match_seconds + 60)
+        end = time.monotonic() + 20
+        while time.monotonic() < end and badge(0) != 19:
+            time.sleep(0.25)
+        check('the badge follows: Sheik (19) within a few seconds of the transform', badge(0) == 19, f'badge fighter {badge(0)}')
+        capture('03b-match-in-progress-sheik')
         wait_text(log_text, 'group: no match in progress here any more', 'the page goes when the match ends',
                   args.match_seconds + 60)
         wait_text(log_text, 'GROUPCSS apply door 0', 'the lobby is back: the host\'s door is mirrored', 60)

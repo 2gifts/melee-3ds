@@ -70,6 +70,7 @@ typedef struct MpGroupLobby {
                                     * phase 0 in it means the results are over, not a view from before the match */
     unsigned char in_use;          /* bit n: door n is in use on some console (a slider, its name tag list, name entry, a
                                     * held token): only that console may switch it between Human, CPU and closed */
+    unsigned char busy_why[4];     /* why port n is busy: 1 a slider, 2 its name tag list, 3 the rules, 4 name entry */
 } MpGroupLobby;
 
 /* Melee -> Solo / Group (the VS menu) and the session around the lobby (port/3ds/group/group_menu.c). */
@@ -98,8 +99,8 @@ void mp_platform_group_lobby_set_door(int port, const MpGroupDoor *door);
 void mp_platform_group_lobby_start(void);
 void mp_platform_group_lobby_stage(int stage, int alt_stage);
 void mp_platform_group_lobby_back(void);
-/* This console is busy (bit 0: a name tag list, name entry, the rules menu or a held slider) or not; bits 4..7: the
- * doors it is using (bit 4 + n: door n), see MpGroupLobby.in_use. */
+/* This console is busy or not: bits 0..3 why (0 not busy, 1 a held slider, 2 a name tag list, 3 the rules menu, 4 name
+ * entry); bits 4..7: the doors it is using (bit 4 + n: door n), see MpGroupLobby.in_use. */
 void mp_platform_group_lobby_busy(int busy);
 void mp_platform_group_lobby_rules(const MpGroupRules *rules);
 /* The C-stick that turns the character and stage selects' camera: this console's (x, y: -127..127, the stick times
@@ -112,6 +113,7 @@ int mp_platform_group_door_names(void);
 
 /* The match. */
 int mp_platform_group_players(void);       /* 0 outside a group session, else the highest occupied port + 1 */
+#define MP_GROUP_NAME_MAX 32   /* a name: up to 10 characters of UTF-8 (30 bytes) and the NUL (LW_NAME_MAX) */
 int mp_platform_group_player_name(int port, char *buf, int len);   /* the console on that port's 3DS name, "" if none */
 void mp_platform_group_game_end(void);     /* the match is over on this console: its results screen follows */
 /* The results screen (as vanilla's: each Human player's Start toggles their "ready", and it ends when all are). This

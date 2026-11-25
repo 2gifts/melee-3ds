@@ -11,6 +11,7 @@ menu: menu input (the camera's C-stick): every console's value reaches the other
        while tilted reads neutral soon, one that leaves at once, nothing is sent during a game and a held value comes
        back after it.
 menujoin: a console that joins while another holds a tilt reads it soon after arriving.
+names: a console named with 10 kana and one with accented letters join: every roster shows both whole.
 cycles: c2 stays throughout while five short-lived consoles come and go one after another (one vanishes), some during
        games: each gets port 3 (index 2), the host and c2 agree on every game, no blob is torn or goes back, and every
        command arrives in order.
@@ -162,6 +163,23 @@ def cycles(port, drop):
     return [ok]
 
 
+def names(port, drop):
+    # Names: a console named with 10 kana (30 bytes of UTF-8) and one with accents join; every roster shows each name
+    # whole (the lobby header carries 32 bytes per name).
+    kana = '\u3086\u3046\u304d' * 3 + '\u3086'   # ゆうきゆうきゆうきゆ
+    res = run('names', port, drop, [
+        ('host', ['--host', '--games', 0, '--run-ms', 4000, '--name', 'Anna']),
+        ('c2', ['--join', '--join-at', 200, '--name', kana]),
+        ('c3', ['--join', '--join-at', 400, '--name', 'Zo\u00eb \u00c5ngstr\u00f6m']),
+    ])
+    ok = check('names: every console exits 0', all(res[x][0] == 0 for x in res), str({x: res[x][0] for x in res}))
+    want = {'Anna', kana, 'Zo\u00eb \u00c5ngstr'}   # 10 characters
+    for label in res:
+        got = {l.split(' ', 1)[1] for l in lines(res, label, 'NAME ')}
+        ok &= check(f'names: {label} shows every name whole', got == want, f'{got}')
+    return [ok]
+
+
 def menu_reads(res, label):
     """[(port, value, clock ms)] from a console's MENU lines."""
     return [tuple(int(x) for x in l.split()) for l in lines(res, label, 'MENU ')]
@@ -289,6 +307,8 @@ def main():
         results += again(args.port + 20, args.drop)
     if args.scenario in ('all', 'menu'):
         results += menu(args.port + 30, args.drop)
+    if args.scenario in ('all', 'names'):
+        results += names(args.port + 60, args.drop)
     if args.scenario in ('all', 'cycles'):
         results += cycles(args.port + 50, args.drop)
     if args.scenario in ('all', 'menujoin'):

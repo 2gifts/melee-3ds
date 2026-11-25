@@ -4,7 +4,9 @@
  *
  *   lw_lobby_client --host --port N [--games G] [--again] [--start-at MS] [--frames F] [--run-ms MS] [--drop PCT]
  *   lw_lobby_client --join --port N [--want-tag T [--want-games N]] [--join-at MS] [--leave-at MS] [--crash-at MS] [--drop PCT]
- *   either with [--menu V@MS ...] [--menu-log]
+ *   either with [--menu V@MS ...] [--menu-log] [--name NAME]
+ * --name: this console's name (UTF-8); without it "host" or "join". Every console prints "NAME <port> <name>" for each
+ * console in its roster when the lobby freezes.
  * A joiner browses and joins the first game listed (with --want-tag, the first whose beacon starts with T). With
  * --want-games N it waits until N games are listed before joining the wanted one (at most 3 s after first seeing it), so
  * a test can check that it saw them all.
@@ -73,6 +75,12 @@ static int check_blob(const uint8_t *b, uint32_t *counter)
     return k == 0;
 }
 
+/* The roster's names as this console has them (when the lobby freezes: everybody is still here) */
+static void print_names(void)
+{
+    for (int i = 0; i < LW_MAX_PLAYERS; ++i) if (lw_player_name(i)[0]) printf("NAME %d %s\n", i, lw_player_name(i));
+}
+
 int main(int argc, char **argv)
 {
     lw_config c;
@@ -109,8 +117,10 @@ int main(int argc, char **argv)
             menu_val[menu_n] = atoi(v);
             menu_at[menu_n++] = at ? (unsigned)atoi(at + 1) : 0;
         } else if (!strcmp(argv[i], "--menu-log")) menu_log = 1;
+        else if (i + 1 < argc && !strcmp(argv[i], "--name")) snprintf(c.name, sizeof(c.name), "%s", argv[++i]);
         else { fprintf(stderr, "unknown option %s\n", argv[i]); return 2; }
     }
+    if (!c.name[0]) snprintf(c.name, sizeof(c.name), "%s", c.host ? "host" : "join");
     t0 = now_us();
     while (ms() < join_at) sleep_us(2000);
     char err[160];
@@ -196,7 +206,7 @@ int main(int argc, char **argv)
                 if (now >= next_blob) {
                     next_blob = now + 100000;
                     uint8_t b[BLOB];
-                    if (t >= run_ms) { if (!frozen_at) { frozen_at = now; frozen_present = lw_present(); } counter = 0xFFFFFFFFu; }
+                    if (t >= run_ms) { if (!frozen_at) { frozen_at = now; frozen_present = lw_present(); print_names(); } counter = 0xFFFFFFFFu; }
                     else ++counter;
                     make_blob(b, counter);
                     lw_host_set_lobby(b, BLOB);
@@ -240,6 +250,7 @@ int main(int argc, char **argv)
                             seen_frozen = 1;
                             frozen_at = now;
                             frozen_present = lw_present();
+                            print_names();
                         }
                     }
                 }

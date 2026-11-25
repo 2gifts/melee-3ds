@@ -28,7 +28,7 @@
 #define LW_MAX_PLAYERS 4
 #define LW_MAX_INPUT 16        /* bytes of input per player per frame */
 #define LW_MAX_START 400
-#define LW_NAME_MAX 12
+#define LW_NAME_MAX 32         /* a name: up to 10 characters of UTF-8 (30 bytes) and the NUL */
 #define LW_MAX_LOBBY 200       /* bytes of the host's lobby blob (it is also the beacon, so at most LW_MAX_BEACON) */
 #define LW_MAX_COMMAND 24      /* bytes of one console->host command */
 #define LW_MAX_BEACON 200      /* bytes of the host's beacon blob (what a console browsing for games sees) */

@@ -2,6 +2,7 @@
  * once, independently of GX textures, GPU state and gameplay allocations. */
 #include "bottom.h"
 #include "controls.h"
+#include "name_text.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -17,10 +18,15 @@ static uint16_t* portraits;
 static unsigned char* opacity;
 static uint16_t backdrop[320*240];
 static unsigned backdrop_ready;
-static uint16_t sheik[5][24*24];
-static unsigned char sheik_alpha[5][24*24];
-static unsigned sheik_ready;
+/* Every fighter's stock icons (IfAll.usd: 130 entries, 24 x 24); stock_icon() maps fighter x costume to an entry. */
+#define STOCK_ENTRIES 130
+static uint16_t stock[STOCK_ENTRIES][24*24];
+static unsigned char stock_alpha[STOCK_ENTRIES][24*24];
+static unsigned stocks_ready;
 static unsigned char glyphs[95][32*32], glyph_left[95], glyph_width[95];
+/* The whole font (287 glyphs, 4-bit tiles; static game data) for names: kana and the rest (name_text.c) */
+static const unsigned char* atlas;
+static unsigned char atlas_left[287], atlas_width[287];
 static const char* names[26]={"CAPTAIN FALCON","DONKEY KONG","FOX","MR. GAME & WATCH","KIRBY","BOWSER","LINK","LUIGI","MARIO","MARTH","MEWTWO","NESS","PEACH","PIKACHU","ICE CLIMBERS","JIGGLYPUFF","SAMUS","YOSHI","ZELDA","SHEIK","FALCO","YOUNG LINK","DR. MARIO","ROY","PICHU","GANONDORF"};
 static unsigned be32(const unsigned char* p){return (unsigned)p[0]<<24|(unsigned)p[1]<<16|p[2]<<8|p[3];}
 static unsigned be16(const unsigned char* p){return p[0]<<8|p[1];}
@@ -47,7 +53,16 @@ static unsigned glyph_index(unsigned ch){
     case ',':return 230;case ';':return 234;case '\'':return 243;case '"':return 244;
     case '[':return 247;case ']':return 248;case '#':return 260;case '*':return 262;default:return 227;}
 }
+static unsigned atlas_alpha(unsigned g,unsigned x,unsigned y){
+    unsigned at=((y/8)*4+x/8)*64+(y%8)*8+x%8;return (atlas[512*g+at/2]>>(at&1?0:4))&15;
+}
 void mp_bottom_font_init(const unsigned char* font){
+    atlas=font;
+    for(unsigned g=0;g<287;++g){
+        unsigned left=31,right=0;
+        for(unsigned y=0;y<32;++y)for(unsigned x=0;x<32;++x)if(atlas_alpha(g,x,y)>2){if(x<left)left=x;if(x>right)right=x;}
+        atlas_left[g]=left<=right?left:0;atlas_width[g]=left<=right?right-left+1:12;
+    }
     for(unsigned ch=32;ch<127;++ch){
         unsigned i=ch-32,left=31,right=0;
         const unsigned char* src=font+512*glyph_index(ch);
@@ -60,12 +75,41 @@ void mp_bottom_font_init(const unsigned char* font){
         glyph_left[i]=left<=right?left:0;glyph_width[i]=left<=right?right-left+1:12;
     }
 }
-static unsigned advance(unsigned ch,int h){return ch==' '?h/3:(glyph_width[ch-32]*h+31)/32+1;}
-static int width(const char* s,int h){int n=0;for(;*s;++s)if((unsigned char)*s>=32&&(unsigned char)*s<127)n+=advance(*s,h);return n;}
+/* Text is UTF-8: ASCII draws from the copied glyphs; any other character goes through the shared name converter
+ * (name_text.c: a kana's glyph, an accented letter's base letter, else "？") and draws from the atlas. A "unit" is an
+ * ASCII character (32..126) or 0x100 + an atlas index. */
+#define MAX_UNITS 96
+static int units(const char* s,unsigned* out){
+    int n=0;
+    while(*s&&n<MAX_UNITS){
+        uint32_t cp=name_utf8_next(&s);
+        if(cp>=32&&cp<127){out[n++]=cp;continue;}
+        if(cp<0x80)continue;
+        char b[8];int k=name_char_to_game(cp,b);
+        for(int i=0;i<k&&n<MAX_UNITS;){
+            unsigned c=(unsigned char)b[i];
+            if(c<0x80){if(c>=32&&c<127)out[n++]=c;++i;continue;}
+            if(i+1<k){int g=name_sjis_to_atlas(c<<8|(unsigned char)b[i+1]);if(g>=0&&atlas)out[n++]=0x100+g;}
+            i+=2;
+        }
+    }
+    return n;
+}
+static unsigned advance(unsigned u,int h){
+    if(u>=0x100)return (atlas_width[u-0x100]*h+31)/32+1;
+    return u==' '?h/3:(glyph_width[u-32]*h+31)/32+1;
+}
+static int width(const char* s,int h){unsigned u[MAX_UNITS];int n=units(s,u),w=0;for(int i=0;i<n;++i)w+=advance(u[i],h);return w;}
 static void text(int x,int y,const char* s,int h,uint16_t color){
     unsigned rows[64];for(int yy=0;yy<h;++yy)rows[yy]=(yy*32/h)*32;
-    for(;*s;++s){unsigned ch=(unsigned char)*s;if(ch<32||ch>=127)continue;
-        if(ch!=' '){unsigned i=ch-32,w=(glyph_width[i]*h+31)/32;
+    unsigned u[MAX_UNITS];int n=units(s,u);
+    for(int k=0;k<n;++k){unsigned ch=u[k];
+        if(ch>=0x100){unsigned g=ch-0x100,w=(atlas_width[g]*h+31)/32;
+            for(int yy=0;yy<h;++yy)for(unsigned xx=0;xx<w;++xx){
+                unsigned sx=atlas_left[g]+xx*32/h,sy=(unsigned)yy*32/h;
+                if(sx<32){unsigned a=atlas_alpha(g,sx,sy);if(a)pixel(x+xx,y+yy,color,(a*32+7)/15);}
+            }
+        }else if(ch!=' '){unsigned i=ch-32,w=(glyph_width[i]*h+31)/32;
             unsigned columns[64];for(unsigned xx=0;xx<w;++xx)columns[xx]=glyph_left[i]+xx*32/h;
             for(int yy=0;yy<h;++yy)for(unsigned xx=0;xx<w;++xx){
                 unsigned sx=columns[xx];
@@ -87,34 +131,48 @@ static unsigned portrait_index(unsigned character,unsigned costume){
     if(costume==5){if(c==0)return 110;if(c==4)return 111;if(c==17)return 112;}
     return fifth[c];
 }
-static void load_sheik(const char* path){
+/* IfAll.usd's stock icon table (tools/dump_stock_icons.py shows it): costumes 0..3 are entries costume * 26 + the
+ * fighter's place, which is its external id except that Sheik (19) comes last (25); the fifth and sixth costumes of the
+ * fighters that have them follow from 104. -1: no such costume. */
+static int stock_icon(unsigned fighter,unsigned costume){
+    static const signed char fifth[26]={104,105,-1,-1,106,-1,107,-1,108,125,-1,-1,122,-1,-1,126,109,110,111,114,-1,112,113,128,-1,127};
+    static const signed char sixth[26]={115,-1,-1,-1,116,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,117,-1,-1,-1,-1,-1,-1,-1,-1};
+    if(fighter>=26)return -1;
+    if(costume<4)return (int)costume*26+(fighter<19?(int)fighter:fighter==19?25:(int)fighter-1);
+    return costume==4?fifth[fighter]:costume==5?sixth[fighter]:-1;
+}
+static void load_stocks(const char* path){
     FILE* f=fopen(path,"rb");if(!f)return;
     fseek(f,0,SEEK_END);long size=ftell(f);rewind(f);
     if(size<800000||size>2*1024*1024){fclose(f);return;}
     unsigned char* raw=malloc(size);if(!raw){fclose(f);return;}
     if(fread(raw,1,size,f)!=(size_t)size){free(raw);fclose(f);return;}fclose(f);
-    unsigned char* b=raw+32;unsigned n=be32(raw+4);static const unsigned ix[5]={25,51,77,103,114};
+    unsigned char* b=raw+32;unsigned n=be32(raw+4);
     if(n>(unsigned)size-32||n<775156)goto done;
-    for(unsigned c=0;c<5;++c){
-        unsigned d=be32(b+774116+ix[c]*4),p=be32(b+774636+ix[c]*4);
-        if(d+24>n||p+16>n)goto done;
+    for(unsigned c=0;c<STOCK_ENTRIES;++c){
+        unsigned d=be32(b+774116+c*4),p=be32(b+774636+c*4);
+        if(d+24>n||p+16>n)continue;
         unsigned im=be32(b+d),pal=be32(b+p);
         if(be16(b+d+4)!=24||be16(b+d+6)!=24||be32(b+d+8)!=8||
-            be32(b+p+4)!=2||be16(b+p+12)!=16||im+288>n||pal+32>n)goto done;
+            be32(b+p+4)!=2||be16(b+p+12)!=16||im+288>n||pal+32>n)continue;   /* not a stock icon (a few entries) */
         for(unsigned y=0;y<24;++y)for(unsigned x=0;x<24;++x){
             unsigned t=((y/8)*3+x/8)*64+(y%8)*8+x%8;
             unsigned v=be16(b+pal+2*((b[im+t/2]>>(t&1?0:4))&15));
             unsigned r=v&0x8000?((v>>10)&31)*255/31:((v>>8)&15)*17;
             unsigned g=v&0x8000?((v>>5)&31)*255/31:((v>>4)&15)*17;
             unsigned bl=v&0x8000?(v&31)*255/31:(v&15)*17;
-            sheik[c][y*24+x]=RGB(r,g,bl);sheik_alpha[c][y*24+x]=v&0x8000?32:(((v>>12)&7)*32+3)/7;
+            stock[c][y*24+x]=RGB(r,g,bl);stock_alpha[c][y*24+x]=v&0x8000?32:(((v>>12)&7)*32+3)/7;
         }
-    }sheik_ready=1;
+    }
+    /* every mapped fighter and costume decoded: Sheik's five check the reading */
+    stocks_ready=1;
+    for(unsigned f=0;f<26;++f)for(unsigned c=0;c<6;++c){int e=stock_icon(f,c);
+        if(e>=0){unsigned opaque=0;for(unsigned i=0;i<24*24;++i)opaque+=stock_alpha[e][i]>16;if(!opaque)stocks_ready=0;}}
 done:free(raw);
 }
 int mp_bottom_art_init(const unsigned char* font,const char* path,const char* hud_path){
     mp_bottom_font_init(font);
-    load_sheik(hud_path);
+    load_stocks(hud_path);
     FILE* f=fopen(path,"rb");if(!f)return 0;
     fseek(f,0,SEEK_END);long size=ftell(f);rewind(f);
     if(size<3550000||size>4*1024*1024){fclose(f);return 0;}
@@ -154,12 +212,12 @@ bad:free(raw);mp_bottom_art_exit();return 0;
 }
 void mp_bottom_art_exit(void){free(portraits);free(opacity);portraits=NULL;opacity=NULL;}
 static void portrait(int x,int y,int w,int h,const MPBottomPlayer* p,int dim){
-    if(p->character==19&&sheik_ready){unsigned c=p->costume<5?p->costume:0;
+    if(p->character==19&&stocks_ready){unsigned c=(unsigned)stock_icon(19,p->costume<5?p->costume:0);
         y+=(h-w)/2;
         unsigned columns[56];for(int xx=0;xx<w;++xx)columns[xx]=xx*24/w;
         for(int yy=0;yy<w;++yy){unsigned row=yy*24/w*24;
-            for(int xx=0;xx<w;++xx){unsigned at=row+columns[xx],a=sheik_alpha[c][at];
-                if(dim)a=a*10/32;if(a)pixel(x+xx,y+yy,sheik[c][at],a);}}
+            for(int xx=0;xx<w;++xx){unsigned at=row+columns[xx],a=stock_alpha[c][at];
+                if(dim)a=a*10/32;if(a)pixel(x+xx,y+yy,stock[c][at],a);}}
         return;
     }
     if(!portraits||p->character>=26){center(x+w/2,y+h/2-17,"?",36,muted);return;}
@@ -605,6 +663,59 @@ static void group_ask_page(const GroupView* v){
     group_error(v,160+4);
 }
 /* The fighters in a game's doors, as "FOX, FALCO". */
+/* The default Smash emblem (the circle crossed by a vertical and a horizontal bar), d pixels across: Melee's own, the
+ * stock-icon-sized emblem in IfAll.usd (entry 118, dark grey), drawn as a shape in `color` so it reads on the dark
+ * rows; without the icons, the same procedural mark background() draws behind every page. */
+#define EMBLEM_ENTRY 118
+static void emblem(int x,int y,int d,uint16_t color){
+    if(stocks_ready){
+        for(int yy=0;yy<d;++yy)for(int xx=0;xx<d;++xx){unsigned a=stock_alpha[EMBLEM_ENTRY][(yy*24/d)*24+xx*24/d];if(a)pixel(x+xx,y+yy,color,a);}
+        return;
+    }
+    int r=d/2,ring=d/10>0?d/10:1;
+    for(int yy=0;yy<d;++yy)for(int xx=0;xx<d;++xx){
+        int dx=2*xx-d+1,dy=2*yy-d+1,dd=dx*dx+dy*dy,ro=(2*r)*(2*r),ri=(2*(r-ring))*(2*(r-ring));
+        int vbar=xx>=d*6/16&&xx<d*6/16+ring+1,hbar=yy>=d*9/16&&yy<d*9/16+ring;
+        if((dd<=ro&&dd>ri)||(dd<=ri&&(vbar||hbar)))pixel(x+xx,y+yy,color,32);
+    }
+}
+/* A stock icon, scaled to size x size (nearest), dimmed when dim. 0 if there is none for that fighter and costume. */
+static int stock_draw(int x,int y,int size,unsigned fighter,unsigned costume,int dim){
+    int e=stocks_ready?stock_icon(fighter,costume):-1;
+    if(e<0&&stocks_ready&&fighter<26)e=stock_icon(fighter,0);   /* a costume this fighter does not have */
+    if(e<0)return 0;
+    for(int yy=0;yy<size;++yy)for(int xx=0;xx<size;++xx){unsigned at=(yy*24/size)*24+xx*24/size,a=stock_alpha[e][at];
+        if(dim)a=a*12/32;if(a)pixel(x+xx,y+yy,stock[e][at],a);}
+    return 1;
+}
+/* A disc of diameter d at (x, y) (its top left). */
+static void disc(int x,int y,int d,uint16_t color,unsigned alpha){
+    int r2=d*d;for(int yy=0;yy<d;++yy)for(int xx=0;xx<d;++xx){int dx=2*xx-d+1,dy=2*yy-d+1;if(dx*dx+dy*dy<=r2)pixel(x+xx,y+yy,color,alpha);}
+}
+/* The fighter a badge shows for a port: during a match, the host's live status (Zelda <-> Sheik as she transforms);
+ * otherwise the door's pick. */
+static void badge_fighter(const lobby_slot* door,const lobby_status* st,int phase,int port,unsigned* fighter,unsigned* costume){
+    if((phase==LOBBY_MATCH||phase==LOBBY_RESULTS)&&st->valid&&st->port[port].kind!=3){*fighter=st->port[port].fighter;*costume=st->port[port].costume;return;}
+    *fighter=door->fighter;*costume=door->color;
+}
+/* A port's badge, diameter d: nothing for an empty door; a Human's disc in its port colour, a CPU's grey, with the
+ * fighter's stock icon; "?" while no fighter is placed (or the icons are missing). dim: out of stocks. */
+uint16_t mp_group_badge_drawn[4];
+char mp_group_strip_text[4][24];   /* tests: each strip row's status text, as drawn */
+static void mp_group_strip_text_set(int i,const char* s){
+    if(i<0||i>=4)return;size_t n=strlen(s);if(n>sizeof(mp_group_strip_text[i])-1)n=sizeof(mp_group_strip_text[i])-1;
+    memcpy(mp_group_strip_text[i],s,n);mp_group_strip_text[i][n]=0;
+}   /* tests: the fighter each port's last badge showed + 1 (0 none), as read by the Azahar test */
+static void stock_badge(int x,int y,int d,const lobby_slot* door,const lobby_status* st,int phase,int port,int dim){
+    unsigned f,c;
+    if(door->kind==LOBBY_EMPTY&&!((phase==LOBBY_MATCH||phase==LOBBY_RESULTS)&&st->valid&&st->port[port].kind!=3))return;
+    badge_fighter(door,st,phase,port,&f,&c);
+    int cpu=door->kind==LOBBY_CPU||((phase==LOBBY_MATCH||phase==LOBBY_RESULTS)&&st->valid&&st->port[port].kind==1);
+    disc(x,y,d,cpu?RGB(110,120,130):colors[port&3],dim?12:32);
+    int placed=door->chosen==1||((phase==LOBBY_MATCH||phase==LOBBY_RESULTS)&&st->valid);
+    if(!placed||!stock_draw(x+2,y+2,d-4,f,c,dim)){center(x+d/2,y+(d-d*2/3)/2,"?",d*2/3,ink);if(port>=0&&port<4)mp_group_badge_drawn[port]=0;return;}
+    if(port>=0&&port<4)mp_group_badge_drawn[port]=(uint16_t)(f+1);
+}
 static void group_fighters(const lobby_state* l,char* out,int len){
     int n=0;out[0]=0;
     for(int i=0;i<LOBBY_SLOTS;++i){
@@ -624,12 +735,20 @@ static void group_list_page(const GroupView* v){
         const group_game* r=&v->row[i];char b[64],f[64];int y=GL_ROW_Y+i*GL_ROW_STEP;
         int busy=r->lobby.phase==LOBBY_MATCH||r->lobby.phase==LOBBY_RESULTS;
         rect(8,y,304,GL_ROW_H,card_color);rect(8,y,3,GL_ROW_H,busy?line_color:slippi_done);
-        fit(19,y+2,r->host[0]?r->host:"3DS",14,170,ink);
         if(r->max>0&&r->players>=r->max)right(304,y+2,"FULL",13,slippi_red);
         else{snprintf(b,sizeof(b),"%d/4",r->players);right(304,y+2,b,13,gold);}
-        group_fighters(&r->lobby,f,sizeof(f));
-        if(busy)right(274,y+3,"IN MATCH",11,muted);
-        fit(19,y+17,f[0]?f:"NO FIGHTERS CHOSEN YET",10,busy?186:260,muted);
+        if(stocks_ready){
+            /* the default Smash emblem, the host's name, and a badge per port at fixed places (an empty port: a gap) */
+            emblem(15,y+4,20,muted);
+            fit(40,y+2,r->host[0]?r->host:"3DS",14,116,ink);
+            if(busy)text(40,y+17,"IN MATCH",9,muted);
+            for(int p=0;p<LOBBY_SLOTS;++p)stock_badge(160+p*22,y+5,18,&r->lobby.slot[p],&r->lobby.status,r->lobby.phase,p,0);
+        }else{
+            fit(19,y+2,r->host[0]?r->host:"3DS",14,170,ink);
+            group_fighters(&r->lobby,f,sizeof(f));
+            if(busy)right(274,y+3,"IN MATCH",11,muted);
+            fit(19,y+17,f[0]?f:"NO FIGHTERS CHOSEN YET",10,busy?186:260,muted);
+        }
     }
     group_error(v,208-14);
 }
@@ -656,6 +775,19 @@ static void group_watch_page(const GroupStrip* g){
         int y=70+i*30;const lobby_slot* d=&g->port[i].door;int kind=st->valid?st->port[i].kind:(d->kind==LOBBY_EMPTY?3:d->kind);
         rect(8,y,304,26,card_color);rect(8,y,4,26,kind==3?line_color:colors[i]);
         if(kind==3){text(20,y+6,"-",13,muted);continue;}
+        if(stocks_ready){
+            /* the live fighter's badge (a Zelda who transforms shows Sheik), the console's name, the stocks left */
+            int out=st->valid&&!g->rules.time_mode&&st->port[i].stocks==0;
+            stock_badge(16,y+1,24,d,st,g->phase,i,out);
+            fit(46,y+7,g->port[i].present&&g->port[i].name[0]?g->port[i].name:kind==1?"CPU":"",13,96,out?muted:ink);
+            if(st->valid&&!g->rules.time_mode){
+                unsigned f,c,n=st->port[i].stocks;badge_fighter(d,st,g->phase,i,&f,&c);
+                if(n<=5)for(unsigned k=0;k<n;++k)stock_draw(148+k*13,y+7,12,f,c,0);
+                else{stock_draw(148,y+7,12,f,c,0);snprintf(b,sizeof(b),"x %u",n);text(164,y+7,b,12,gold);}
+            }
+            if(st->valid){snprintf(b,sizeof(b),"%u%%",st->port[i].damage);right(300,y+5,b,16,st->port[i].stocks||g->rules.time_mode?ink:muted);}
+            continue;
+        }
         snprintf(b,sizeof(b),"%s%s",kind==1?"CPU ":"",d->chosen==1&&d->fighter<26?names[d->fighter]:"FIGHTER");
         fit(20,y+2,b,13,150,ink);
         fit(20,y+15,g->port[i].present&&g->port[i].name[0]?g->port[i].name:kind==1?"CPU":"",10,150,muted);
@@ -675,14 +807,22 @@ static void group_strip_page(const GroupStrip* g,unsigned scene){
         rect(8,y,304,34,card_color);rect(8,y,4,34,colors[i]);
         if(g->port[i].present){
             fit(20,y+3,g->port[i].name[0]?g->port[i].name:"3DS",15,150,i==g->me?gold:ink);
-            if(i==0)right(240,y+5,"HOST",11,gold);
+            if(i==0)right(stocks_ready?230:240,y+5,"HOST",11,gold);
             group_bars(266,y+5,g->port[i].signal,slippi_done);
         }else text(20,y+3,"-",15,muted);
-        if(d->kind==LOBBY_EMPTY)snprintf(b,sizeof(b),"%s",g->port[i].present?"CLOSED":"OPEN");
+        /* what the port is doing: why it is busy (on the character select), else its state; the fighter itself is the
+         * badge (without the icons, its name as before) */
+        static const char*const why_text[5]={"","","CHOOSING A NAME TAG","SETTING THE RULES","ENTERING A NAME"};
+        int why=g->port[i].busy_why,css=g->phase==LOBBY_CSS;
+        if(css&&g->port[i].present&&why>=2&&why<=4)snprintf(b,sizeof(b),"%s",why_text[why]);
+        else if(d->kind==LOBBY_EMPTY)snprintf(b,sizeof(b),"%s",g->port[i].present?"CLOSED":"OPEN");
+        else if(stocks_ready)snprintf(b,sizeof(b),"%s",g->phase==LOBBY_MATCH||g->phase==LOBBY_RESULTS?(d->kind==LOBBY_CPU?"CPU":"PLAYING"):d->kind==LOBBY_CPU?"CPU":d->chosen==1?"CHOSEN":"CHOOSING");
         else if(g->phase==LOBBY_MATCH||g->phase==LOBBY_RESULTS)snprintf(b,sizeof(b),"%s%s",d->kind==LOBBY_CPU?"CPU ":"",d->chosen==1&&d->fighter<26?names[d->fighter]:"PLAYING");
         else if(d->chosen==1&&d->fighter<26)snprintf(b,sizeof(b),"%s%s",d->kind==LOBBY_CPU?"CPU: ":"",names[d->fighter]);
         else snprintf(b,sizeof(b),"%s",d->kind==LOBBY_CPU?"CPU":"CHOOSING");
-        fit(20,y+19,b,11,270,muted);
+        fit(20,y+19,b,11,stocks_ready?200:270,muted);
+        if(stocks_ready)stock_badge(236,y+5,24,d,&g->status,g->phase,i,0);
+        mp_group_strip_text_set(i,b);
     }
     if(g->rules.time_mode)snprintf(b,sizeof(b),"TIME %d MIN",g->rules.minutes);else snprintf(b,sizeof(b),"%d STOCKS",g->rules.stocks);
     /* Only the host sets the rules: its CSS Rules banner and Teams switch do nothing on the other consoles. */

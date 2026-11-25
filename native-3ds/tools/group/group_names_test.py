@@ -1,14 +1,15 @@
 """The names under the group results screen's windows, with three emulated consoles and a PC console.
 
-A hosts (named Anna), B joins (Zoë Ångström: non-ASCII, and over the 11-byte name limit), C joins (WWWWWWWWWW: the
-widest ten characters). All three take Fox, the host makes door 4 a CPU Fox (its HMN / CPU button, then its coin onto
+A hosts (named Anna), B joins (Zoë Ångström: accented letters, and over the 10-character limit), C joins (WWWWWWWWWW:
+the widest ten characters). All three take Fox, the host makes door 4 a CPU Fox (its HMN / CPU button, then its coin onto
 Fox), and starts the match; the CPU's window keeps vanilla's "FOX", for comparison. C's emulator is stopped during it: A and B make
 C's fighter a CPU. A quits from the pause menu (a cancelled match), and on the results screen of A and B the windows
-show Anna, "Zo? ?ngst" and WWWWWWWWWW instead of FOX: C keeps its name although its fighter ended as a CPU (screenshots).
-Then B's emulator is stopped on the results screen: A's labels do not change. A PC console named Dee joins during the
+show Anna, "Zoe Angstr" (folded, 10 characters) and WWWWWWWWWW instead of FOX: C keeps its name although its fighter ended as a CPU (screenshots).
+Then B's emulator is stopped on the results screen: A's labels do not change. A PC console, Dee, named with ten kana
+(ゆうきゆうきゆうきゆ, Phase 6: kana in the game's font) joins during the
 results and takes a free port in the roster (B's or C's): A's labels still do not change. A presses through; back on
 the character select. Match 2 (A, Dee, and the CPU C's door became; the PC console cannot reproduce the game's
-checksums, so it ends early on a desync): A's results show Anna and Dee, and the CPU's window its fighter's name.
+checksums, so it ends early on a desync): A's results show Anna and Dee's ten kana, and the CPU's window its fighter's name.
 
     docker/emu-test.sh run tools/group/group_names_test.py [--show] [--tune]
 --tune: on the first results screen, capture the names at a few sizes and offsets (mp_res_size / mp_res_dy).
@@ -34,6 +35,7 @@ from names_probe import labels, sis, wire_name  # noqa: E402
 TOOLS = Path(os.environ.get('MELEE_GROUP_TOOLS_DIR') or emu.ROOT / 'build/group-tools')
 LINK_PORT = 44180
 NAMES = {'A': 'Anna', 'B': 'Zoë Ångström', 'C': 'WWWWWWWWWW'}
+DEE = '\u3086\u3046\u304d' * 3 + '\u3086'   # ゆうきゆうきゆうきゆ
 
 
 def main():
@@ -282,7 +284,7 @@ def main():
             fit = width / size / 2
             check(f'{c.name}: the widest name (WWWWWWWWWW) is narrowed into its box, a short one (Anna) is not',
                   abs(drawn[2] - fit) < 0.5 and drawn[0] < fit - 1, f'measured {drawn}, box half {fit}')
-            check(f'{c.name}: the windows show Anna, Zo? ?ngst and WWWWWWWWWW instead of the fighter (C dropped to a CPU '
+            check(f'{c.name}: the windows show Anna, Zoe Angstr and WWWWWWWWWW instead of the fighter (C dropped to a CPU '
                   'and keeps its name)', got == want and named == 0x7, f'{got} != {want}, named {named:x}')
         a.capture('02-results')
         b.capture('02-results')
@@ -311,9 +313,9 @@ def main():
         pc = out / 'pc'
         pc.mkdir()
         (pc / 'group.ini').write_text('\n'.join(['role=join', 'udp=1', f'port={LINK_PORT}', 'delay=2', 'timeout_ms=20000',
-                                                 'name=Dee', 'test_games=1', 'test_frames=600', 'test_character=1',
-                                                 '']) + '\n')
-        pc_log = open(out / 'pc.log', 'w')
+                                                 f'name={DEE}', 'test_games=1', 'test_frames=600', 'test_character=1',
+                                                 '']) + '\n', encoding='utf-8')
+        pc_log = open(out / 'pc.log', 'w', encoding='utf-8')
         pc_proc = subprocess.Popen([str(TOOLS / 'group_client'), '--dir', str(pc)], stdout=pc_log, stderr=subprocess.STDOUT)
         wait_log('pc', 'group-test: in the lobby on port', 'the PC console Dee joins during the results', 120)
         line = [l for l in text_of('pc').splitlines() if 'group-test: in the lobby on port' in l][-1]
@@ -348,7 +350,7 @@ def main():
         to_panels(a, marks['A'], a)
         got, named = labels(a.stub)
         want2 = [sis('Anna'), b'', b'', b'']
-        want2[dee_port - 1] = sis('Dee')
+        want2[dee_port - 1] = sis(DEE)
         print('A labels, match 2:', got, f'named {named:x}', flush=True)
         check('match 2: A\'s results show Anna and Dee; the CPU keeps its fighter\'s name', got == want2 and
               named == (1 | 1 << (dee_port - 1)), f'{got} != {want2}, named {named:x}')

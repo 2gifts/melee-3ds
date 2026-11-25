@@ -16,7 +16,10 @@
  *   net_thread=1, net_thread_core=-2   the worker thread
  *   auto_players=2 automatic sessions (opponent=@host / @join in the engine's config, tests): the host starts a match by
  *                  itself once this many consoles are here and every one has picked
- *   test_wireless_off=1  tests: every session fails to open with "Please enable wireless and try again" */
+ *   test_wireless_off=1  tests: every session fails to open with "Please enable wireless and try again"
+ *   name=N         this console's name (tests); without it the Mii name, then the system name, then "3DS"
+ *   test_screen_name=N, test_screen_name_fail=1   tests: the Mii name's FRD call is skipped; N is its result, or it
+ *                  fails (fail wins), so the chain falls to the system name */
 #ifndef GROUP_SESSION_H
 #define GROUP_SESSION_H
 #include "group_bridge.h"
@@ -30,7 +33,9 @@ typedef struct {
     int net_thread, net_thread_core;
     int auto_players;
     int test_wireless_off;   /* tests: opening a session fails as if wireless communication were off */
-    char name[12];        /* name=: this console's name on the loopback link (tests; UTF-8, up to 11 bytes) */
+    int test_screen_name_fail;   /* tests: the Mii name (FRD) is skipped and treated as failed */
+    char test_screen_name[32];   /* tests: the Mii name (FRD) is skipped and this is its result */
+    char name[32];        /* name=: this console's name (tests; UTF-8, up to 10 characters, LW_NAME_MAX) */
 } group_config;
 
 /* group.ini, read each time (missing keys keep their defaults). */

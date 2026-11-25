@@ -54,6 +54,8 @@ static int mp_css_busy_wait;
 static int mp_css_doors_now;     /* the doors this console is using (a slider, a name tag list, name entry, a held token) */
 static int mp_css_doors_sent;    /* ... as last told to the host */
 static int mp_css_naming = -1;   /* the door whose name entry this console opened, until the CSS is back */
+static int mp_css_ruling;        /* this console opened the rules menu, until the CSS is back */
+static int mp_css_why_sent;      /* the busy reason last sent (LOBBY_BUSY_*: 1 slider, 2 name tags, 3 rules, 4 name entry) */
 #define MP_CSS_DOOR 15     /* a door as the lobby holds it: kind, fighter, costume, team, level, chosen, tag[8], handicap */
 static u8 mp_css_last_view[4][MP_CSS_DOOR], mp_css_last_view_ok[4];
 static u8 mp_css_applied[4][MP_CSS_DOOR], mp_css_applied_ok;
@@ -238,19 +240,24 @@ int mp_css_hide_ready(void)
 static void mp_css_busy_frame(void)
 {
     static int idle_resend;
-    int my = mp_css_my(), i, doors = 0, resend = 0;
+    int my = mp_css_my(), i, doors = 0, resend = 0, why = 0;
     if (mnCharSel_804D6CF6 == 0) {
         mp_css_busy_now = 0;
         mp_css_naming = -1;
+        mp_css_ruling = 0;
         for (i = 0; i < 4; i++) {
             if (mnCharSel_803F0E8C[i].data != NULL && mnCharSel_803F0E8C[i].data->state != 0) {
                 mp_css_busy_now = 1;
                 doors |= 1 << i;
+                why = 2;                                  /* a name tag list (wins over a slider) */
             }
             /* only this console's cursor acts here, so a held slider is ours whichever door it belongs to */
             if (mnCharSel_803F0DFC.doors[i].is_hold_cpu_slider || mnCharSel_803F0DFC.doors[i].is_hold_handicap_slider) {
                 mp_css_busy_now = 1;
                 doors |= 1 << i;
+                if (why == 0) {
+                    why = 1;
+                }
             }
         }
         /* this console's cursor holds something (vanilla's mnCharSel_804A0BC0[door]->x5 == 1 on the toggle) */
@@ -261,7 +268,13 @@ static void mp_css_busy_frame(void)
         mp_css_busy_now = 1;
         if (mnCharSel_804D6CF6 == 4) {
             mp_css_naming = mnCharSel_804D6CF9 & 3;   /* name entry for this door's tag */
+        } else {
+            mp_css_ruling = 1;
         }
+    }
+    if (mnCharSel_804D6CF6 != 0) {
+        /* 3 rules or 4 name entry, as seen when asked for; kept while it is up (byte 5) */
+        why = mp_css_naming >= 0 ? 4 : mp_css_ruling ? 3 : mp_css_busy_now ? 1 : 0;
     }
     if (mp_css_naming >= 0) {
         doors |= 1 << mp_css_naming;                  /* the door is in use while its name entry lasts */
@@ -273,17 +286,22 @@ static void mp_css_busy_frame(void)
     }
     /* resend when the lobby lacks our busy bit or one of our doors; a lost release of our own door (the only one a held
      * token marks without the busy bit) is sent again now and then */
+    if (mp_css_busy_now && why == 0) {
+        why = 1;
+    }
     resend = (int) ((mp_lob.busy >> my) & 1) != mp_css_busy_now || doors != mp_css_doors_sent ||
-             (doors & ~mp_lob.in_use & 0xF) != 0;
+             (doors & ~mp_lob.in_use & 0xF) != 0 || why != mp_css_why_sent ||
+             (mp_css_busy_now && mp_lob.busy_why[my] != why);
     if (!resend && !mp_css_busy_now && doors == 0 && ((mp_lob.in_use >> my) & 1) && ++idle_resend >= 60) {
         resend = 1;
     }
     if (resend) {
         idle_resend = 0;
-        OSReport("GROUPCSS busy %d doors %x (name tag list / slider / name entry / rules / held token)\n", mp_css_busy_now,
-                 doors);
-        mp_platform_group_lobby_busy(mp_css_busy_now | doors << 4);
+        OSReport("GROUPCSS busy %d why %d doors %x (1 slider, 2 name tag list, 3 rules, 4 name entry; doors in use)\n",
+                 mp_css_busy_now, why, doors);
+        mp_platform_group_lobby_busy(why | doors << 4);
         mp_css_doors_sent = doors;
+        mp_css_why_sent = why;
         mp_css_busy_wait = 15;
     }
 }
@@ -787,8 +805,7 @@ static void mp_css_text_frame(void)
         }
         raw[0] = 0;
         if (here) {
-            mp_platform_group_player_name(d, raw, 11);
-            raw[10] = 0;
+            mp_platform_group_player_name(d, raw, sizeof raw);   /* already cut to 10 characters (name_clean) */
         }
         mp_platform_slippi_ui_sis(raw, name, sizeof name);
         col = mnCharSel_804D6CB0->vs.start.rules.is_teams ? team_col[dr->team % 3] : port_col[d];
@@ -923,6 +940,7 @@ void mp_css_group_reset(void)
     mp_css_start_wait = 0;
     mp_css_doors_now = 0;
     mp_css_doors_sent = 0;
+    mp_css_why_sent = 0;
 }
 
 /* Start was pressed with every door filled: ask the host (it answers with the stage select for everyone). */

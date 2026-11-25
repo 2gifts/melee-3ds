@@ -89,6 +89,18 @@ docker/emu-test.sh run tools/group/group_door_test.py            # a door in use
 docker/emu-test.sh run tools/group/group_names_test.py           # three emulated consoles and a PC one: the consoles' names under the results windows
 ```
 
+Names and the bottom screen's group pages (Phase 6), no emulator:
+
+```sh
+python3 tools/test_name_text.py                  # the name converter and its generated glyph table (host C compiler)
+python3 tools/localwireless/lw_lobby_test.py --scenario names   # 10-kana and accented names whole in every roster
+# the bottom screen's pages drawn on the host with the disc's art (build/bottom-host-*.png); the assets come from the
+# work volume, mounted over an empty assets/ folder that is removed afterwards:
+docker run --rm -v "$PWD":/src --mount type=volume,src=melee3ds-slippi-work,dst=/src/assets,volume-subpath=src/assets,readonly \
+    -w /src --entrypoint sh melee3ds-builder -c 'CC=gcc python3 tools/test_bottom_screen.py'; rmdir assets
+python3 tools/dump_stock_icons.py --usd <IfAll.usd>   # the stock icon contact sheet (build/stock-icons.png)
+```
+
 `group` (group_test.py) runs the lobby rules' unit test (`lobby_unit`) and vanilla's auto handicap rule
 (`auto_handicap_unit`, compiled from the decomp's `gm_1601.c`) first. The Azahar tests read the emulated
 console's memory through Azahar's GDB stub while it runs (the CSS doors, READY, the slider knobs: `tools/group/css_probe.py`)

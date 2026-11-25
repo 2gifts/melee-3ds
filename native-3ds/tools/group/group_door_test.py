@@ -12,6 +12,10 @@ then reports the door in use as it would for a real hold. Checked:
   3. the joiner's name tag list open on its own door: the host cannot close that door until the list is shut;
   4. the other way round: the host marks door 3 in use (its busy command with a door mask), and the joiner's own click
      on door 3's Human / CPU / closed switch does nothing; once the host lets go, the same click switches it.
+Phase 6: the strip says why a console is busy (mp_group_strip_text, each row's status as drawn): the joiner's own row
+reads "CHOOSING A NAME TAG" while its list is open; the host's row "CHOOSING A NAME TAG", "SETTING THE RULES" and
+"ENTERING A NAME" as the PC host sends those reasons. And this console's name comes from its Mii (no name= in its
+group.ini): Azahar's FRD answers with the emulated console's user name.
 Stale whole-door edits (the compare-and-set) are covered by lobby_unit (group_test.py runs it).
 
     docker/emu-test.sh run tools/group/group_door_test.py
@@ -221,7 +225,7 @@ def main():
 
         # 1. the CPU level slider of door 3 in the joiner's hand
         poke_bytes(door_addr(CPU_DOOR, HOLD_CPU), b'\x01')
-        wait_text(log_text, f'GROUPCSS busy 1 doors {1 << CPU_DOOR:x}', 'level slider: the joiner reports door 3 in use', 60)
+        wait_text(log_text, f'GROUPCSS busy 1 why 1 doors {1 << CPU_DOOR:x}', 'level slider: the joiner reports door 3 in use', 60)
         refused_close('level slider', CPU_DOOR, CPU_DOOR)
         capture('02-level-slider-held')
         poke_bytes(door_addr(CPU_DOOR, HOLD_CPU), b'\x00')
@@ -247,6 +251,11 @@ def main():
         poke_bytes(tag + TAG_STATE, b'\x01')   # what clicking its name plate does
         stub.until_frames(60)
         capture('04-tag-list-open')
+
+        def strip_text(port):
+            return stub.peek('mp_group_strip_text', 96)[24 * port:24 * port + 24].split(b'\0')[0].decode(errors='replace')
+        check('tag list: the strip says "CHOOSING A NAME TAG" on the joiner\'s row', strip_text(me) == 'CHOOSING A NAME TAG',
+              repr(strip_text(me)))
         refused_close('tag list', me, me)
         state = read_bytes(tag + TAG_STATE, 1)[0]
         if state != 0:
@@ -293,6 +302,23 @@ def main():
         capture('06-click-applied')
         check('once the host lets go, the same click switches the door (CPU -> closed)',
               after == CLOSED and lob['doors'][CPU_DOOR][0] == 2, f'p_kind {after}, lobby {lob["doors"][CPU_DOOR]}')
+        # 5. the host's busy reasons on the joiner's strip (bits 0..3 of the busy command)
+        for code, words in ((2, 'CHOOSING A NAME TAG'), (3, 'SETTING THE RULES'), (4, 'ENTERING A NAME')):
+            host(f'busy {code}')
+            end = time.monotonic() + 20
+            while time.monotonic() < end and strip_text(0) != words:
+                time.sleep(0.25)
+            check(f'the host busy with reason {code}: its strip row reads "{words}"', strip_text(0) == words, repr(strip_text(0)))
+        capture('07-host-entering-a-name')
+        host('busy 0')
+        end = time.monotonic() + 20
+        while time.monotonic() < end and strip_text(0) in ('CHOOSING A NAME TAG', 'SETTING THE RULES', 'ENTERING A NAME'):
+            time.sleep(0.25)
+        check('the host done: its row shows its state again', strip_text(0) not in ('CHOOSING A NAME TAG', 'SETTING THE RULES',
+              'ENTERING A NAME'), repr(strip_text(0)))
+        # Phase 6, step 4: no name= here, so the Mii name (Azahar: the emulated user name)
+        named = [l for l in log_text().splitlines() if 'group: name from ' in l]
+        check('this console\'s name comes from its Mii', bool(named) and 'name from Mii' in named[0], str(named[:1]))
         host('quit')
     finally:
         if pc_proc is not None and pc_proc.poll() is None:

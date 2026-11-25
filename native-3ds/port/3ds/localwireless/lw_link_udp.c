@@ -5,6 +5,7 @@
 #include "lw_link.h"
 #ifndef LW_NO_UDP
 #include "lw_platform.h"
+#include "../name_text.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -30,10 +31,11 @@ typedef socklen_t sa_len_t;
 #define MAX_NODES 4
 #define DEFAULT_PORT 47010
 #define MSG_HELLO 0xF0   /* client -> host: name */
+#define SCANR_HEAD (4 + LW_LINK_NAME_MAX)   /* a scan answer's bytes before the beacon */
 #define MSG_WELCOME 0xF1 /* host -> client: u8 node, host name */
 #define MSG_BYE 0xF2     /* either way; a client's is told apart by its address */
 #define MSG_SCAN 0xF3    /* browser -> every port in [base, base+SCAN_PORTS) */
-#define MSG_SCANR 0xF4   /* host -> browser: u8 players, u8 max, 12 name bytes, u8 len, beacon blob */
+#define MSG_SCANR 0xF5   /* host -> browser: u8 players, u8 max, LW_LINK_NAME_MAX name bytes, u8 len, beacon blob (0xF4 had 12) */
 #define SCAN_PORTS 8     /* hosts of a browsed lobby use base..base+7 (the stand-in's \"beacon channel\") */
 #define SCAN_FORGET_US 2500000ull
 #define MAX_SCAN 8
@@ -111,7 +113,8 @@ int lw_udp_open(int host, int port, int max_nodes, const char *name, char *err, 
     node_mask = 0;
     max_nodes_cfg = max_nodes < 2 ? 2 : max_nodes > MAX_NODES ? MAX_NODES : max_nodes;
     memset(node_names, 0, sizeof(node_names));
-    snprintf(local_name, sizeof(local_name), "%s", name && name[0] ? name : host ? "PC HOST" : "PC JOINER");
+    /* the name as given (the session picks it: group.ini name=, the Mii name, the system name); "3DS" as UDS does */
+    if (name_clean(name, local_name, sizeof(local_name), NAME_MAX_CHARS) == 0) snprintf(local_name, sizeof(local_name), "3DS");
     sock = socket(AF_INET, SOCK_DGRAM, 0);
     if (sock == SOCK_NONE) { snprintf(err, (size_t)errlen, "cannot create a socket"); return -1; }
     struct sockaddr_in me;
@@ -156,9 +159,11 @@ static int pump(uint8_t *buf, size_t cap, int *from_node)
                 if (!node) continue;   /* full */
                 client_addr[node] = from;
                 node_mask |= 1u << (node - 1);
+                char got[LW_LINK_NAME_MAX];
                 size_t l = (size_t)n - 1 < LW_LINK_NAME_MAX - 1 ? (size_t)n - 1 : LW_LINK_NAME_MAX - 1;
-                memcpy(node_names[node], tmp + 1, l);
-                node_names[node][l] = 0;
+                memcpy(got, tmp + 1, l);
+                got[l] = 0;
+                name_clean(got, node_names[node], LW_LINK_NAME_MAX, NAME_MAX_CHARS);
                 lw_platform_log("loopback: node %d (%s) joined", node, node_names[node]);
             }
             send_welcome(&from, node);
@@ -166,23 +171,26 @@ static int pump(uint8_t *buf, size_t cap, int *from_node)
             if (!joined && n >= 2) {
                 joined = 1;
                 my_node = tmp[1];
+                char got[LW_LINK_NAME_MAX];
                 size_t l = (size_t)n - 2 < LW_LINK_NAME_MAX - 1 ? (size_t)n - 2 : LW_LINK_NAME_MAX - 1;
-                memcpy(node_names[LW_LINK_HOST_NODE], tmp + 2, l);
-                node_names[LW_LINK_HOST_NODE][l] = 0;
+                memcpy(got, tmp + 2, l);
+                got[l] = 0;
+                name_clean(got, node_names[LW_LINK_HOST_NODE], LW_LINK_NAME_MAX, NAME_MAX_CHARS);
                 snprintf(node_names[my_node], LW_LINK_NAME_MAX, "%s", local_name);
                 node_mask = (1u << (LW_LINK_HOST_NODE - 1)) | (1u << (my_node - 1));
             }
         } else if (tmp[0] == MSG_SCAN && is_host) {
-            uint8_t r[16 + LW_LINK_APPDATA_MAX];
+            /* the scan answer: count, max, the host's name (LW_LINK_NAME_MAX bytes), the beacon's length and bytes */
+            uint8_t r[SCANR_HEAD + LW_LINK_APPDATA_MAX];
             r[0] = MSG_SCANR;
             r[1] = (uint8_t)__builtin_popcount(node_mask);
             r[2] = (uint8_t)max_nodes_cfg;
-            memset(r + 3, 0, 12);
-            memcpy(r + 3, local_name, strlen(local_name) < 11 ? strlen(local_name) : 11);
-            r[15] = (uint8_t)beacon_len;
-            memcpy(r + 16, beacon, (size_t)beacon_len);
-            raw_send(&from, r, (size_t)(16 + beacon_len));
-        } else if (tmp[0] == MSG_SCANR && !is_host && !joined && n >= 16 && n >= 16 + tmp[15]) {
+            memset(r + 3, 0, LW_LINK_NAME_MAX);
+            memcpy(r + 3, local_name, strlen(local_name) < LW_LINK_NAME_MAX - 1 ? strlen(local_name) : LW_LINK_NAME_MAX - 1);
+            r[SCANR_HEAD - 1] = (uint8_t)beacon_len;
+            memcpy(r + SCANR_HEAD, beacon, (size_t)beacon_len);
+            raw_send(&from, r, (size_t)(SCANR_HEAD + beacon_len));
+        } else if (tmp[0] == MSG_SCANR && !is_host && !joined && n >= SCANR_HEAD && n >= SCANR_HEAD + tmp[SCANR_HEAD - 1]) {
             int at = -1, port = (int)ntohs(from.sin_port);
             for (int k = 0; k < scan_n; ++k) if (scan_list[k].port == port) at = k;
             if (at < 0 && scan_n < MAX_SCAN) { at = scan_n++; }
@@ -194,9 +202,12 @@ static int pump(uint8_t *buf, size_t cap, int *from_node)
                 in->key = (uint32_t)port;
                 in->players = tmp[1];
                 in->max = tmp[2];
-                memcpy(in->host, tmp + 3, 11);
-                in->len = tmp[15];
-                memcpy(in->data, tmp + 16, (size_t)tmp[15]);
+                char got[LW_LINK_NAME_MAX];
+                memcpy(got, tmp + 3, LW_LINK_NAME_MAX - 1);
+                got[LW_LINK_NAME_MAX - 1] = 0;
+                name_clean(got, in->host, sizeof(in->host), NAME_MAX_CHARS);
+                in->len = tmp[SCANR_HEAD - 1];
+                memcpy(in->data, tmp + SCANR_HEAD, (size_t)in->len);
             }
         } else if (tmp[0] == MSG_BYE) {
             if (is_host) {

@@ -8,6 +8,8 @@ Phase 5 (bottom-screen page only): the first Group press runs with test_wireless
 "Please enable wireless and try again" and stay on Solo / Group; the key is then removed and Group opens the list.
 HOME and sleep are off from the Group list on ("group: HOME and sleep off"), a refused HOME press (poked through the
 GDB stub) shows the bottom-screen notice for 2 s, and they are on again once the lobby is left; Solo never turns them off.
+Phase 6 (the name): the first Group press also has test_screen_name_fail=1 (the Mii name fails: the system name is
+used), the retry test_screen_name=MiiName (the Mii name wins; the strip shows it, screenshot lobby-css).
 
     docker/emu-test.sh run tools/group/group_menu_test.py [--seconds 600]
 Results: $MELEE_TEST_OUT/group-menu/ (the PNGs, game.log)."""
@@ -194,7 +196,7 @@ def main():
     (sd / 'slippi').mkdir(parents=True, exist_ok=True)
     (sd / 'slippi' / 'config.ini').write_text('prefetch=0\ndelay=2\n')
     ini = 'menu=1\nudp=1\nport=44100\ndelay=2\n' + ('top_menu=1\n' if args.top_menu else '')
-    (sd / 'slippi' / 'group.ini').write_text(ini + ('' if args.top_menu else 'test_wireless_off=1\n'))
+    (sd / 'slippi' / 'group.ini').write_text(ini + ('' if args.top_menu else 'test_wireless_off=1\ntest_screen_name_fail=1\n'))
     (sd / 'no-scripted-input').write_text('')   # no smoke-build scripted presses
     (sd / 'game.log').unlink(missing_ok=True)
     stub = Stub(emu.elf_symbols(args.elf))
@@ -311,8 +313,10 @@ def main():
             capture('wireless-off')
             check('Group with wireless off shows "Please enable wireless and try again"', ok)
             check('wireless off: HOME and sleep stay on', 'HOME and sleep off' not in log_text())
+            check('the Mii name failing (test_screen_name_fail), the system name is used', 'group: name from system "' in log_text(),
+                  str([l for l in log_text().splitlines() if 'name from' in l]))
             # wireless back on: group.ini is read again on each Group press
-            (sd / 'slippi' / 'group.ini').write_text(ini)
+            (sd / 'slippi' / 'group.ini').write_text(ini + 'test_screen_name=MiiName\n')
             touch(238, 104)              # GROUP again: the retry
             wait_log('group: Group, looking for games', 2)
             ok = wait_log('group: HOME and sleep off (wireless session)', 1, 60)
@@ -329,6 +333,8 @@ def main():
         time.sleep(3)
         f1 = stub.frames()
         check('the engine keeps running on the lobby CSS', f1 > f0, f'engine_frames {f0} -> {f1}')
+        if not args.top_menu:
+            check('the Mii name wins when there is one (test_screen_name=MiiName)', 'group: name from Mii "MiiName"' in log_text())
         if not args.top_menu:
             # A refused HOME press (as libctru reports it): the notice for 2 s over the strip
             stub.poke('group_test_home_reject', 1)

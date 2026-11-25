@@ -24,6 +24,8 @@
  *   test_expect_error=1 via_menu: the Group page is expected to fail with "Please enable wireless and try again"
  *                       (test_wireless_off=1): log it, try Group once more, and pass if it fails the same way
  *   test_wait_each=1    host: before every game (not only the first), wait for test_players consoles
+ *   test_zelda=1        host: its match status says its own port plays Zelda (18) for the first half of each game and
+ *                       Sheik (19) after it, as a real host's does when Zelda transforms
  *   test_stale_view=1   joiner: in game 1, keep the lobby view from before the host's Start until 1.5 s after the
  *                       match ends (as if every snapshot in between was lost), so the results screen starts on a
  *                       character select view from before the match, which must not count as the results' end
@@ -53,7 +55,7 @@
 static struct {
     int host, via_menu, players, games, frames, character, crash_frame, delay, late, full, linger_ms, control;
     int results_hold_ms, results_linger_ms, results_leave, stale_view;
-    int after_lost, vanish_ms, expect_error, wait_each;
+    int after_lost, vanish_ms, expect_error, wait_each, zelda;
 } T;
 
 /* A clock every console on this machine shares (CLOCK_MONOTONIC), so a test can order events across their logs. */
@@ -436,6 +438,12 @@ static int play_game(int me, int game)
                 st.port[i].kind = (uint8_t)(i < nplayers ? 0 : 3);
                 st.port[i].stocks = (uint8_t)(4 - frame / 200 % 4);
                 st.port[i].damage = (uint16_t)((frame + 37 * i) % 300);
+                st.port[i].fighter = (uint8_t)((T.character + i) % 26);
+            }
+            if (T.zelda) {
+                st.port[me].fighter = (uint8_t)(frame < frames / 2 ? 18 : 19);
+                static int said;
+                if (frame >= frames / 2 && said != game) { said = game; sp_log("group-test: Zelda becomes Sheik at %llu", now_ms()); }
             }
             group_match_status(&st);
         }
@@ -517,6 +525,7 @@ int main(int argc, char **argv)
     T.vanish_ms = group_ini_int(s, "test_vanish_ms", 0);
     T.expect_error = group_ini_int(s, "test_expect_error", 0);
     T.wait_each = group_ini_int(s, "test_wait_each", 0);
+    T.zelda = group_ini_int(s, "test_zelda", 0);
     free(ini);
 
     sp_log("group-test: starting as %s (data dir %s)", T.host ? "host" : "joiner", dir);

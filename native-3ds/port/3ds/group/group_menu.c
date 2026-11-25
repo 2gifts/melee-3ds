@@ -323,8 +323,8 @@ static void toast_update(unsigned present, char names[LOBBY_SLOTS][32])
         for (int i = 0; i < LOBBY_SLOTS; i++) {
             unsigned bit = 1u << i;
             if (!((present ^ toast_present) & bit)) continue;
-            snprintf(toast_text, sizeof(toast_text), "%.24s %s", toast_names[i][0] ? toast_names[i] : "A 3DS",
-                     (present & bit) ? "JOINED" : "LEFT");
+            snprintf(toast_text, sizeof(toast_text), "%s %s", toast_names[i][0] ? toast_names[i] : "A 3DS",
+                     (present & bit) ? "JOINED" : "LEFT");   /* a name is at most 31 bytes: 38 in all */
             toast_until = now + 4000000u;
             toast_port = i;
         }
@@ -359,6 +359,7 @@ int group_strip(GroupStrip *out)
     out->rules = st.rules;
     for (int i = 0; i < LOBBY_SLOTS; i++) {
         out->port[i].door = st.slot[i];
+        out->port[i].busy_why = st.busy_why[i];
         out->port[i].present = (int)(present >> i & 1);
         if (out->port[i].present) {
             out->port[i].signal = group_signal(i);

@@ -7,6 +7,7 @@
 #include "localwireless.h"   /* LW_TEXT_WIRELESS_OFF */
 #include "lw_link.h"
 #include "lw_platform.h"
+#include "../name_text.h"
 #include <stdio.h>
 #include <string.h>
 #define LW_MAX_NODES 4   /* consoles in one network */
@@ -43,6 +44,13 @@ static void fmt_err(char *err, int errlen, const char *what, Result r)
     snprintf(err, (size_t)errlen, "%s (0x%08lX)", what, (unsigned long)r);
 }
 
+/* A node's name, whole: udsGetNodeInfoUsername writes at most 10 UTF-8 bytes (3 kana of a 10-kana name), so convert
+ * the 10 UTF-16 units ourselves. "3DS" when it is empty. */
+static void node_name(const udsNodeInfo *ni, char *out, int cap)
+{
+    if (name_from_utf16(ni->username, 10, out, cap, NAME_MAX_CHARS) == 0) snprintf(out, (size_t)cap, "3DS");
+}
+
 const char *lw_uds_local_name(void) { return local_name; }
 unsigned lw_uds_nodes(void) { return node_mask; }
 int lw_uds_my_node(void) { return my_node; }
@@ -51,10 +59,13 @@ const char *lw_uds_node_name(int node) { return node >= 1 && node <= LW_LINK_MAX
 int lw_uds_open(int host, int port, int max_nodes, const char *name, char *err, int errlen)
 {
     (void)port;
-    (void)name;   /* the system name for now (another name would be udsInit's username) */
     lw_uds_close();
     scan_n = 0;
-    Result r = udsInit(SHAREDMEM, NULL);
+    /* the name the session picked (group.ini name=, the Mii name, the system name) goes into this console's node info,
+     * so every browser and lobby member sees it; NULL: libctru uses the system name */
+    char given[LW_LINK_NAME_MAX];
+    name_clean(name, given, sizeof(given), NAME_MAX_CHARS);
+    Result r = udsInit(SHAREDMEM, given[0] ? given : NULL);
     if (R_FAILED(r)) {
         /* Most often wireless communication is switched off. The code stays in the log, not on the screen. */
         lw_platform_log("lw: udsInit failed (0x%08lX)", (unsigned long)r);
@@ -64,7 +75,7 @@ int lw_uds_open(int host, int port, int max_nodes, const char *name, char *err, 
     up = 1;
     local_name[0] = 0;
     udsNodeInfo me;
-    if (R_SUCCEEDED(udsGenerateNodeInfo(&me, NULL))) udsGetNodeInfoUsername(&me, local_name);
+    if (R_SUCCEEDED(udsGenerateNodeInfo(&me, given[0] ? given : NULL))) node_name(&me, local_name, sizeof(local_name));
     lw_platform_log("uds: init ok, this console is \"%s\"", local_name);
     my_node = 0;
     node_mask = 0;
@@ -130,9 +141,7 @@ static void scan_refresh(void)
         in->max = n->max_nodes;
         for (int j = 0; j < UDS_MAXNODES; ++j)
             if (nets[k].nodes[j].NetworkNodeID == LW_LINK_HOST_NODE) {
-                char nm[16] = "";
-                udsGetNodeInfoUsername(&nets[k].nodes[j], nm);
-                snprintf(in->host, sizeof(in->host), "%s", nm[0] ? nm : "3DS");
+                node_name(&nets[k].nodes[j], in->host, sizeof(in->host));
             }
         if (!in->host[0]) snprintf(in->host, sizeof(in->host), "3DS");
         size_t got = 0;
@@ -172,9 +181,8 @@ int lw_uds_poll(char *err, int errlen)
                 if (!(node_mask & (1u << (n - 1)))) { node_names[n][0] = 0; continue; }
                 if (node_names[n][0]) continue;
                 udsNodeInfo ni;
-                char nm[16] = "";
-                if (R_SUCCEEDED(udsGetNodeInformation((u16)n, &ni))) udsGetNodeInfoUsername(&ni, nm);
-                snprintf(node_names[n], LW_LINK_NAME_MAX, "%s", nm[0] ? nm : "3DS");
+                if (R_SUCCEEDED(udsGetNodeInformation((u16)n, &ni))) node_name(&ni, node_names[n], LW_LINK_NAME_MAX);
+                else snprintf(node_names[n], LW_LINK_NAME_MAX, "3DS");
             }
         }
     }

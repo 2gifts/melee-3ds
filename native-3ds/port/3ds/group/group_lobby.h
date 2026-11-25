@@ -16,6 +16,8 @@
 #define LOBBY_BLOCK_SIZE 0x140     /* match block + trailer (SLIPPI_NET_MATCH_BLOCK_TOTAL rounded for the 3 flag bytes) */
 
 enum { LOBBY_HUMAN = 0, LOBBY_CPU = 1, LOBBY_EMPTY = 2 };
+/* Why a console is busy (its LCMD_BUSY code; the strip says what it is doing) */
+enum { LOBBY_BUSY_NONE = 0, LOBBY_BUSY_SLIDER = 1, LOBBY_BUSY_TAGS = 2, LOBBY_BUSY_RULES = 3, LOBBY_BUSY_NAMING = 4 };
 enum { LOBBY_CSS = 0, LOBBY_STAGE = 1, LOBBY_MATCH = 2, LOBBY_RESULTS = 3 };
 
 typedef struct {
@@ -58,6 +60,8 @@ typedef struct {
         uint8_t kind;              /* the slot: 0 Human, 1 CPU, 3 none (Player_GetPlayerSlotType) */
         uint8_t stocks;
         uint16_t damage;           /* damage %, or HP in stamina */
+        uint8_t fighter, costume;  /* the fighter the match shows now (external id: Zelda 18 becomes Sheik 19 while
+                                    * transformed) and its costume, for the bottom screens' stock icons */
     } port[LOBBY_SLOTS];
 } lobby_status;
 
@@ -71,6 +75,7 @@ typedef struct {
     uint8_t busy;                  /* bit n: the console on port n is busy (its name tag list, name entry, the host's
                                     * rules menu or a held slider); READY is hidden everywhere and Start is refused
                                     * while any bit is set */
+    uint8_t busy_why[LOBBY_SLOTS]; /* why port n is busy (LOBBY_BUSY_*), 0 when not; busy bit n == (busy_why[n] != 0) */
     uint8_t in_use;                /* bit n: door n is in use on some console (a slider held, its name tag list open,
                                     * its console in name entry or holding something): as on one GameCube, nobody else
                                     * may switch it between Human, CPU and closed meanwhile */
@@ -99,7 +104,8 @@ int lobby_cmd_door(uint8_t *out, int slot, const lobby_slot *s, int base);
 int lobby_cmd_start(uint8_t *out);                                      /* Start from the CSS: go to the stage select */
 int lobby_cmd_stage(uint8_t *out, int stage, int alt_stage);            /* a stage pick */
 int lobby_cmd_back(uint8_t *out);                                       /* B at the stage select: back to the CSS */
-/* The sender is busy (or no longer), and which doors it is using (bit n: door n; see lobby_state.in_use). */
+/* The sender is busy (a LOBBY_BUSY_* code; 0 no longer), and which doors it is using (bit n: door n; see
+ * lobby_state.in_use). An unknown code reads as LOBBY_BUSY_SLIDER (busy, no reason shown). */
 int lobby_cmd_busy(uint8_t *out, int busy, int doors);
 int lobby_cmd_results(uint8_t *out, int ready, int advance);            /* results screen: the sender's ready, and how far a
                                                                          * press moved it on (0: no change) */
@@ -137,7 +143,7 @@ int lobby_host_edit_door(lobby_host *h, int from, int slot, const lobby_slot *s,
 int lobby_host_start(lobby_host *h, int from);                               /* the host's own Start press */
 int lobby_host_pick_stage(lobby_host *h, int stage, int alt_stage);          /* the host's own stage pick */
 int lobby_host_set_rules(lobby_host *h, const lobby_rules *r);      /* the host changed the rules */
-int lobby_host_set_busy(lobby_host *h, int port, int busy);                  /* a console's busy bit (its own only) */
+int lobby_host_set_busy(lobby_host *h, int port, int busy);                  /* a console's busy code (its own only) */
 int lobby_host_set_in_use(lobby_host *h, int port, int doors);               /* the doors a console is using */
 /* Phase MATCH; call after lw_host_start. `again`: a follow-up game (sudden death) with the consoles of the last one. */
 void lobby_host_match_began(lobby_host *h, int again);

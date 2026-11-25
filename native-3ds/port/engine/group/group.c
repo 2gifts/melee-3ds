@@ -449,13 +449,20 @@ int mp_group_frame_mask(unsigned mask, int frame, int normal, int local_index, c
     return 0;
 }
 
+/* The console's name over that port's damage display, as the game's text bytes (a UTF-8 name would be misread: kana
+ * and accented letters go through the shared converter, port/3ds/name_text.c). */
 int mp_group_hud_name(int port, char* name, int size)
 {
+    char raw[MP_GROUP_NAME_MAX];
     if (mp_platform_group_players() <= 0) {
         return -1;
     }
     name[0] = 0;
-    mp_platform_group_player_name(port, name, size);
+    raw[0] = 0;
+    mp_platform_group_player_name(port, raw, sizeof raw);
+    if (raw[0] != 0) {
+        mp_platform_slippi_ui_sis(raw, name, size);
+    }
     return name[0] != 0;
 }
 
@@ -514,7 +521,7 @@ void mp_group_check_block(const StartMeleeData* vanilla, const unsigned char* bl
 }
 
 /* The name of the console that played each port, as the match began (see mp_group_result_name). */
-static char result_names[4][12];
+static char result_names[4][MP_GROUP_NAME_MAX];
 
 int mp_group_result_name(int port, char* out, int len)
 {

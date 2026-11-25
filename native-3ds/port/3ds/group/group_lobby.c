@@ -31,7 +31,7 @@ static const unsigned char block_template[0x138] = {
     0x3F, 0x80, 0x00, 0x00, 0x3F, 0x80, 0x00, 0x00, 0x3F, 0x80, 0x00, 0x00,
 };
 
-#define BLOB_ID 0x4C
+#define BLOB_ID 0x4D             /* 0x4D: each port's live fighter in the status, the busy reasons (Phase 6) */
 #define BLOB_HEADER (18 + LOBBY_MELEE_RULES)
 #define SLOT_BYTES 15
 #define MAX_FIGHTER 0x19            /* external character ids 0..0x19 (Melee's 26 fighters) */
@@ -39,11 +39,15 @@ static const unsigned char block_template[0x138] = {
 
 /* ---- the wire ---- */
 
-/* The status section follows the doors: valid, timer, seconds (u16), then per port kind, stocks, damage (u16). An older or
+/* The status section follows the doors: valid, timer, seconds (u16), then per port kind, stocks, damage (u16), fighter,
+ * costume. An older or
  * shorter blob without it decodes as "no status". */
-#define STATUS_BYTES (4 + 4 * LOBBY_SLOTS)
+#define STATUS_PORT 6
+#define STATUS_BYTES (4 + STATUS_PORT * LOBBY_SLOTS)
 /* Then the results section: played, ready, advance, and each port's stars. A blob without it decodes as all zero. */
 #define RESULTS_BYTES (3 + LOBBY_SLOTS)
+/* Then the busy reasons, a nibble per port (ports 0 and 1 in the first byte, low nibble first). */
+#define WHY_BYTES 2
 
 static int put_status(const lobby_status *st, uint8_t *out, int cap)
 {
@@ -53,9 +57,10 @@ static int put_status(const lobby_status *st, uint8_t *out, int cap)
     out[2] = (uint8_t)(st->seconds >> 8);
     out[3] = (uint8_t)st->seconds;
     for (int i = 0; i < LOBBY_SLOTS; ++i) {
-        uint8_t *p = out + 4 + 4 * i;
+        uint8_t *p = out + 4 + STATUS_PORT * i;
         p[0] = st->port[i].kind; p[1] = st->port[i].stocks;
         p[2] = (uint8_t)(st->port[i].damage >> 8); p[3] = (uint8_t)st->port[i].damage;
+        p[4] = st->port[i].fighter; p[5] = st->port[i].costume;
     }
     return STATUS_BYTES;
 }
@@ -68,10 +73,12 @@ static void get_status(lobby_status *st, const uint8_t *in, int len)
     st->timer = in[1] ? 1 : 0;
     st->seconds = (uint16_t)((in[2] << 8) | in[3]);
     for (int i = 0; i < LOBBY_SLOTS; ++i) {
-        const uint8_t *p = in + 4 + 4 * i;
+        const uint8_t *p = in + 4 + STATUS_PORT * i;
         st->port[i].kind = p[0] > 3 ? 3 : p[0];
         st->port[i].stocks = p[1];
         st->port[i].damage = (uint16_t)((p[2] << 8) | p[3]);
+        st->port[i].fighter = p[4] > MAX_FIGHTER ? 0 : p[4];
+        st->port[i].costume = p[5] > 5 ? 0 : p[5];
     }
 }
 
@@ -112,7 +119,11 @@ int lobby_encode(const lobby_state *s, uint8_t *out, int cap)
     out[n + 1] = s->ready & 0xF;
     out[n + 2] = s->advance;
     memcpy(out + n + 3, s->stars, LOBBY_SLOTS);
-    return n + RESULTS_BYTES;
+    n += RESULTS_BYTES;
+    if (cap - n < WHY_BYTES) return n;
+    out[n] = (uint8_t)((s->busy_why[0] & 0xF) | (s->busy_why[1] & 0xF) << 4);
+    out[n + 1] = (uint8_t)((s->busy_why[2] & 0xF) | (s->busy_why[3] & 0xF) << 4);
+    return n + WHY_BYTES;
 }
 
 /* Clamp a received slot to values the game can show. */
@@ -169,6 +180,14 @@ int lobby_decode(lobby_state *s, const uint8_t *in, int len)
         s->advance = in[results_at + 2] > 2 ? 2 : in[results_at + 2];
         memcpy(s->stars, in + results_at + 3, LOBBY_SLOTS);
     }
+    const int why_at = results_at + RESULTS_BYTES;
+    for (int i = 0; i < LOBBY_SLOTS; ++i) {
+        uint8_t w = len >= why_at + WHY_BYTES ? (uint8_t)(in[why_at + i / 2] >> (i % 2 * 4) & 0xF) : 0;
+        if (w > LOBBY_BUSY_NAMING) w = LOBBY_BUSY_SLIDER;
+        if (!(s->busy >> i & 1)) w = 0;
+        else if (!w) w = LOBBY_BUSY_SLIDER;               /* busy with no reason: a slider, as before */
+        s->busy_why[i] = w;
+    }
     return 0;
 }
 
@@ -190,7 +209,7 @@ int lobby_cmd_stage(uint8_t *out, int stage, int alt_stage)
 int lobby_cmd_back(uint8_t *out) { out[0] = LCMD_BACK; return 1; }
 int lobby_cmd_busy(uint8_t *out, int busy, int doors)
 {
-    out[0] = LCMD_BUSY; out[1] = busy ? 1 : 0; out[2] = (uint8_t)(doors & 0xF);
+    out[0] = LCMD_BUSY; out[1] = (uint8_t)(busy < 0 ? 0 : busy > 255 ? 255 : busy); out[2] = (uint8_t)(doors & 0xF);
     return 3;
 }
 int lobby_cmd_results(uint8_t *out, int ready, int advance)
@@ -253,7 +272,7 @@ int lobby_host_sync(lobby_host *h, unsigned present)
     for (int i = 0; i < LOBBY_SLOTS; ++i) {
         unsigned bit = 1u << i;
         if (!(diff & bit)) continue;
-        if (!(present & bit) && (h->st.busy & bit)) { h->st.busy &= ~bit; changed = 1; }   /* a stale bit would block Start */
+        if (!(present & bit) && (h->st.busy & bit)) { h->st.busy &= ~bit; h->st.busy_why[i] = 0; changed = 1; }   /* a stale bit would block Start */
         if (!(present & bit) && h->in_use_by[i]) changed |= lobby_host_set_in_use(h, i, 0);  /* its doors are free again */
         if (h->st.phase == LOBBY_MATCH || h->st.phase == LOBBY_RESULTS) {   /* the game owns the doors until its results end */
             /* a leave stays recorded when another console takes the port before the end: lobby_host_match_over
@@ -368,9 +387,11 @@ int lobby_host_set_busy(lobby_host *h, int port, int busy)
 {
     if (port < 0 || port >= LOBBY_SLOTS) return 0;
     uint8_t bit = (uint8_t)(1u << port);
-    uint8_t n = busy ? (uint8_t)(h->st.busy | bit) : (uint8_t)(h->st.busy & ~bit);
-    if (n == h->st.busy) return 0;
+    uint8_t why = busy <= 0 ? 0 : busy > LOBBY_BUSY_NAMING ? LOBBY_BUSY_SLIDER : (uint8_t)busy;
+    uint8_t n = why ? (uint8_t)(h->st.busy | bit) : (uint8_t)(h->st.busy & ~bit);
+    if (n == h->st.busy && why == h->st.busy_why[port]) return 0;
     h->st.busy = n;
+    h->st.busy_why[port] = why;
     return LOBBY_CHANGED;
 }
 

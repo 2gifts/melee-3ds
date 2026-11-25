@@ -70,7 +70,7 @@ def main():
             objects.append(obj)
         return objects
 
-    lw = compile_all(sorted(LW.glob('*.c')), 'lw_')
+    lw = compile_all(sorted(LW.glob('*.c')) + [ROOT / 'port/3ds/name_text.c'], 'lw_')
     group = compile_all(sorted(GROUP.glob('*.c')), 'group_')
     plat = compile_all([SLIPPI / 'slippi_plat.c'], 'plat_')
 
