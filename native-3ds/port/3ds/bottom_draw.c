@@ -873,9 +873,10 @@ static void group_strip_page(const GroupStrip* g,unsigned scene){
         }else text(20,y+3,"-",15,muted);
         /* what the port is doing: why it is busy (on the character select), else its state; the fighter itself is the
          * badge (without the icons, its name as before) */
-        static const char*const why_text[5]={"","","CHOOSING A NAME TAG","SETTING THE RULES","ENTERING A NAME"};
+        static const char*const why_text[6]={"","","CHOOSING A NAME TAG","SETTING THE RULES","ENTERING A NAME","VIEWING A PRIZE"};
         int why=g->port[i].busy_why,css=g->phase==LOBBY_CSS;
-        if(css&&g->port[i].present&&why>=2&&why<=4)snprintf(b,sizeof(b),"%s",why_text[why]);
+        if(css&&g->port[i].present&&why>=2&&why<=5)snprintf(b,sizeof(b),"%s",why_text[why]);
+        else if(g->picker==i)snprintf(b,sizeof(b),"%s","PICKS THE STAGE");   /* only that console has a cursor */
         else if(d->kind==LOBBY_EMPTY)snprintf(b,sizeof(b),"%s",g->port[i].present?"CLOSED":"OPEN");
         else if(stocks_ready)snprintf(b,sizeof(b),"%s",g->phase==LOBBY_MATCH||g->phase==LOBBY_RESULTS?(d->kind==LOBBY_CPU?"CPU":"PLAYING"):d->kind==LOBBY_CPU?"CPU":d->chosen==1?"CHOSEN":"CHOOSING");
         else if(g->phase==LOBBY_MATCH||g->phase==LOBBY_RESULTS)snprintf(b,sizeof(b),"%s%s",d->kind==LOBBY_CPU?"CPU ":"",d->chosen==1&&d->fighter<26?names[d->fighter]:"PLAYING");

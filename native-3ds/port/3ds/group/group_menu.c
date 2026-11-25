@@ -383,6 +383,7 @@ int group_strip(GroupStrip *out)
     out->active = 1;
     out->me = group_my_port();
     out->phase = st.phase;
+    out->picker = st.phase == LOBBY_STAGE && st.sss_picker < LOBBY_SLOTS ? st.sss_picker : -1;
     out->watching = group_watching();
     {
         static int was;

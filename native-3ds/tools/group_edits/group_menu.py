@@ -144,10 +144,11 @@ FIXES = {
     ],
     'melee/gm/gmmenumode.c': [
         ('#include "gm_1A3F.h"\n', DECL + '#include "gm_1A3F.h"\n', 1),
-        # Back from the lobby (also the HANYU mode) lands on the VS menu with Melee hovered, not Slippi's Online menu.
+        # Back from the lobby (also the HANYU mode), or from the challenger fight that leaving it may start, lands on the VS
+        # menu with Melee hovered, not Slippi's Online menu.
         ('    previous_mode = gm_GetPreviousGameMode();\n',
          '    previous_mode = gm_GetPreviousGameMode();\n'
-         '    if (previous_mode == GM_HANYU_CSS && mp_platform_group_returning()) {\n'
+         '    if ((previous_mode == GM_HANYU_CSS || previous_mode == GM_CHALLENGER_APPROACH) && mp_platform_group_returning()) {\n'
          '        mp_slippi_menu_prepare();\n'
          '        data->menu_kind = MENU_KIND_VS;\n'
          '        data->hovered_selection = SEL_VS_MELEE;\n'

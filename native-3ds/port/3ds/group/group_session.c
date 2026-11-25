@@ -128,6 +128,11 @@ void group_config_load(group_config *c)
     c->net_thread_core = group_ini_int(s, "net_thread_core", -2);
     c->auto_players = group_ini_int(s, "auto_players", 2);
     c->test_wireless_off = group_ini_int(s, "test_wireless_off", 0);
+    c->test_scan_locked = group_ini_int(s, "test_scan_locked", 0);
+#ifdef MP_SMOKE_TEST
+    c->test_vs_matches = group_ini_int(s, "test_vs_matches", 0);
+    c->test_nametag = group_ini_int(s, "test_nametag", 0);
+#endif
     c->test_screen_name_fail = group_ini_int(s, "test_screen_name_fail", 0);
     {
         char raw[64];
@@ -343,7 +348,7 @@ static void auto_host(void)
         if (all) host_apply(lobby_host_start(&G.host_lobby, 0));
     }
     if (s->phase == LOBBY_STAGE && !s->stage_picked) {
-        host_apply(lobby_host_pick_stage(&G.host_lobby, G.auto_stage, 0));
+        host_apply(lobby_host_pick_stage(&G.host_lobby, 0, G.auto_stage, 0));
         G.auto_started = 1;
     }
 }
@@ -420,7 +425,9 @@ static void worker(void *arg)
     while (!G.thread_stop) {
         sp_lock();
         service();
+        if (G.cfg.test_scan_locked) lw_scan_step();   /* tests: the old way, scanning with the lock held */
         sp_unlock();
+        lw_scan_step();   /* outside the lock: the engine reads the list while the hardware scans */
         sp_sleep_us(2000);
     }
 }
@@ -461,7 +468,10 @@ int group_session_start(int host, int automatic)
     c.test_drop_pct = G.cfg.drop_pct;
     c.test_wireless_off = G.cfg.test_wireless_off;
     pick_name(&G.cfg, c.name, sizeof(c.name));
-    if (host) lobby_host_init(&G.host_lobby, 1);
+    if (host) {
+        lobby_host_init(&G.host_lobby, 1);
+        G.host_lobby.rng = (uint32_t)lw_platform_time_us() | 1u;   /* the Loser rule's first picker */
+    }
     G.has_mii = my_mii(&G.cfg, G.mii);            /* a host sends it; a console browsing shows it on its Host button */
     if (G.has_mii && G.cfg.test_mii_corrupt) sp_log("group: Mii corrupted in the beacon for the test (test_mii_corrupt)");
     sp_log("group: %s (delay %d)", host ? "hosting a game" : "looking for games", G.cfg.delay);
@@ -649,6 +659,8 @@ int group_lobby_get(MpGroupLobby *out)
     out->rules.mode = v->rules.mode; out->rules.time_limit = v->rules.time_limit;
     out->rules.stock_count = v->rules.stock_count; out->rules.stock_time_limit = v->rules.stock_time_limit;
     out->rules.handicap = v->rules.handicap;
+    out->rules.stage_sel = v->rules.stage_sel;
+    out->sss_picker = v->sss_picker;
     for (int i = 0; i < 4; ++i) {
         const lobby_slot *l = &v->slot[i];
         MpGroupDoor *d = &out->door[i];
@@ -687,7 +699,7 @@ void group_lobby_stage(int stage, int alt_stage)
 {
     sp_lock();
     if (G.open && G.status == ST_CONNECTED) {
-        if (G.host) host_apply(lobby_host_pick_stage(&G.host_lobby, stage, alt_stage));
+        if (G.host) host_apply(lobby_host_pick_stage(&G.host_lobby, 0, stage, alt_stage));
         else { uint8_t c[LW_MAX_COMMAND]; lw_send_command(c, lobby_cmd_stage(c, stage, alt_stage)); }
     }
     sp_unlock();
@@ -727,6 +739,7 @@ void group_lobby_rules(const MpGroupRules *r)
     memcpy(x.melee, r->melee, LOBBY_MELEE_RULES);
     x.mode = r->mode; x.time_limit = r->time_limit; x.stock_count = r->stock_count;
     x.stock_time_limit = r->stock_time_limit; x.handicap = r->handicap;
+    x.stage_sel = r->stage_sel <= LOBBY_SSS_LOSER ? r->stage_sel : LOBBY_SSS_ANY;
     sp_lock();
     if (G.open && G.host) host_apply(lobby_host_set_rules(&G.host_lobby, &x));   /* only the host sets the rules */
     sp_unlock();
@@ -791,14 +804,23 @@ void group_results_press(int ready, int advance)
     sp_unlock();
 }
 
-void group_results_end(const unsigned char *stars, const unsigned char *handicap)
+void group_results_end(const unsigned char *stars, const unsigned char *handicap, int loser)
 {
     sp_lock();
     if (G.open && G.host) {
+        lobby_host_set_loser(&G.host_lobby, loser);
         host_apply(lobby_host_results_over(&G.host_lobby, stars, handicap));
         sp_log("group: the results are over: stars %u/%u/%u/%u", stars[0], stars[1], stars[2], stars[3]);
     }
     sp_unlock();
+}
+
+int group_test_value(int which)
+{
+    sp_lock();
+    int n = !G.open ? 0 : which == 0 ? G.cfg.test_vs_matches : which == 1 ? G.cfg.test_nametag : 0;
+    sp_unlock();
+    return n;
 }
 
 void group_sudden_death(void)
@@ -833,6 +855,7 @@ void group_net_poll(void)
         sp_lock();
         service();
         sp_unlock();
+        if (G.open) lw_scan_step();
     }
     sp_log_drain();
 }

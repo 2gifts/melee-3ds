@@ -19,7 +19,8 @@ Group play is part of both regular builds (everything unlocked and fresh save), 
 7. [Leaving](#leaving)
 8. [Your save](#your-save)
 9. [Good to know](#good-to-know)
-10. [Troubleshooting](#troubleshooting)
+10. [Known limitations](#known-limitations)
+11. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -67,9 +68,19 @@ the host**, and each console that joins takes the next free port.
 
 ### The stage select
 
-Any player can pick the stage, and the first pick counts for everyone. If the host picks a stage your save hasn't
-unlocked yet, your console shows "Now loading" without revealing the stage, and you play on it anyway. Fighters you
-haven't unlocked work the same way.
+The host's **Stage Selection** rule (Rules → Additional Rules) decides who picks, as on one console:
+
+- **Any:** any player can pick, and the first pick counts for everyone.
+- **Turns** and **Loser:** one player picks (taking turns, or the loser of the last match). Only that player's console
+  has a cursor; the bottom screen of the others says who **PICKS THE STAGE**. If that player leaves, the pick passes
+  to the next player.
+- **Random** and **Ordered:** the host's console chooses the stage, and nobody picks.
+
+The **Random** icon picks from the **host's** save, whoever presses it: the host's Random Stage Switch, the stages the
+host has unlocked, and the host's recent picks. Your console shows "Now loading" until the match starts.
+
+If a stage your save hasn't unlocked yet is chosen, your console shows "Now loading" without revealing the stage, and
+you play on it anyway. Fighters you haven't unlocked work the same way.
 
 ## Matches
 
@@ -82,6 +93,9 @@ Every console runs the same match in step. The game waits for the slowest consol
   their window. The results move on when every player has pressed through them. Then everyone returns to the lobby
   for the next match.
 - Stars and auto handicap work as in normal Versus.
+- If the match earned something on your save (a new stage, a trophy, a message like "You played 1000 VS matches"),
+  your console shows it after the results, as in normal Versus. Meanwhile the other consoles show you as **VIEWING A
+  PRIZE**, and the next match waits for you.
 
 ## Joining during a match
 
@@ -92,6 +106,8 @@ timer, and each player's stocks and damage. You join the lobby when the match en
 
 - **Press B on the character select screen** to leave the lobby. If you are the host and other players are there, you
   are asked to confirm first.
+- If your save has earned a hidden fighter, **"A new challenger approaches!"** starts when you leave the lobby (or when
+  the session ends), as it would after a Versus match on one console. Beat the challenger to unlock it.
 - **When the host leaves, the session ends for everyone.** The other consoles go back to the Group page, which says why
   the session ended (the host left, stopped responding, and so on).
 - If a console loses the connection, it goes back to the Group page with the reason.
@@ -100,8 +116,15 @@ timer, and each player's stocks and damage. You join the lobby when the match en
 
 Each console uses its own save. Nobody else's progress is copied to yours, and your unlocks don't change.
 
-Group matches count toward your **total VS matches and play time**. They don't write **VS Records**, and they don't
-give trophies or trigger a "new challenger" fight.
+Group matches count on your save as Versus matches on one console do:
+
+- your **total VS matches and play time**;
+- the **VS Records** (Data → VS Records): every fighter in the match, and your own name tag. Other players' name tags
+  belong to their saves, so KOs against them aren't credited to a tag of yours;
+- **stage unlocks, trophies and special messages**, shown after the results;
+- **hidden fighters**: their "new challenger" fight comes when you leave the lobby rather than after the match, so the
+  others don't wait for it. Unlike one console, any message or trophy the match earned is shown right away, even when
+  a challenger is due.
 
 ## Good to know
 
@@ -111,8 +134,18 @@ give trophies or trigger a "new challenger" fight.
   normally again once you leave.
 - Keep the consoles close together. Walls and distance weaken the signal; the bars on the bottom screen show how good
   each connection is.
-- **The music may pause briefly on the Available Games list** while the console looks for games and draws the hosts'
-  Miis. This is a known issue.
+
+## Known limitations
+
+- **The game freezes briefly while it draws Miis.** Each Mii head on the Available Games list (and your own, on the
+  HOST GAME button) is drawn the first time it is shown. While it is being drawn, the whole game stops for a moment:
+  both screens freeze, the buttons on screen don't respond, and the music pauses. You notice it most when you open
+  the list and several Miis are drawn one after another, but it also happens when a new game appears, when you turn
+  to a page you haven't seen yet, and when you come back to the list a while after leaving it. Wait for the Miis to
+  appear before tapping. Games without a Mii show the Smash emblem and cause no freeze.
+- **The stage select cursor has no player label.** When one player picks the stage (Stage Selection Turns or Loser),
+  the cursor should show that player's port ("P1", "P2"...), but it is always a plain white ring. The other consoles'
+  bottom screens still say who **PICKS THE STAGE**. This also happens in solo Versus.
 
 ## Troubleshooting
 

@@ -22,7 +22,9 @@ void mp_group_vs_enter(struct GameModeState* state);
 void mp_group_vs_exit(struct GameModeState* state, int results_state, int sudden_state);
 void mp_group_sudden_exit(struct GameModeState* state, int results_state);
 void mp_group_results_enter(struct GameModeState* state);
-void mp_group_results_exit(struct GameModeState* state, int css_state);
+/* After the results: the character select, or the prize screen when this save earned a notice or trophy. */
+void mp_group_results_exit(struct GameModeState* state, int css_state, int prize_state);
+void mp_group_prize_enter(struct GameModeState* state);
 
 /* online.c's match. mp_group_check_block runs first, while `data` is still what vanilla built (the host logs where
  * its block differs from it). */

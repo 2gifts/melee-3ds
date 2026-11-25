@@ -31,7 +31,7 @@ static const unsigned char block_template[0x138] = {
     0x3F, 0x80, 0x00, 0x00, 0x3F, 0x80, 0x00, 0x00, 0x3F, 0x80, 0x00, 0x00,
 };
 
-#define BLOB_ID 0x4D             /* 0x4D: each port's live fighter in the status, the busy reasons */
+#define BLOB_ID 0x4E             /* 0x4E: the Stage Selection rule and the stage picker */
 #define BLOB_HEADER (18 + LOBBY_MELEE_RULES)
 #define SLOT_BYTES 15
 #define MAX_FIGHTER 0x19            /* external character ids 0..0x19 (Melee's 26 fighters) */
@@ -48,6 +48,8 @@ static const unsigned char block_template[0x138] = {
 #define RESULTS_BYTES (3 + LOBBY_SLOTS)
 /* Then the busy reasons, a nibble per port (ports 0 and 1 in the first byte, low nibble first). */
 #define WHY_BYTES 2
+/* Then the stage select: the host's Stage Selection rule and the stage picker. */
+#define SSS_BYTES 2
 /* Then the consoles that left the running match: a mask, and for each bit in it, the name's length and bytes. A name
  * that does not fit (more than two long names) is left out with its bit. */
 
@@ -126,6 +128,10 @@ int lobby_encode(const lobby_state *s, uint8_t *out, int cap)
     out[n] = (uint8_t)((s->busy_why[0] & 0xF) | (s->busy_why[1] & 0xF) << 4);
     out[n + 1] = (uint8_t)((s->busy_why[2] & 0xF) | (s->busy_why[3] & 0xF) << 4);
     n += WHY_BYTES;
+    if (cap - n < SSS_BYTES) return n;
+    out[n] = s->rules.stage_sel;
+    out[n + 1] = s->sss_picker;
+    n += SSS_BYTES;
     if (cap - n < 1) return n;
     int mask_at = n++;
     uint8_t gone = 0;
@@ -199,12 +205,18 @@ int lobby_decode(lobby_state *s, const uint8_t *in, int len)
     const int why_at = results_at + RESULTS_BYTES;
     for (int i = 0; i < LOBBY_SLOTS; ++i) {
         uint8_t w = len >= why_at + WHY_BYTES ? (uint8_t)(in[why_at + i / 2] >> (i % 2 * 4) & 0xF) : 0;
-        if (w > LOBBY_BUSY_NAMING) w = LOBBY_BUSY_SLIDER;
+        if (w > LOBBY_BUSY_MAX) w = LOBBY_BUSY_SLIDER;
         if (!(s->busy >> i & 1)) w = 0;
         else if (!w) w = LOBBY_BUSY_SLIDER;               /* busy with no reason: a slider, as before */
         s->busy_why[i] = w;
     }
     int at = why_at + WHY_BYTES;
+    s->sss_picker = LOBBY_PICK_ANY;
+    if (len >= at + SSS_BYTES) {
+        s->rules.stage_sel = in[at] > LOBBY_SSS_LOSER ? LOBBY_SSS_ANY : in[at];
+        s->sss_picker = in[at + 1] < LOBBY_SLOTS ? in[at + 1] : LOBBY_PICK_ANY;
+    }
+    at += SSS_BYTES;
     if (len >= at + 1) {
         uint8_t mask = in[at++] & 0xF;
         for (int i = 0; i < LOBBY_SLOTS; ++i) {
@@ -350,6 +362,10 @@ void lobby_host_init(lobby_host *h, unsigned present)
 {
     memset(h, 0, sizeof(*h));
     default_rules(&h->st.rules);
+    h->st.sss_picker = LOBBY_PICK_ANY;
+    h->turn = -1;
+    h->loser = -1;
+    h->rng = 0x2545F491u;
     for (int i = 0; i < LOBBY_SLOTS; ++i) reset_slot(&h->st.slot[i], LOBBY_EMPTY);
     h->present = 0;
     lobby_host_sync(h, present);
@@ -374,6 +390,8 @@ static int console_leaves(lobby_host *h, int i)
     if (l->chosen != 1) { l->kind = LOBBY_EMPTY; l->chosen = 0; }   /* nothing in the door to keep playing */
     return 1;
 }
+
+static int next_picker(const lobby_host *h, int from);
 
 int lobby_host_sync(lobby_host *h, unsigned present)
 {
@@ -411,8 +429,48 @@ int lobby_host_sync(lobby_host *h, unsigned present)
     }
     h->present = present & 0xF;
     if (h->st.phase == LOBBY_STAGE && !(present & (1u << h->st.starter))) { h->st.phase = LOBBY_CSS; h->st.stage_picked = 0; changed = 1; }
+    if (h->st.phase == LOBBY_STAGE && h->st.sss_picker < LOBBY_SLOTS && !(present & (1u << h->st.sss_picker)) &&
+        !h->st.stage_picked) {
+        /* the picker left: as a controller unplugged on one console, the pick passes to the next Human port */
+        h->st.sss_picker = (uint8_t)next_picker(h, h->st.sss_picker + 1);
+        changed = 1;
+    }
     return changed ? LOBBY_CHANGED : 0;
 }
+
+/* The Stage Selection rule's next picker from `from` on (wrapping): a port with a console and a Human door, as vanilla's
+ * pad_inline looks for a connected controller. LOBBY_PICK_ANY when there is none. */
+static int next_picker(const lobby_host *h, int from)
+{
+    for (int k = 0; k < LOBBY_SLOTS; ++k) {
+        int p = (from + k) & 3;
+        if ((h->present >> p & 1) && h->st.slot[p].kind == LOBBY_HUMAN) return p;
+    }
+    return LOBBY_PICK_ANY;
+}
+
+/* Who picks the stage this time, by the host's Stage Selection rule (vanilla's gm_80167FC4, the host deciding). */
+static int decide_picker(lobby_host *h)
+{
+    switch (h->st.rules.stage_sel) {
+    case LOBBY_SSS_RANDOM:
+    case LOBBY_SSS_ORDERED:
+        return 0;                                  /* the host's stage select picks from its save at once */
+    case LOBBY_SSS_TURNS: {
+        int p = next_picker(h, h->turn + 1);
+        if (p != LOBBY_PICK_ANY) h->turn = (int8_t)p;
+        return p;
+    }
+    case LOBBY_SSS_LOSER:
+        if (h->loser >= 0 && h->loser < LOBBY_SLOTS) return next_picker(h, h->loser);
+        h->rng = h->rng * 1103515245u + 12345u;    /* the first match: a random port, then the next Human one */
+        return next_picker(h, (int)(h->rng >> 16) & 3);
+    default:
+        return LOBBY_PICK_ANY;
+    }
+}
+
+void lobby_host_set_loser(lobby_host *h, int port) { h->loser = (int8_t)(port >= 0 && port < LOBBY_SLOTS ? port : -1); }
 
 int lobby_can_start(const lobby_state *s)
 {
@@ -459,16 +517,31 @@ int lobby_host_start(lobby_host *h, int from)
     h->st.phase = LOBBY_STAGE;
     h->st.starter = (uint8_t)(from & 3);
     h->st.stage_picked = 0;
+    h->st.sss_picker = (uint8_t)decide_picker(h);
     return LOBBY_CHANGED | LOBBY_STAGE_REACHED;
 }
 
-int lobby_host_pick_stage(lobby_host *h, int stage, int alt_stage)
+int lobby_host_pick_stage(lobby_host *h, int from, int stage, int alt_stage)
 {
-    if (h->st.phase != LOBBY_STAGE || h->st.stage_picked) return 0;   /* the first pick wins */
+    if (h->st.phase != LOBBY_STAGE) return 0;
+    if (h->st.stage_picked) {
+        /* the host's console picking for a random pick: that stage replaces it, and the match starts */
+        if (h->st.stage != LOBBY_STAGE_RANDOM || from != 0 || stage == LOBBY_STAGE_RANDOM) return 0;
+    } else if (h->st.sss_picker < LOBBY_SLOTS && from != h->st.sss_picker) {
+        return 0;                                  /* not this console's pick (Turns, Loser, the host's Random) */
+    }
     h->st.stage = (uint16_t)stage;
     h->st.alt_stage = (uint8_t)alt_stage;
     h->st.stage_picked = 1;
-    return LOBBY_CHANGED | LOBBY_START_MATCH;
+    return stage == LOBBY_STAGE_RANDOM ? LOBBY_CHANGED : LOBBY_CHANGED | LOBBY_START_MATCH;
+}
+
+int lobby_host_back(lobby_host *h, int from)
+{
+    if (h->st.phase != LOBBY_STAGE || h->st.stage_picked) return 0;
+    if (h->st.sss_picker < LOBBY_SLOTS && from != h->st.sss_picker) return 0;
+    h->st.phase = LOBBY_CSS;
+    return LOBBY_CHANGED;
 }
 
 int lobby_host_set_rules(lobby_host *h, const lobby_rules *r)
@@ -505,7 +578,7 @@ int lobby_host_set_busy(lobby_host *h, int port, int busy)
 {
     if (port < 0 || port >= LOBBY_SLOTS) return 0;
     uint8_t bit = (uint8_t)(1u << port);
-    uint8_t why = busy <= 0 ? 0 : busy > LOBBY_BUSY_NAMING ? LOBBY_BUSY_SLIDER : (uint8_t)busy;
+    uint8_t why = busy <= 0 ? 0 : busy > LOBBY_BUSY_MAX ? LOBBY_BUSY_SLIDER : (uint8_t)busy;
     uint8_t n = why ? (uint8_t)(h->st.busy | bit) : (uint8_t)(h->st.busy & ~bit);
     if (n == h->st.busy && why == h->st.busy_why[port]) return 0;
     h->st.busy = n;
@@ -544,17 +617,14 @@ int lobby_host_command(lobby_host *h, int from, const uint8_t *cmd, int len)
         case LCMD_START: return lobby_host_start(h, from);
         case LCMD_STAGE:
             if (len < 4) return 0;
-            return lobby_host_pick_stage(h, (cmd[1] << 8) | cmd[2], cmd[3]);
+            return lobby_host_pick_stage(h, from, (cmd[1] << 8) | cmd[2], cmd[3]);
         case LCMD_BUSY:                            /* the sender's own bit only, and the doors it is using */
             if (len < 2) return 0;
             return lobby_host_set_busy(h, from, cmd[1]) | lobby_host_set_in_use(h, from, len >= 3 ? cmd[2] : 0);
         case LCMD_RESULTS:
             if (len < 3) return 0;
             return lobby_host_results(h, from, cmd[1], cmd[2]);
-        case LCMD_BACK:
-            if (h->st.phase != LOBBY_STAGE || h->st.stage_picked) return 0;
-            h->st.phase = LOBBY_CSS;
-            return LOBBY_CHANGED;
+        case LCMD_BACK: return lobby_host_back(h, from);
         default: return 0;
     }
 }

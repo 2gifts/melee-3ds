@@ -345,7 +345,7 @@ static int results_screen(int me, int game)
                     pressed = 1;
                     sp_log("group-test: ready on the results screen at %llu", now_ms());
                 }
-                if (group_is_host() && (v.ready & v.played) == v.played) group_results_end(v.stars, NULL);
+                if (group_is_host() && (v.ready & v.played) == v.played) group_results_end(v.stars, NULL, -1);
             }
         }
         sp_sleep_us(10000);

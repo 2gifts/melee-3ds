@@ -84,6 +84,9 @@ int lw_scan_count(void);
 int lw_scan_get(int i, lw_net *out);    /* 0 ok, -1 no such game */
 int lw_join(uint32_t key);              /* 0: joining; -1: failed (lw_error says why), still browsing */
 int lw_browsing(void);                  /* 1 until lw_join succeeds */
+/* Browsing: the scan the last lw_poll asked for, if any. It blocks while the hardware scans (UDS), so call it without
+ * any lock the engine waits on: the list only changes inside lw_poll, which merges what this found. */
+void lw_scan_step(void);
 void lw_host_set_beacon(const uint8_t *blob, int len);   /* host: what browsing consoles see of this lobby (<= LW_MAX_BEACON) */
 
 /* ---- the lobby ----

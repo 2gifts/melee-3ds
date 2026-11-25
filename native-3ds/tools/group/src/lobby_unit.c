@@ -496,7 +496,7 @@ int main(void)
         lobby_state x;
         uint8_t b[LOBBY_BLOB_MAX];
         lobby_host_init(&u, 0xF);
-        for (int code = 0; code <= LOBBY_BUSY_NAMING; ++code) {
+        for (int code = 0; code <= LOBBY_BUSY_MAX; ++code) {
             busy_cmd(&u, 2, code, 0);
             CHECK(u.st.busy_why[2] == code && ((u.st.busy >> 2) & 1) == (code != 0));
             int n = lobby_encode(&u.st, b, sizeof(b));
@@ -600,6 +600,76 @@ int main(void)
             u.st.phase = (uint8_t)phase;
             CHECK(lobby_encode_beacon(&u.st, mii, b, sizeof(b)) <= 200);
         }
+    }
+
+    /* the Stage Selection rule: the host decides who picks, or the stage */
+    {
+        lobby_host u;
+        lobby_state x;
+        uint8_t b[LOBBY_BLOB_MAX], c[24];
+        lobby_host_init(&u, 0x7);                                     /* consoles on ports 0, 1, 2 */
+        u.st.slot[0] = fighter(LOBBY_HUMAN, 2, 0);
+        u.st.slot[1] = fighter(LOBBY_CPU, 9, 0);                       /* a CPU: never the picker */
+        u.st.slot[2] = fighter(LOBBY_HUMAN, 4, 0);
+        u.st.slot[3] = fighter(LOBBY_HUMAN, 5, 0);                     /* no console on port 3 */
+        /* Any: every console picks; the rule and picker survive the wire */
+        CHECK(lobby_host_start(&u, 0) && u.st.sss_picker == LOBBY_PICK_ANY);
+        CHECK(lobby_decode(&x, b, lobby_encode(&u.st, b, sizeof(b))) == 0 && x.sss_picker == LOBBY_PICK_ANY);
+        CHECK(lobby_host_pick_stage(&u, 2, 0x20, 0) & LOBBY_START_MATCH);
+        /* Turns: round the Human ports with a console (0, 2, 0, ...), skipping the CPU and the empty port */
+        u.st.phase = LOBBY_CSS;
+        u.st.rules.stage_sel = LOBBY_SSS_TURNS;
+        int want[] = {0, 2, 0, 2};
+        for (int k = 0; k < 4; ++k) {
+            u.st.phase = LOBBY_CSS;
+            CHECK(lobby_host_start(&u, 0) && u.st.sss_picker == want[k]);
+            CHECK(lobby_decode(&x, b, lobby_encode(&u.st, b, sizeof(b))) == 0 && x.sss_picker == want[k] &&
+                  x.rules.stage_sel == LOBBY_SSS_TURNS);
+        }
+        /* only the picker picks, and only the picker goes back */
+        int other = u.st.sss_picker == 0 ? 2 : 0, picker = u.st.sss_picker;
+        CHECK(!lobby_host_command(&u, other, c, lobby_cmd_stage(c, 0x20, 0)) && !u.st.stage_picked);
+        CHECK(!lobby_host_command(&u, other, c, lobby_cmd_back(c)) && u.st.phase == LOBBY_STAGE);
+        CHECK(lobby_host_command(&u, picker, c, lobby_cmd_back(c)) && u.st.phase == LOBBY_CSS);
+        /* the picker leaving passes the pick to the next Human port with a console; a pick from it is refused */
+        u.st.rules.stage_sel = LOBBY_SSS_LOSER;
+        lobby_host_set_loser(&u, 2);
+        CHECK(lobby_host_start(&u, 2) && u.st.sss_picker == 2);      /* port 2 started: its leaving would end it */
+        u.st.phase = LOBBY_CSS;
+        CHECK(lobby_host_start(&u, 0) && u.st.sss_picker == 2);      /* Loser: the recorded loser */
+        CHECK(lobby_host_sync(&u, 0x3) & LOBBY_CHANGED);               /* port 2 leaves */
+        CHECK(u.st.phase == LOBBY_STAGE && u.st.sss_picker == 0);
+        CHECK(!lobby_host_command(&u, 2, c, lobby_cmd_stage(c, 0x20, 0)));
+        CHECK(lobby_host_pick_stage(&u, 0, 0x1F, 0) & LOBBY_START_MATCH);
+        /* Loser with the loser gone before Start: the next Human port with a console from it */
+        u.st.phase = LOBBY_CSS;
+        lobby_host_set_loser(&u, 3);
+        CHECK(lobby_host_start(&u, 0) && u.st.sss_picker == 0);
+        /* Loser, first match: a random Human port with a console, never the CPU or an empty port */
+        for (int k = 0; k < 16; ++k) {
+            u.st.phase = LOBBY_CSS;
+            lobby_host_set_loser(&u, -1);
+            CHECK(lobby_host_start(&u, 0) && u.st.sss_picker == 0);   /* only port 0 is Human with a console now */
+        }
+        /* Random and Ordered: the host (port 0) picks from its save at once */
+        u.st.phase = LOBBY_CSS;
+        u.st.rules.stage_sel = LOBBY_SSS_RANDOM;
+        CHECK(lobby_host_start(&u, 0) && u.st.sss_picker == 0);
+        /* a random pick: taken, starts nothing; then the host's console names the stage and the match starts */
+        u.st.rules.stage_sel = LOBBY_SSS_ANY;
+        u.st.phase = LOBBY_CSS;
+        lobby_host_sync(&u, 0x7);
+        CHECK(lobby_host_start(&u, 0) && u.st.sss_picker == LOBBY_PICK_ANY);
+        int r = lobby_host_command(&u, 1, c, lobby_cmd_stage(c, LOBBY_STAGE_RANDOM, 0));
+        CHECK((r & LOBBY_CHANGED) && !(r & LOBBY_START_MATCH) && u.st.stage == LOBBY_STAGE_RANDOM);
+        CHECK(!lobby_host_command(&u, 2, c, lobby_cmd_stage(c, 0x20, 0)));          /* the first pick still wins */
+        CHECK(!lobby_host_command(&u, 1, c, lobby_cmd_stage(c, 0x20, 0)));          /* only the host resolves it */
+        CHECK(!lobby_host_command(&u, 1, c, lobby_cmd_back(c)) && u.st.phase == LOBBY_STAGE);
+        CHECK((lobby_host_pick_stage(&u, 0, 0x1F, 0) & LOBBY_START_MATCH) && u.st.stage == 0x1F);
+        CHECK(!lobby_host_pick_stage(&u, 0, 0x20, 0));                              /* and only once */
+        /* a joiner's own rule plays no part: an unknown rule on the wire reads as Any */
+        u.st.rules.stage_sel = 9;
+        CHECK(lobby_decode(&x, b, lobby_encode(&u.st, b, sizeof(b))) == 0 && x.rules.stage_sel == LOBBY_SSS_ANY);
     }
 
     printf("lobby_unit: ok\n");

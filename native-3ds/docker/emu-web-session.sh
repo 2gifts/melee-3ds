@@ -14,6 +14,8 @@ ln -sfn "$MELEE_GAME_FILES" "$SD/files"
 [ ! -d "$MELEE_SLIPPI_FILES" ] || ln -sfn "$MELEE_SLIPPI_FILES" "$SD/slippi/files"
 printf 'prefetch=0\ndelay=2\n' > "$SD/slippi/config.ini"
 printf 'menu=1\nudp=1\nport=44100\ndelay=2\n' > "$SD/slippi/group.ini"
+# MELEE_WEB_GROUP_INI (emu-web.sh): more group.ini lines for every console, ';' between them
+[ -z "${MELEE_WEB_GROUP_INI:-}" ] || printf '%s\n' "$MELEE_WEB_GROUP_INI" | tr ';' '\n' >> "$SD/slippi/group.ini"
 : > "$SD/no-scripted-input"   # the development build's scripted presses and automatic stop off
 
 python3 - <<'PY'

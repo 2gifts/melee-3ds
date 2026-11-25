@@ -17,6 +17,10 @@
  *   auto_players=2 automatic sessions (opponent=@host / @join in the engine's config, tests): the host starts a match by
  *                  itself once this many consoles are here and every one has picked
  *   test_wireless_off=1  tests: every session fails to open with "Please enable wireless and try again"
+ *   test_scan_locked=1   tests: the scan for games runs with the session lock held, so the engine waits for it
+ *   test_vs_matches=N    tests (development builds): as a session's first lobby opens, this save's VS match counters
+ *                  (the ones the stage unlock and challenger checks read) are raised to N
+ *   test_nametag=N       tests (development builds): this console's player has name tag id N - 1 in group matches
  *   name=N         this console's name (tests); without it the Mii name, then the system name, then "3DS"
  *   test_screen_name=N, test_screen_name_fail=1   tests: the Mii name's FRD call is skipped; N is its result, or it
  *                  fails (fail wins), so the chain falls to the system name
@@ -36,6 +40,9 @@ typedef struct {
     int net_thread, net_thread_core;
     int auto_players;
     int test_wireless_off;   /* tests: opening a session fails as if wireless communication were off */
+    int test_scan_locked;    /* tests: the network thread scans with the session lock held (the engine waits for it) */
+    int test_vs_matches;     /* tests (development builds): raise this save's VS match counters to N (unlock checks) */
+    int test_nametag;        /* tests (development builds): this console plays with name tag id N - 1 (0: off) */
     int test_screen_name_fail;   /* tests: the Mii name (FRD) is skipped and treated as failed */
     char test_screen_name[32];   /* tests: the Mii name (FRD) is skipped and this is its result */
     char name[32];        /* name=: this console's name (tests; UTF-8, up to 10 characters, LW_NAME_MAX) */
@@ -106,8 +113,9 @@ int group_players(void);
 int group_player_name(int port, char *buf, int len);
 void group_game_end(void);
 void group_results_press(int ready, int advance);
-void group_results_end(const unsigned char *stars, const unsigned char *handicap);
-void group_sudden_death(void);                 /* the match just ended tied: the host starts its sudden death */
+void group_results_end(const unsigned char *stars, const unsigned char *handicap, int loser);
+void group_sudden_death(void);
+int group_test_value(int which);               /* 0 test_vs_matches, 1 test_nametag (development builds; 0 otherwise) */                 /* the match just ended tied: the host starts its sudden death */
 
 /* The online bridge's calls while a group session is open (slippi_net_bridge.h, through net_select.c). */
 int group_net_start(const char *role);         /* "@host" or "@join": an automatic session */

@@ -43,6 +43,7 @@ typedef struct MpGroupRules {
     unsigned char stock_count;
     unsigned char stock_time_limit;
     unsigned char handicap;        /* 0 off, 1 auto, 2 fixed */
+    unsigned char stage_sel;       /* the host's Stage Selection rule: 0 any, 1 random, 2 ordered, 3 turns, 4 loser */
 } MpGroupRules;
 
 /* The lobby as this console sees it (the host's newest snapshot). */
@@ -70,8 +71,12 @@ typedef struct MpGroupLobby {
                                     * phase 0 in it means the results are over, not a view from before the match */
     unsigned char in_use;          /* bit n: door n is in use on some console (a slider, its name tag list, name entry, a
                                     * held token): only that console may switch it between Human, CPU and closed */
-    unsigned char busy_why[4];     /* why port n is busy: 1 a slider, 2 its name tag list, 3 the rules, 4 name entry */
+    unsigned char busy_why[4];     /* why port n is busy: 1 a slider, 2 its name tag list, 3 the rules, 4 name entry,
+                                    * 5 the prize screen after a match */
+    unsigned char sss_picker;      /* phase 1: the port that picks the stage (0xFF: any console), by the host's Stage
+                                    * Selection rule; Random and Ordered: the host, whose stage select picks at once */
 } MpGroupLobby;
+#define MP_GROUP_STAGE_RANDOM 0xFFFF   /* mp_platform_group_lobby_stage: the Random icon; the host picks from its save */
 
 /* Melee -> Solo / Group (the VS menu) and the session around the lobby (port/3ds/group/group_menu.c). */
 int mp_platform_group_open(void);          /* Melee chosen: 1 = the Solo/Group page is up (wait), 0 = vanilla */
@@ -99,8 +104,9 @@ void mp_platform_group_lobby_set_door(int port, const MpGroupDoor *door);
 void mp_platform_group_lobby_start(void);
 void mp_platform_group_lobby_stage(int stage, int alt_stage);
 void mp_platform_group_lobby_back(void);
-/* This console is busy or not: bits 0..3 why (0 not busy, 1 a held slider, 2 a name tag list, 3 the rules menu, 4 name
- * entry); bits 4..7: the doors it is using (bit 4 + n: door n), see MpGroupLobby.in_use. */
+/* This console is busy or not: bits 0..3 why (0 not busy, 1 a held slider or the results screen, 2 a name tag list, 3 the
+ * rules menu, 4 name entry, 5 the prize screen); bits 4..7: the doors it is using (bit 4 + n: door n), see
+ * MpGroupLobby.in_use. */
 void mp_platform_group_lobby_busy(int busy);
 void mp_platform_group_lobby_rules(const MpGroupRules *rules);
 /* The C-stick that turns the character and stage selects' camera: this console's (x, y: -127..127, the stick times
@@ -121,11 +127,17 @@ void mp_platform_group_game_end(void);     /* the match is over on this console:
  * applies it, every console follows the lobby. */
 void mp_platform_group_results_press(int ready, int advance);
 /* The results screen ended on this console. The host reopens the lobby with these stars (new totals per port) and, with
- * auto handicap, these door handicaps (1..9, 0 keeps the door's); other consoles' calls change nothing. */
-void mp_platform_group_results_end(const unsigned char *stars, const unsigned char *handicap);
+ * auto handicap, these door handicaps (1..9, 0 keeps the door's); loser: the match's loser as the host's engine decided
+ * it (vanilla's VsModeData.winner, -1 none) for the Loser Stage Selection rule. Other consoles' calls change nothing. */
+void mp_platform_group_results_end(const unsigned char *stars, const unsigned char *handicap, int loser);
 /* The match that just ended was tied (every console sees the same result): the host starts a sudden death game with the
  * same consoles (block trailer LOBBY_BLOCK_SUDDEN set; each console sets it up from its own copy of the result). Other
  * consoles do nothing here; they wait for that start. */
 void mp_platform_group_sudden_death(void);
+/* Development builds, tests: a group.ini test key, 0 when not set and always in release builds. which 0:
+ * test_vs_matches=N (as a session's first lobby opens, this save's VS match counters that its unlock checks read are
+ * raised to N: a save one match short of a milestone); 1: test_nametag=N (this console's player plays with name tag
+ * id N - 1 in group matches, as if chosen on the character select). */
+int mp_platform_group_test_value(int which);
 
 #endif

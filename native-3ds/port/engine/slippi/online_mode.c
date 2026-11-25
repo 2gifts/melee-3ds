@@ -17,6 +17,7 @@
 #include <melee/gm/gm_1B03.h>
 #include <melee/gm/gmvsmelee.h>
 #include <melee/gm/types.h>
+#include <melee/if/if_2FD9.h>
 #include <melee/lb/lbaudio_ax.h>
 #include <melee/lb/lbarchive.h>
 #include <melee/lb/lbdvd.h>
@@ -28,7 +29,7 @@
 #include <slippi_engine.h>
 #include <slippi_net_bridge.h>
 
-enum { ST_CSS, ST_SSS, ST_VS, ST_SPLASH, ST_SUDDEN, ST_RESULTS };
+enum { ST_CSS, ST_SSS, ST_VS, ST_SPLASH, ST_SUDDEN, ST_RESULTS, ST_PRIZE };
 
 static CSSData online_css;
 static s8 saved_ckind = CKind_Fox;
@@ -61,6 +62,8 @@ static void splash_exit(GameModeState* state);
 static void sudden_exit(GameModeState* state);
 static void results_enter(GameModeState* state);
 static void results_exit(GameModeState* state);
+static void prize_enter(GameModeState* state);
+static void prize_exit(GameModeState* state);
 static u8 splash_data[0x20];
 static u32 splash_exit_data;
 
@@ -73,6 +76,8 @@ GameModeState mp_slippi_online_states[] = {
      * vanilla's VS mode */
     { ST_SUDDEN, lbDvdPreload_3, 0, vs_enter, sudden_exit, { GS_SUDDEN_DEATH, &gmVsMelee_StartData, &gmVsMelee_SuddenDeathExitInfo } },
     { ST_RESULTS, lbDvdPreload_3, 0, results_enter, results_exit, { GS_RESULTS, &gmVsMelee_ResultsEnterData, NULL } },
+    /* group play only: vanilla's prize screen (notices and trophies) after a match that earned some */
+    { ST_PRIZE, lbDvdPreload_2, 0, prize_enter, prize_exit, { GS_PRIZE_INTERFACE, &if_Scene_Prize_EnterData, NULL } },
     { GM_GAMEMODESTATE_TERMINATE },
 };
 
@@ -361,7 +366,18 @@ static void results_enter(GameModeState* state)
 
 static void results_exit(GameModeState* state)
 {
-    mp_group_results_exit(state, ST_CSS);
+    mp_group_results_exit(state, ST_CSS, ST_PRIZE);
+}
+
+static void prize_enter(GameModeState* state)
+{
+    mp_group_prize_enter(state);
+}
+
+static void prize_exit(GameModeState* state)
+{
+    (void) state;
+    gm_SetNextGameModeStateId(ST_CSS);   /* as vanilla's (VS state 0): the lobby's character select */
 }
 
 /* ---- the VS splash before each game (Slippi's minor scene 4) ----

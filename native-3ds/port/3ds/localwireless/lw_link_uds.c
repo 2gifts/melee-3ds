@@ -39,6 +39,25 @@ static u8 scan_buf[0x4000];
 static int scan_n;
 static struct { udsNetworkStruct net; lw_net_info info; int missed; } scan_list[MAX_SCAN];
 
+/* The scan runs outside the session lock (lw_uds_scan_step), so the engine never waits for it: poll asks for one
+ * (scan_due), the scan step does it and leaves its networks in scan_found, and the next poll merges them into
+ * scan_list. uds_lock keeps every other UDS call that may come from another thread (joining, closing) from overlapping
+ * a scan: they wait for its end. */
+static LightLock uds_lock;
+static int uds_lock_ready;
+static volatile int scan_due, scan_done;
+static udsNetworkScanInfo *scan_found;
+static size_t scan_found_n;
+static unsigned scan_logged;               /* scans timed in the log this session (the first few) */
+
+static void uds_lock_take(void)
+{
+    if (!uds_lock_ready) { LightLock_Init(&uds_lock); uds_lock_ready = 1; }
+    LightLock_Lock(&uds_lock);
+}
+static void uds_lock_give(void) { LightLock_Unlock(&uds_lock); }
+static unsigned ms_since(uint64_t t0) { return (unsigned)((lw_platform_time_us() - t0) / 1000u); }
+
 static void fmt_err(char *err, int errlen, const char *what, Result r)
 {
     snprintf(err, (size_t)errlen, "%s (0x%08lX)", what, (unsigned long)r);
@@ -65,7 +84,9 @@ int lw_uds_open(int host, int port, int max_nodes, const char *name, char *err, 
      * so every browser and lobby member sees it; NULL: libctru uses the system name */
     char given[LW_LINK_NAME_MAX];
     name_clean(name, given, sizeof(given), NAME_MAX_CHARS);
+    uint64_t t0 = lw_platform_time_us();
     Result r = udsInit(SHAREDMEM, given[0] ? given : NULL);
+    lw_platform_log("uds: udsInit took %u ms", ms_since(t0));
     if (R_FAILED(r)) {
         /* Most often wireless communication is switched off. The code stays in the log, not on the screen. */
         lw_platform_log("lw: udsInit failed (0x%08lX)", (unsigned long)r);
@@ -82,6 +103,8 @@ int lw_uds_open(int host, int port, int max_nodes, const char *name, char *err, 
     memset(node_names, 0, sizeof(node_names));
     last_scan_us = 0;
     last_status_us = 0;
+    scan_due = scan_done = 0;
+    scan_logged = 0;
     if (host) {
         if (max_nodes < 2) max_nodes = 2;
         if (max_nodes > LW_MAX_NODES) max_nodes = LW_MAX_NODES;
@@ -98,8 +121,12 @@ int lw_uds_open(int host, int port, int max_nodes, const char *name, char *err, 
 static int connect_to(const udsNetworkStruct *n, char *err, int errlen)
 {
     netw = *n;
+    uds_lock_take();   /* after a scan in progress */
+    uint64_t t0 = lw_platform_time_us();
     Result r = udsConnectNetwork(&netw, PASSPHRASE, strlen(PASSPHRASE), &bind_ctx, UDS_BROADCAST_NETWORKNODEID, UDSCONTYPE_Client, CHANNEL,
                                  UDS_DEFAULT_RECVBUFSIZE);
+    uds_lock_give();
+    lw_platform_log("uds: udsConnectNetwork took %u ms", ms_since(t0));
     if (R_FAILED(r)) { lw_platform_log("uds: join failed 0x%08lx", (unsigned long)r); if (err) fmt_err(err, errlen, "Could not join the game", r); return 0; }
     joined = 1;
     lw_platform_log("uds: joined a game");
@@ -114,13 +141,40 @@ static uint32_t mac_key(const u8 *mac)
     return h ? h : 1;
 }
 
-/* One scan; the list keeps its order, new networks go last, silent ones leave after SCAN_FORGET scans. */
-static void scan_refresh(void)
+/* The scan itself, without the session lock (the network thread, between its services; see scan_due above). It waits
+ * for the wireless hardware, which takes a few hundred milliseconds. */
+void lw_uds_scan_step(void)
 {
+    if (!scan_due || scan_done) return;
     udsNetworkScanInfo *nets = NULL;
     size_t total = 0;
+    uds_lock_take();
+    if (!up || hosting || joined) { uds_lock_give(); scan_due = 0; return; }
+    uint64_t t0 = lw_platform_time_us();
     Result r = udsScanBeacons(scan_buf, sizeof(scan_buf), &nets, &total, WLANCOMM_ID, ID8, NULL, false);
-    if (R_FAILED(r)) { lw_platform_log("uds: scan failed 0x%08lx", (unsigned long)r); total = 0; }
+    uds_lock_give();
+    if (R_FAILED(r)) { lw_platform_log("uds: scan failed 0x%08lx", (unsigned long)r); free(nets); nets = NULL; total = 0; }
+    if (scan_logged < 3) { ++scan_logged; lw_platform_log("uds: scan took %u ms, %u networks", ms_since(t0), (unsigned)total); }
+    scan_found = nets;
+    scan_found_n = total;
+    scan_done = 1;
+}
+
+/* Drop a scan's networks that will not be merged. */
+static void scan_discard(void)
+{
+    free(scan_found);
+    scan_found = NULL;
+    scan_found_n = 0;
+    scan_done = scan_due = 0;
+}
+
+/* Merge the scan's networks (under the session lock): the list keeps its order, new networks go last, silent ones
+ * leave after SCAN_FORGET scans. */
+static void scan_merge(void)
+{
+    udsNetworkScanInfo *nets = scan_found;
+    size_t total = scan_found_n;
     int seen[MAX_SCAN] = {0};
     for (size_t k = 0; k < total; ++k) {
         const udsNetworkStruct *n = &nets[k].network;
@@ -148,6 +202,9 @@ static void scan_refresh(void)
         if (R_SUCCEEDED(udsGetNetworkStructApplicationData(n, in->data, sizeof(in->data), &got))) in->len = (int)got;
     }
     free(nets);
+    scan_found = NULL;
+    scan_found_n = 0;
+    scan_done = scan_due = 0;
     int out = 0;
     for (int i = 0; i < scan_n; ++i) {
         if (!seen[i] && ++scan_list[i].missed >= SCAN_FORGET) continue;
@@ -162,11 +219,15 @@ int lw_uds_poll(char *err, int errlen)
     if (!up) return LW_LINK_FAILED;
     uint64_t now = lw_platform_time_us();
     if (!hosting && !joined) {
-        if (now - last_scan_us < SCAN_INTERVAL_US && last_scan_us) return LW_LINK_WAITING;
-        scan_refresh();
-        last_scan_us = lw_platform_time_us();
+        if (scan_done) {
+            scan_merge();
+            last_scan_us = lw_platform_time_us();
+        } else if (!scan_due && (now - last_scan_us >= SCAN_INTERVAL_US || !last_scan_us)) {
+            scan_due = 1;   /* lw_uds_scan_step scans, outside the lock */
+        }
         return LW_LINK_WAITING;
     }
+    if (scan_done || scan_due) scan_discard();   /* joined meanwhile: that scan is of no use */
     if (now - last_status_us >= STATUS_INTERVAL_US || !last_status_us) {
         last_status_us = now;
         udsConnectionStatus cs;
@@ -238,6 +299,9 @@ void lw_uds_eject(int node)
 void lw_uds_close(void)
 {
     if (!up) return;
+    uds_lock_take();   /* after a scan in progress */
+    uint64_t t0 = lw_platform_time_us();
+    scan_discard();
     if (hosting) udsDestroyNetwork();
     else if (joined) udsDisconnectNetwork();
     if (hosting || joined) udsUnbind(&bind_ctx);
@@ -246,7 +310,8 @@ void lw_uds_close(void)
     scan_n = 0;
     udsExit();
     up = 0;
-    lw_platform_log("uds: closed");
+    uds_lock_give();
+    lw_platform_log("uds: closed (%u ms)", ms_since(t0));
 }
 #else /* not a 3DS: no UDS */
 int lw_uds_open(int host, int port, int max_nodes, const char *name, char *err, int errlen) { (void)host; (void)name; (void)port; (void)max_nodes; snprintf(err, (size_t)errlen, "UDS needs a 3DS"); return -1; }
@@ -261,6 +326,7 @@ const char *lw_uds_local_name(void) { return ""; }
 int lw_uds_scan_count(void) { return 0; }
 int lw_uds_scan_get(int i, lw_net_info *o) { (void)i; (void)o; return -1; }
 int lw_uds_join(uint32_t key, char *e, int n) { (void)key; snprintf(e, (size_t)n, "UDS needs a 3DS"); return -1; }
+void lw_uds_scan_step(void) {}
 void lw_uds_set_beacon(const uint8_t *d, int n) { (void)d; (void)n; }
 void lw_uds_eject(int node) { (void)node; }
 #endif

@@ -18,7 +18,9 @@
 
 enum { LOBBY_HUMAN = 0, LOBBY_CPU = 1, LOBBY_EMPTY = 2 };
 /* Why a console is busy (its LCMD_BUSY code; the strip says what it is doing) */
-enum { LOBBY_BUSY_NONE = 0, LOBBY_BUSY_SLIDER = 1, LOBBY_BUSY_TAGS = 2, LOBBY_BUSY_RULES = 3, LOBBY_BUSY_NAMING = 4 };
+enum { LOBBY_BUSY_NONE = 0, LOBBY_BUSY_SLIDER = 1, LOBBY_BUSY_TAGS = 2, LOBBY_BUSY_RULES = 3, LOBBY_BUSY_NAMING = 4,
+       LOBBY_BUSY_PRIZE = 5,       /* the prize screen after a match (a notice or trophy this console's save earned) */
+       LOBBY_BUSY_MAX = LOBBY_BUSY_PRIZE };
 enum { LOBBY_CSS = 0, LOBBY_STAGE = 1, LOBBY_MATCH = 2, LOBBY_RESULTS = 3 };
 
 typedef struct {
@@ -49,7 +51,14 @@ typedef struct {
     uint8_t mode;                  /* 0 time, 1 stock, 2 coin, 3 bonus */
     uint8_t time_limit, stock_count, stock_time_limit;
     uint8_t handicap;              /* 0 off, 1 auto, 2 fixed: the match block takes each door's handicap unless 0 */
+    uint8_t stage_sel;             /* the host's Stage Selection rule (LOBBY_SSS_*): who picks the stage, or which */
 } lobby_rules;
+
+/* The Stage Selection rule (vanilla's GameRules.stage_sel, Additional Rules): the host's decides for everyone. */
+enum { LOBBY_SSS_ANY = 0, LOBBY_SSS_RANDOM = 1, LOBBY_SSS_ORDERED = 2, LOBBY_SSS_TURNS = 3, LOBBY_SSS_LOSER = 4 };
+#define LOBBY_PICK_ANY 0xFF        /* lobby_state.sss_picker: every console may pick */
+#define LOBBY_STAGE_RANDOM 0xFFFF  /* a pick of the Random icon from a console that is not the host: the host picks the
+                                    * stage from its save (its Random Stage Switch, unlocks and no-repeat history) */
 
 /* The running match as the host sees it, for consoles that are not in it (they joined during it): the timer and every
  * port's stocks and damage, refreshed a few times a second. Only meaningful while valid is 1 (phase MATCH). */
@@ -73,6 +82,10 @@ typedef struct {
     uint16_t stage;                /* the picked stage (phase STAGE once picked, and MATCH) */
     uint8_t stage_picked, alt_stage;
     uint8_t mode;                  /* 0 normal, 1 sudden death (second game of the same session) */
+    uint8_t sss_picker;            /* phase STAGE: the port whose console picks the stage (LOBBY_PICK_ANY: any), as
+                                    * the host's Stage Selection rule decided it when Start was pressed: Turns and
+                                    * Loser a player's port, Random and Ordered the host (its stage select picks at
+                                    * once), Any LOBBY_PICK_ANY. Passes on when that console leaves. */
     uint8_t busy;                  /* bit n: the console on port n is busy (its name tag list, name entry, the host's
                                     * rules menu or a held slider); READY is hidden everywhere and Start is refused
                                     * while any bit is set */
@@ -155,6 +168,10 @@ typedef struct {
     uint8_t last_tag_ok[LOBBY_SLOTS];
     uint8_t in_use_by[LOBBY_SLOTS];   /* the doors each port's console is using; st.in_use is their OR */
     char played_name[LOBBY_SLOTS][LOBBY_NAME_BYTES];   /* the names of the consoles in the running match (lobby_host_name) */
+    int8_t turn;                   /* Stage Selection Turns: the port that picked last (-1: none yet; vanilla's vs.loser) */
+    int8_t loser;                  /* Stage Selection Loser: the last match's loser as the host's engine decided it (-1:
+                                    * none yet; vanilla's vs.winner, from gm_80168710) */
+    uint32_t rng;                  /* the host's own random numbers (Loser's first pick); seed it as you like */
 } lobby_host;
 
 enum { LOBBY_CHANGED = 1, LOBBY_STAGE_REACHED = 2, LOBBY_START_MATCH = 4 };
@@ -175,7 +192,12 @@ int lobby_host_set_door(lobby_host *h, int slot, const lobby_slot *s);       /* 
  * lobby_cmd_door). Then as lobby_host_set_door. */
 int lobby_host_edit_door(lobby_host *h, int from, int slot, const lobby_slot *s, int base);
 int lobby_host_start(lobby_host *h, int from);                               /* the host's own Start press */
-int lobby_host_pick_stage(lobby_host *h, int stage, int alt_stage);          /* the host's own stage pick */
+/* Console `from`'s stage pick (the host's own console is port 0). Only the picker may pick (sss_picker), and the first
+ * pick wins. LOBBY_STAGE_RANDOM is taken as the pick but starts nothing: the host's console then picks the stage from
+ * its save and sends it from port 0, which replaces the random pick and starts the match. */
+int lobby_host_pick_stage(lobby_host *h, int from, int stage, int alt_stage);
+/* Back from the stage select (console `from`): only the picker may, and not once a stage is picked. */
+int lobby_host_back(lobby_host *h, int from);
 int lobby_host_set_rules(lobby_host *h, const lobby_rules *r);      /* the host changed the rules */
 int lobby_host_set_busy(lobby_host *h, int port, int busy);                  /* a console's busy code (its own only) */
 int lobby_host_set_in_use(lobby_host *h, int port, int doors);               /* the doors a console is using */
@@ -195,6 +217,9 @@ int lobby_host_results(lobby_host *h, int from, int ready, int advance);
 /* The results screen ended: the stars (new totals per port) and, with auto handicap, each door's new handicap (0: keep)
  * go into the lobby, then as lobby_host_match_over. */
 int lobby_host_results_over(lobby_host *h, const uint8_t *stars, const uint8_t *handicap);
+/* The host's engine decided the last match's loser (vanilla's gm_80168710, its VsModeData.winner; -1 none), for the
+ * Loser Stage Selection rule. */
+void lobby_host_set_loser(lobby_host *h, int port);
 
 /* Can Start take the lobby to the stage select? at least two doors in use and a fighter in every one, with Teams at
  * least two different teams (as vanilla's READY overlay asks), and no console busy (lobby_state.busy). */

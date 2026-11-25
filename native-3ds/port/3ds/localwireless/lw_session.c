@@ -1083,6 +1083,11 @@ void lw_game_end(void)
 
 int lw_browsing(void) { return S.open && S.browsing; }
 
+void lw_scan_step(void)
+{
+    if (!S.use_udp) lw_uds_scan_step();
+}
+
 int lw_scan_count(void)
 {
     if (!S.open || !S.browsing) return 0;

@@ -55,6 +55,7 @@ typedef struct {
     int active;                /* a group session with a lobby */
     int me;                    /* this console's port */
     int phase;                 /* LOBBY_CSS / STAGE / MATCH */
+    int picker;                /* phase STAGE: the port that picks the stage (the host's Stage Selection rule), -1 any */
     int watching;              /* a match runs that this console is not in (it joined during it): the Match in progress page */
     lobby_status status;       /* that match's timer, stocks and damage (status.valid once the host has sent it) */
     lobby_rules rules;
@@ -64,7 +65,8 @@ typedef struct {
         char name[32];         /* its 3DS system name (never its name tag) */
         char player[32];       /* the match overview's name for this port (watching): the console that plays it, or
                                 * one that played it and left; "" for a CPU or a console that joined since */
-        int busy_why;          /* what it is busy with (LOBBY_BUSY_*: a slider, its name tag list, the rules, name entry) */
+        int busy_why;          /* what it is busy with (LOBBY_BUSY_*: a slider, its name tag list, the rules, name entry,
+                                * the prize screen) */
         lobby_slot door;       /* the port's door: Human, CPU or empty, and the fighter */
     } port[LOBBY_SLOTS];
     char toast[48];            /* "NAME JOINED" / "NAME LEFT" for a few seconds after a console came or went, else "" */

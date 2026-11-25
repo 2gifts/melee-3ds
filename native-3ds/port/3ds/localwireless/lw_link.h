@@ -42,6 +42,9 @@ typedef struct {
     const char *p##_local_name(void);
 
 LW_LINK_DECLARE(lw_uds)
+/* UDS: the scan for networks, called without the session's lock (it blocks while the hardware scans); does nothing
+ * unless a poll asked for one. The loopback link's scan is a quick socket read inside its poll. */
+void lw_uds_scan_step(void);
 #ifndef LW_NO_UDP
 LW_LINK_DECLARE(lw_udp)
 #endif

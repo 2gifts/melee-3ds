@@ -203,6 +203,20 @@ int mp_css_can_edit_rules(void)
     return !mp_css_group() || !mp_lob_ok || mp_lob.host != 0;
 }
 
+/* The cursor is on the Rules banner or the Teams switch: 1 when this console may use it (as vanilla). Elsewhere the
+ * cursor does not point at it, and A there plays the "not allowed" sound (vanilla's, as for a locked stage). */
+int mp_css_rules_hit(u32 trigger)
+{
+    if (mp_css_can_edit_rules()) {
+        return 1;
+    }
+    if (trigger & (1 << 8)) {   /* A */
+        lbAudioAx_80024030(3);
+        OSReport("GROUPCSS the rules and the Teams switch are the host's: not allowed here\n");
+    }
+    return 0;
+}
+
 /* A console that joined during a match watches it from the CSS until it ends: the CSS is read-only there. */
 static int mp_css_watching(void)
 {
@@ -675,6 +689,7 @@ static void mp_css_rules_frame(void)
     r.stock_count = gr->stock_count;
     r.stock_time_limit = gr->stock_time_limit;
     r.handicap = gr->handicap;
+    r.stage_sel = gr->stage_sel;   /* the host's Stage Selection rule decides who picks the stage for everyone */
     if (!mp_css_rules_sent_ok || memcmp(&r, &mp_css_rules_sent, sizeof r) != 0) {
         mp_css_rules_sent = r;
         mp_css_rules_sent_ok = 1;
@@ -1037,6 +1052,38 @@ SSS_LOADING = '''
  * stage select's "nothing selected" index (0x1E: no outline, no name, an empty preview) during "Now loading", so the
  * stage is not revealed; the vanilla exit would read the table at that index, so the group code leaves with this. */
 static int mp_sss_hidden_stage = -1;
+#define MP_SSS_FROM_LOBBY 0x7FFF   /* mp_sss_hidden_stage: a random pick the host resolves; the stage is the lobby's */
+static int mp_sss_resolving;       /* host: a random pick from another console is being resolved from this save */
+static int mp_sss_random_sent;     /* this console sent a random pick (it is not the host) */
+static int mp_sss_picker = -1;     /* the port that picks the stage (the host's Stage Selection rule), -1 any */
+HSD_JObj* mp_sss_cursor;           /* the cursor, labelled with its picker's port (vanilla's do_anim frame: port + 1);
+                                   * tests read its position */
+static void mp_sss_start_loading(void);
+
+/* Only the picker's console has a cursor and reads its pad here (Turns, Loser, and the host's Random or Ordered). */
+static int mp_sss_no_cursor(void)
+{
+    return mp_group_mode() && mp_sss_picker >= 0 && mp_sss_picker != mp_platform_slippi_net_local_index();
+}
+
+/* The Random icon on a console that is not the host: the host picks the stage from its own save (its Random Stage
+ * Switch, unlocks and no-repeat history), as Random would on one console. This console sends the random pick and shows
+ * "Now loading" without a stage until the match starts. */
+static int mp_sss_random_to_host(void)
+{
+    MpGroupLobby l;
+    if (!mp_group_mode() || !mp_platform_group_lobby_get(&l) || l.host) {
+        return 0;
+    }
+    OSReport("GROUPCSS stage select: Random; the host picks the stage\\n");
+    mp_platform_group_lobby_stage(MP_GROUP_STAGE_RANDOM, 0);
+    mp_sss_random_sent = 1;
+    mp_sss_hidden_stage = MP_SSS_FROM_LOBBY;
+    mnStageSel_804D6CAE = 0x1E;
+    mp_sss_start_loading();
+    return 1;
+}
+
 static void mp_sss_start_loading(void)
 {
     HSD_JObj* jobj;
@@ -1062,8 +1109,9 @@ static void mp_group_sss_back(void)
 
 int mp_group_sss_sent(void)
 {
-    int r = mp_sss_sent;
+    int r = mp_sss_sent || mp_sss_random_sent;
     mp_sss_sent = 0;
+    mp_sss_random_sent = 0;
     return r;
 }
 
@@ -1073,6 +1121,15 @@ static int mp_group_sss_frame(void)
     int i, stage;
     if (!mp_group_mode() || !mp_platform_group_lobby_get(&l)) {
         return 0;
+    }
+    if (mp_sss_picker != (l.sss_picker < 4 ? l.sss_picker : -1)) {
+        /* the picker left: the host passed the pick on (its cursor appears on that console only) */
+        mp_sss_picker = l.sss_picker < 4 ? l.sss_picker : -1;
+        mnStageSel_804D50A0 = mp_sss_picker;
+        if (mp_sss_cursor != NULL) {
+            do_anim(mp_sss_cursor, mp_sss_picker + 1);   /* the new picker's colour, as vanilla colours it at setup */
+        }
+        OSReport("GROUPCSS stage select: port %d picks the stage now\n", mp_sss_picker + 1);
     }
     if (mp_platform_group_lost()) {
         mnStageSel_804D6CAF = 0;   /* the session ended: back to the CSS, which leaves */
@@ -1084,7 +1141,12 @@ static int mp_group_sss_frame(void)
     if (mp_sss_hidden_stage >= 0) {
         /* A hidden pick's "Now loading" (30 to 90 frames, as for any pick): leave with its stage once it is over. */
         if (mnStageSel_804D6CAF == 2 && mnStageSel_804D6CA4 == 0) {
-            sss_data->vs.start.rules.stkind = mp_sss_hidden_stage;
+            stage = (l.stage_hi << 8) | l.stage_lo;
+            if (mp_sss_hidden_stage != MP_SSS_FROM_LOBBY) {
+                sss_data->vs.start.rules.stkind = mp_sss_hidden_stage;
+            } else if (l.stage_picked && stage != MP_GROUP_STAGE_RANDOM) {
+                sss_data->vs.start.rules.stkind = stage;   /* else the match's block names it */
+            }
             mp_sss_hidden_stage = -1;
             gm_801A4B60();
             return 1;
@@ -1103,6 +1165,23 @@ static int mp_group_sss_frame(void)
         /* Someone else picked: show the same pick here, so this console also goes to "Now loading" and its cursor stops. */
         stage = (l.stage_hi << 8) | l.stage_lo;
         mp_sss_remote = 1;
+        if (stage == MP_GROUP_STAGE_RANDOM) {
+            if (l.host) {
+                /* another console pressed Random: this save picks, and the next frame shows it as any remote pick */
+                if (!mp_sss_resolving) {
+                    mp_sss_resolving = 1;
+                    i = mnStageSel_802599EC();
+                    OSReport("GROUPCSS stage select: a random pick; this save picks stage %d\n", mnStageSel_803F06D0[i].stkind);
+                    mp_platform_group_lobby_stage(mnStageSel_803F06D0[i].stkind, 0);
+                }
+                return 0;
+            }
+            OSReport("GROUPCSS stage select: a random pick; the host picks the stage\n");
+            mp_sss_hidden_stage = MP_SSS_FROM_LOBBY;
+            mnStageSel_804D6CAE = 0x1E;
+            mp_sss_start_loading();
+            return 0;
+        }
         OSReport("GROUPCSS stage select: stage %d was picked\n", stage);
         for (i = 0; i < 0x1E; i++) {
             if (mnStageSel_803F06D0[i].stkind == stage && mnStageSel_803F06D0[i].x8 < 2) {
@@ -1160,7 +1239,7 @@ FIXES = {
          '    f32 stick_y = (f32) HSD_PadCopyStatus[(u8) port].stickY;\n',
          'HSD_PadStatus* mp_css_pad(int port);\nint mp_css_remote(int door);\nint mp_css_unplugged(int door);\n'
          'int mp_css_door_in_use(int d);\n'
-         'int mp_css_can_edit_rules(void);\nint mp_css_hide_ready(void);\nu32 mp_css_trigger(int hand, f32 x, f32 y, u32 trigger);\nint mp_css_start_intercept(void);\nint mp_css_back_intercept(void);\nint mp_css_hovering(int door);\nvoid mp_css_group_frame(void);\n'
+         'int mp_css_can_edit_rules(void);\nint mp_css_rules_hit(u32 trigger);\nint mp_css_hide_ready(void);\nu32 mp_css_trigger(int hand, f32 x, f32 y, u32 trigger);\nint mp_css_start_intercept(void);\nint mp_css_back_intercept(void);\nint mp_css_hovering(int door);\nvoid mp_css_group_frame(void);\n'
          'void mp_css_group_reset(void);\n'
          'static inline void getStickDelta(int port, f32* dx, f32* dy)\n{\n'
          '    f32 stick_x = loadStickValue(&mp_css_pad((u8) port)->stickX);\n'
@@ -1199,9 +1278,9 @@ FIXES = {
         ('        trigger = HSD_PadCopyStatus[tag->port].trigger;\n',
          '        trigger = mp_css_pad(tag->port)->trigger;\n', 1),
         ('                    if (cx3 > -17.0f && cx3 < 15.0f && cursor->x10 > 22.0f) {\n',
-         '                    if (mp_css_can_edit_rules() && cx3 > -17.0f && cx3 < 15.0f && cursor->x10 > 22.0f) {\n', 1),
+         '                    if (cx3 > -17.0f && cx3 < 15.0f && cursor->x10 > 22.0f && mp_css_rules_hit(trigger)) {\n', 1),
         ('                if (cursor->xC < -25.5f && cursor->x10 > 22.0f) {\n',
-         '                if (mp_css_can_edit_rules() && cursor->xC < -25.5f && cursor->x10 > 22.0f) {\n', 1),
+         '                if (cursor->xC < -25.5f && cursor->x10 > 22.0f && mp_css_rules_hit(trigger)) {\n', 1),
         # The camera turns with every console's C-stick (group_engine.h).
         ('    HSD_GObj_SetupProc(gobj, mn_8022BA1C, 5);\n    ctx = HSD_SisLib_803A611C(0, gobj, 7, 8, 0x80, 1, 0x80, 0);\n',
          '    HSD_GObj_SetupProc(gobj, mp_group_camera_proc, 5);\n    ctx = HSD_SisLib_803A611C(0, gobj, 7, 8, 0x80, 1, 0x80, 0);\n', 1),
@@ -1259,12 +1338,31 @@ FIXES = {
     # The puck's own think: a token held by another console (state 5) follows no cursor and is hidden.
     'melee/mn/mnstagesel.c': [
         ('#include "mnstagesel.h"\n',
-         '#include <group_bridge.h>\n#include <group_engine.h>\n#include "mnstagesel.h"\n', 1),
+         '#include <group_bridge.h>\n#include <group_engine.h>\n#include <slippi_net_bridge.h>\n#include "mnstagesel.h"\n', 1),
         ('            HSD_GObj_SetupProc(gobj, mn_8022BA1C, 5);\n',
          '            HSD_GObj_SetupProc(gobj, mp_group_camera_proc, 5);\n', 1),
         ('void mnStageSel_80259C28(void)\n{\n', SSS_LOADING + 'void mnStageSel_80259C28(void)\n{\n', 1),
         (SSS_LOADING_BODY, 'skip_randomize:\n    mp_sss_start_loading();\n}\n', 1),
-        ('        mnStageSel_804D6CAE = 0x1E;\n', '        mnStageSel_804D6CAE = 0x1E;\n        mp_sss_hidden_stage = -1;\n', 1),
+        ('        mnStageSel_804D6CAE = 0x1E;\n',
+         '        mnStageSel_804D6CAE = 0x1E;\n        mp_sss_hidden_stage = -1;\n        mp_sss_resolving = 0;\n'
+         '        mp_sss_random_sent = 0;\n        mp_sss_picker = sss_data->unk_stage - 1;\n'
+         '        mp_sss_cursor = NULL;\n', 1),
+        # Random from a console that is not the host: the host picks (mp_sss_random_to_host).
+        ('    mnStageSel_804D6CAE = mnStageSel_802599EC();\n',
+         '    if (mp_sss_random_to_host()) {\n        return;\n    }\n    mnStageSel_804D6CAE = mnStageSel_802599EC();\n', 1),
+        # One picker (Turns, Loser): its console reads its own pad, pad 0, in place of its port's; the others read none,
+        # and their cursor is hidden.
+        ('get_pad(mnStageSel_804D50A0)', 'get_pad(mp_group_menu_pad(mnStageSel_804D50A0))', 3),
+        ('                do_anim(jobj2, mnStageSel_804D50A0 + 1);\n',
+         '                do_anim(jobj2, mnStageSel_804D50A0 + 1);\n                mp_sss_cursor = jobj2;\n', 1),
+        ('    if (mnStageSel_804D6CAC < -0x1E) {\n',
+         '    if (mp_sss_no_cursor()) {\n        mnStageSel_804D6CA0 = 0;\n        mnStageSel_804D6CAC = 0;\n'
+         '        mnStageSel_804D6CAD = 0;\n    }\n    if (mnStageSel_804D6CAC < -0x1E) {\n', 1),
+        ('    jobj = gobj->hsd_obj;\n    if (mnStageSel_804D6CAF != 0) {\n        HSD_JObjSetFlags(jobj, JOBJ_HIDDEN);\n'
+         '        return;\n    }\n',
+         '    jobj = gobj->hsd_obj;\n    if (mnStageSel_804D6CAF != 0 || mp_sss_no_cursor()) {\n'
+         '        HSD_JObjSetFlags(jobj, JOBJ_HIDDEN);\n        return;\n    }\n'
+         '    if (mp_group_mode()) {\n        HSD_JObjClearFlags(jobj, JOBJ_HIDDEN);   /* the pick passed to this console */\n    }\n', 1),
         ('void mnStageSel_Scene_OnFrame(void)\n{\n',
          SSS_CODE + 'void mnStageSel_Scene_OnFrame(void)\n{\n    if (mp_group_sss_frame()) {\n        return;\n    }\n', 1),
         ('        sfxBack();\n        gm_801A4B60();\n    }\n    if (mnStageSel_804D6CAF == 2) {\n',

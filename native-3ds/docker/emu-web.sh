@@ -34,6 +34,8 @@
 # the same desktop with its own saves, so two consoles can host and join each other over the loopback link; console A
 # opens in the right half of the desktop, console B in the left; give MELEE_WEB_RES=1600x900 for two comfortable windows).
 # Console A's user name (the game's Mii name) is Alice, console B's Bob (emu-web-session.sh sets them at every start).
+# MELEE_WEB_GROUP_INI adds lines to every console's group.ini, ';' between them (group_session.h), e.g.
+# MELEE_WEB_GROUP_INI="test_vs_matches=49" to start each save one VS match short of a stage unlock and a challenger.
 # docker/emu-web-hosts.sh adds PC hosts with Miis to the consoles' Available Games lists.
 # With two consoles, A runs the everything-unlocked development build (as melee-3ds.cia) and B the fresh-save one (as
 # melee-3ds-fresh.cia: unlocks by playing; its save is new in every container). Build that one once with
@@ -70,6 +72,7 @@ docker run -d --name "$NAME" --platform linux/amd64 --shm-size=1gb \
     -e MELEE_SLIPPI_FILES=/work/src/dist/native-alpha/3ds/melee/slippi/files \
     -e MELEE_DSX="$DSX_IN" -e MELEE_DSX_B="$DSX_B" \
     -e MELEE_WEB_GDB="${MELEE_WEB_GDB:-}" -e MELEE_WEB_INSTANCES="${MELEE_WEB_INSTANCES:-1}" \
+    -e MELEE_WEB_GROUP_INI="${MELEE_WEB_GROUP_INI:-}" \
     ${MELEE_WEB_DSX:+-v "$MELEE_WEB_DSX":/vanilla.3dsx:ro} \
     ${MELEE_WEB_DSX_B:+-v "$MELEE_WEB_DSX_B":/vanilla-b.3dsx:ro} \
     ${CFL_RES_CIA:+-v "$CFL_RES_CIA":/cfl-res.cia:ro -e MELEE_CFL_RES_CIA=/cfl-res.cia} \

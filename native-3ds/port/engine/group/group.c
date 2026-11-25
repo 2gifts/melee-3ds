@@ -6,9 +6,11 @@
 #include <string.h>
 #include <dolphin/pad.h>
 #include <melee/gm/gm_1601.h>
+#include <melee/gm/gm_16F1.h>
 #include <melee/gm/gm_1A3F.h>
 #include <melee/gm/gm_1A45.h>
 #include <melee/gm/gm_1B03.h>
+#include <melee/gm/gm_1BFA.h>
 #include <melee/gm/gmmain_lib.h>
 #include <melee/gm/gmresult.h>
 #include <melee/gm/gmvsmelee.h>
@@ -102,6 +104,37 @@ void mp_group_camera_stick(int port, float* x, float* y)
 
 static int session_seen;   /* this group session's first lobby has been entered */
 
+/* This console's part in the session's last group match, for a challenger fight when it leaves the lobby (see
+ * mp_group_css_exit): its fighter, costume and name tag. */
+static int last_played;
+static u8 last_ckind, last_color, last_tag;
+
+/* Vanilla's VS mode checks this save after each match for an earned hidden fighter (gmVsMelee_ExitResults: by VS
+ * matches played, Mewtwo by VS play time, Marth by every starter played) and runs "A new challenger approaches". A group
+ * cannot stop for one console's fight, so it is run when this console leaves the lobby (Back, or the session ended),
+ * from the last group match it played, as the GM_CHALLENGER_APPROACH mode, which returns to the menus. */
+static void challenger_on_leave(void)
+{
+    u8 ck;
+    if (!last_played) {
+        return;
+    }
+    last_played = 0;
+    ck = gm_80172DD4(gmMainLib_8015ED98()->x0);
+    if (ck == ChKind_None) {
+        ck = gm_80172D78();
+    }
+    if (ck == ChKind_None) {
+        ck = gm_80172E74();
+    }
+    if (ck == ChKind_None) {
+        return;
+    }
+    logf_("Group: a new challenger approaches (fighter %d), on leaving the lobby\n", ck, 0);
+    gm_InitChallengerData(last_ckind, last_color, 0, last_tag, ck, GM_MENU);
+    gm_ChangeGameModeAfterCurrentScene(GM_CHALLENGER_APPROACH);
+}
+
 /* The stars over the doors are the host's (the lobby): every console draws them from its local array. */
 static void stars_from_lobby(void)
 {
@@ -121,6 +154,19 @@ void mp_group_css_enter(GameModeState* state)
         session_seen = 1;
         gmMainLib_8015CDEC();
         gmVsMelee_ResetKOCounts();
+        {
+            int n = mp_platform_group_test_value(0);
+            if (n > 0) {
+                /* tests: this save as one match short of a milestone (the counters gm_80162800 advances per match) */
+                if (gmMainLib_8015ED98()->x0 < (u32) n) {
+                    gmMainLib_8015ED98()->x0 = n;
+                }
+                if ((u32) gmMainLib_8015EDB0()->x0 < (u32) n) {
+                    gmMainLib_8015EDB0()->x0 = n;
+                }
+                logf_("Group: test_vs_matches: this save's VS match counters are now %d\n", n, 0);
+            }
+        }
     }
     stars_from_lobby();
     gmVsMelee_EnterCss(state, gmVsMelee_GetVsData(), VS_MELEE);
@@ -135,14 +181,35 @@ void mp_group_css_exit(GameModeState* state, int sss_state)
         session_seen = 0;
         gmVsMelee_ResetKOCounts();   /* the next lobby, or Solo, starts with none */
         mp_platform_group_leave();
+        challenger_on_leave();       /* the session is closed: this console is alone again */
     } else {
         gm_SetNextGameModeStateId(sss_state);
     }
 }
 
+/* The stage select follows the host's Stage Selection rule (the lobby's sss_picker), never this console's own: on the
+ * host, Random and Ordered pick the stage from its save as vanilla does (the stage select is skipped, and its pick goes
+ * to everyone); elsewhere, and for Turns and Loser, only the picker's console has a cursor (in the picker's colour), and
+ * with Any every console has its own. */
 void mp_group_sss_enter(GameModeState* state)
 {
-    gmVsMelee_EnterSss(state, gmVsMelee_GetVsData());
+    SSSData* sss = gm_GetGameModeStateEnterData(state);
+    MpGroupLobby lobby;
+    int rule;
+    if (!mp_platform_group_lobby_get(&lobby)) {
+        gmVsMelee_EnterSss(state, gmVsMelee_GetVsData());
+        return;
+    }
+    rule = lobby.rules.stage_sel;
+    if (lobby.host && (rule == 1 || rule == 2)) {
+        gmVsMelee_EnterSss(state, gmVsMelee_GetVsData());
+        logf_("Group: stage selection rule %d: the host picks stage %d\n", rule, sss->force_stage_id);
+        return;
+    }
+    sss->vs = *gmVsMelee_GetVsData();
+    sss->force_stage_id = -1;
+    sss->unk_stage = lobby.sss_picker < 4 ? lobby.sss_picker + 1 : 0;
+    logf_("Group: stage selection rule %d, picker %d\n", rule, lobby.sss_picker < 4 ? lobby.sss_picker + 1 : 0);
 }
 
 /* Block until the host has started the match (its block is then pending), or the lobby went back to the CSS, or the
@@ -237,28 +304,107 @@ static int match_auto;             /* the match was played with the host's handi
 static u8 match_hc[4];             /* each door's handicap in it (the lobby's, 0 = not known) */
 
 static int busy_wait;              /* frames before this console's "busy" goes to the host again */
+static int prize_due;              /* this save earned a notice or trophy in the match: the prize screen follows */
 static int early_advance;          /* a press made before the host reached its results screen: the step it asks for */
 static int shown_step, shown_ready;   /* what the log last said about this screen (-1: nothing yet) */
 
+/* Vanilla's checks of this save after a VS match (gmVsMelee_ExitResults), each console on its own save: the KO total,
+ * stage unlocks by VS matches played, trophies for totals, the special messages ("You played 1000 VS matches"...) and
+ * the trophies for VS matches with one fighter. Not the challenger checks (challenger_on_leave). Run as the results
+ * screen opens, not as it ends: they only change save data, and so this console knows during the results whether its
+ * prize screen follows, while its busy bit (results_pads) still holds the lobby. Returns 1 when a notice or trophy waits.
+ * Unlike vanilla, a challenger being due does not hold the notices back: the fight comes when the lobby is left. */
+static int save_checks(MatchEnd* end)
+{
+    u16 stage;
+    if (!gmVsMelee_WasAnyPlayerHuman(end)) {
+        return 0;
+    }
+    gm_8016247C(gm_801688AC(end));
+    stage = gm_80172F00(gmMainLib_8015EDB0()->x0);
+    logf_("Group: the save checks: %d VS matches, stage to unlock %d (328: none)\n", gmMainLib_8015EDB0()->x0, stage);
+    if (stage != 328) {
+        gm_80164504(stage);
+    }
+    gm_80173DE4(end);
+    gm_80172898(1);
+    gm_80173EEC();
+    return gm_801721EC() ? 1 : 0;
+}
+
 void mp_group_results_enter(GameModeState* state)
 {
+    MatchEnd* end = &gmVsMelee_VsExitInfo.match_end;
+    int me = mp_platform_slippi_net_local_index() & 3;
     busy_wait = 0;
     early_advance = 0;
     shown_step = shown_ready = -1;
     logf_("Group: the results screen\n", 0, 0);
     gmVsMelee_EnterResults(state);
+    prize_due = save_checks(end);
+    if (prize_due) {
+        logf_("Group: this save earned a notice or trophy; the prize screen follows the results\n", 0, 0);
+    }
+    if (end->player_standings[me].pkind == Gm_PKind_Human) {
+        last_played = 1;
+        last_ckind = end->player_standings[me].ckind;
+        last_color = end->player_standings[me].x3;
+        last_tag = end->player_standings[me].x4;
+    }
+}
+
+/* The prize screen after a group match (vanilla's, GS_PRIZE_INTERFACE): this console stays busy meanwhile, so the
+ * others wait for it (reason "looking at a prize"); its character select clears that on return. */
+void mp_group_prize_enter(GameModeState* state)
+{
+    logf_("Group: the prize screen\n", 0, 0);
+    mp_platform_group_lobby_busy(5);   /* LOBBY_BUSY_PRIZE */
+    gm_ModeState_Prize_OnEnter(state);
 }
 
 /* Each console runs the results screen itself. Its presses are the lobby's (results_pads below), so every console's
  * screen takes the same steps and ends once every Human player is ready, together. Then, in place of vanilla's
- * gmVsMelee_ExitResults (which would also record remote fighters in this save and may start a "new challenger" fight
- * or a trophy, depending on this save):
+ * gmVsMelee_ExitResults (whose save checks ran as the screen opened, save_checks, and whose challenger fight waits for
+ * leaving the lobby, challenger_on_leave):
+ *   - the VS Records (vanilla's gm_801623A4, not for a cancelled match), and on the host the loser for the Loser stage
+ *     selection rule (gm_80168710);
  *   - the stars: vanilla's count (gmVsMelee_UpdateKOCounts: the Human players, cancelled matches too) on the lobby's;
  *   - auto handicap (vanilla's gm_80168638, not for a cancelled match): every console computes every door's new value
  *     from the same result and the handicaps the match was played with, and writes into its own save only what
  *     belongs to it: its own Human door, and on the host every CPU door (as mp_css_auto_hc reads them);
- *   - the host puts both into the lobby as it reopens it. */
-void mp_group_results_exit(GameModeState* state, int css_state)
+ *   - the host puts both into the lobby as it reopens it;
+ *   - the prize screen next, when save_checks found a notice or trophy, else the character select. */
+/* The VS Records this match touches, in the log before and after they are written (tests compare them): each port's
+ * fighter's matches, wins and losses, and each port's tag (0x78: none) with its play time with that fighter and the sum
+ * of its KOs against every tag. */
+static void record_log(MatchEnd* end, int after)
+{
+    char line[200];
+    int i, k, n = 0;
+    n += snprintf(line + n, sizeof line - n, "Group: VS Records %s:", after ? "after" : "before");
+    for (i = 0; i < 4; i++) {
+        MatchPlayerData* p = &end->player_standings[i];
+        struct FighterData* fd;
+        unsigned kos = 0, play = 0;
+        if (p->pkind == 3) {
+            continue;
+        }
+        fd = GetPersistentFighterData(gm_CKindToSelKind(p->ckind));
+        if (p->x4 != 0x78) {
+            struct NameTagData* nt = GetPersistentNameData(p->x4);
+            for (k = 0; k < 120; k++) {
+                kos += nt->vs_kos[k];
+            }
+            play = nt->play_time_by_fighter[gm_CKindToSelKind(p->ckind)];
+        }
+        n += snprintf(line + n, sizeof line - n, " p%d f%d m%u w%u l%u t%u tp%u tk%u;", i + 1, p->ckind, fd->match_count,
+                      fd->victories, fd->losses, p->x4, play, kos);
+    }
+    snprintf(line + n, sizeof line - n, "\n");
+    mp_platform_log(line);
+}
+
+void mp_group_results_exit(GameModeState* state, int css_state, int prize_state)
 {
     MatchEnd* end = &gmVsMelee_VsExitInfo.match_end;
     MpGroupLobby lobby;
@@ -269,6 +415,18 @@ void mp_group_results_exit(GameModeState* state, int css_state)
     memset(hc, 0, sizeof hc);
     memset(stars, 0, sizeof stars);
     host = mp_platform_group_lobby_get(&lobby) && lobby.host;
+    if (!gm_WasMatchCanceled(end->outcome)) {
+        /* VS Records, as vanilla: every fighter in the match (the same on every console) and this console's own name
+         * tag; remote players' slots carry tag 0x78 (none), so no tag of this save is credited for them */
+        record_log(end, 0);
+        gm_801623A4(end);
+        logf_("Group: VS Records written for this match (this console's tag %d)\n", end->player_standings[me & 3].x4, 0);
+        record_log(end, 1);
+        if (host) {
+            /* the Loser stage selection rule's picker (vanilla's gm_80168710), kept by the host, who decides it */
+            gm_80168710(end, gmVsMelee_GetVsData());
+        }
+    }
     if (lobby.valid) {
         memcpy(stars, lobby.stars, 4);
     }
@@ -298,9 +456,15 @@ void mp_group_results_exit(GameModeState* state, int css_state)
         logf_("Group: auto handicap after the match: %04x %04x (ports 1-2, 3-4)\n", hc[0] << 8 | hc[1], hc[2] << 8 | hc[3]);
     }
     memcpy(gmVsMelee_GetKOCounts(), stars, 4);
-    mp_platform_group_results_end(stars, hc);
+    mp_platform_group_results_end(stars, hc, host ? gmVsMelee_GetVsData()->winner : -1);
     match_auto = 0;
     lbCardGame_SetupArchive();
+    if (prize_due) {
+        prize_due = 0;
+        gm_InitChallengerData(ChKind_None, 0, me & 3, 0x78, ChKind_None, 0);   /* as vanilla before its prize state */
+        gm_SetNextGameModeStateId(prize_state);
+        return;
+    }
     gm_SetNextGameModeStateId(css_state);
 }
 
@@ -577,6 +741,9 @@ void mp_group_match_begin(StartMeleeData* data, int local_index, const unsigned 
     }
     /* this console's own tag keeps its real id (the shared block carries none) */
     data->players[local_index].nametag = gmVsMelee_GetVsData()->start.players[local_index].nametag;
+    if (mp_platform_group_test_value(1) > 0) {
+        data->players[local_index].nametag = (u8) (mp_platform_group_test_value(1) - 1);   /* tests: test_nametag */
+    }
     for (i = 0; i < 4; i++) {
         const MpGroupDoor* door = &lobby.door[i];
         if (i == local_index || door->kind != 0 || door->tag[0] == 0) {
