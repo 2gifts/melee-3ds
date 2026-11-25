@@ -372,8 +372,11 @@ static void mp_css_read_door(int d, u8* o)
     }
     int placed = kind != 2 && dr->sel_icon < 0x19 && mnCharSel_804A0BD0[d]->x5 == 0 && p->ckind >= 0 &&
                  p->ckind < CKind_Playable_Count;
-    /* the token is held over a fighter: the door shows it see-through, and the others should too */
-    int hover = kind != 2 && !placed && dr->sel_icon < 0x19 && mnCharSel_804A0BD0[d]->x5 == mp_css_my() + 1 &&
+    /* The token is held over a fighter: the door shows it see-through, and the others should too. Over no fighter the
+     * character select keeps the last one in sel_icon and only marks sel_icon_prev 0x19 (and hides the door's fighter),
+     * so both must agree, or the others would keep showing the fighter it left (held over nothing, below). */
+    int hover = kind != 2 && !placed && dr->sel_icon < 0x19 && dr->sel_icon_prev == dr->sel_icon &&
+                mnCharSel_804A0BD0[d]->x5 == mp_css_my() + 1 &&
                 icons[dr->sel_icon].char_kind >= 0 && icons[dr->sel_icon].char_kind < CKind_Playable_Count;
     int held = kind != 2 && !placed && !hover && mnCharSel_804A0BD0[d]->x5 == mp_css_my() + 1;
     chosen = placed ? 1 : hover ? 2 : held ? 3 : 0;
