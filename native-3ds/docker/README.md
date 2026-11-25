@@ -79,10 +79,11 @@ docker/emu-test.sh group --players 3 --games 2 --results-rejoin 2            # a
 docker/emu-test.sh group --cycles 3              # port 2 changes hands after every game; nobody inherits a door
 docker/emu-test.sh run tools/localwireless/lw_lobby_test.py     # the localwireless module alone (incl. menu input)
 docker/emu-test.sh run tools/group/group_quad_test.py --players 3 --end-frame 600 --kill 3:60 --timeout-ms 20000   # engine, Azahar
-docker/emu-test.sh run tools/group/group_menu_test.py            # Melee -> Solo / Group (the top-screen submenu; --bottom-page) in Azahar; wireless off; HOME and sleep off
+docker/emu-test.sh run tools/group/group_menu_test.py            # Melee -> Solo / Group (the top-screen submenu; --bottom-page) in Azahar; "Choose a game."; wireless off; HOME and sleep off; the soft reset
 docker/emu-test.sh run tools/group/menu_art_test.py             # the submenu's art over the disc's MnMaAll archives (PC, no emulator)
 docker/emu-test.sh run tools/group/group_lobby_test.py           # Azahar hosts, a PC console joins: doors, Rules, Start, stage, match
-docker/emu-test.sh run tools/group/group_join_test.py            # a PC console hosts, Azahar joins: doors, CPU level, READY, handicap, rejoin, the host-left notice
+docker/emu-test.sh run tools/group/group_join_test.py            # a PC console hosts, Azahar joins: doors, CPU level, READY, handicap, rejoin, the host-left notice, a game picked under it
+docker/emu-test.sh run tools/group/group_lost_test.py            # two emulated consoles: the host vanishes mid-match, the joiner lands on "Choose a game." with the notice
 docker/emu-test.sh run tools/group/group_late_test.py            # Azahar joins during a match: the read-only CSS, then the lobby
 docker/emu-test.sh run tools/group/group_cstick_test.py          # the CSS / stage select camera follows every console's C-stick; door plates
 docker/emu-test.sh run tools/group/group_results_test.py         # two emulated consoles: sudden death, the results screen, stars, auto handicap, Back

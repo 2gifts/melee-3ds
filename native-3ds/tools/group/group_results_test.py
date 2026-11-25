@@ -6,11 +6,13 @@ at a breakpoint as its sudden death ends, so B's results screen is up first: B's
 once the host's results screen is up. Then, on both screens: B's Start toggles B's "ready" both ways, A's Start makes A
 ready, and both screens end together once both are. Back on the character select: the winner's star on both consoles,
 the auto handicap (winner one step down, last place one up) on both, and each console's save holding only its own
-door's value. B leaves and rejoins: the star is still there. A second match (A and the CPU B's door became) is quit
+door's value. B leaves (to "Choose a game.") and rejoins: the star is still there. A second match (A and the CPU B's door became) is quit
 from the pause menu: its results go through the cancelled-match skip, and nothing changes. Then Back on the host,
 answered "No" many times (the top-screen "End the session?" dialog, with B or with A on No; while it is up the host
-is busy, "ANSWERING A PROMPT" on B's strip, and its stick does not move the cursor), and finally "Yes" (Left, A): the
-character select keeps working and the session ends cleanly; out of the session the stars are gone.
+is busy, "ANSWERING A PROMPT" on B's strip, and its stick does not move the cursor); L+R+Start asks the same (No);
+and finally "Yes" (Left, A): the
+character select keeps working and the session ends cleanly: A lands on "Choose a game." with the list open and no
+notice, B there with a notice saying why and the list open under it; out of the session the stars are gone.
 Names: the consoles are named Anna and Beeb (group.ini name=); under the merged results' windows both
 screens show those names instead of "FOX"; on match 2's results (B's door a CPU) A's window keeps Anna and B's window
 its fighter's name. tools/group/group_names_test.py covers drops, leaving and late joiners.
@@ -34,8 +36,8 @@ import emu  # noqa: E402
 from css_probe import Css  # noqa: E402
 from gdb_probe import packet, receive  # noqa: E402
 from names_probe import labels, sis  # noqa: E402
-from group_menu_test import (CPAD_RIGHT, CPAD_UP, KEY_A, KEY_B, KEY_START, KEY_UP, MENU_VS, Stub, save_bottom,  # noqa: E402
-                             save_top, to_main_menu)
+from group_menu_test import (CPAD_RIGHT, CPAD_UP, KEY_A, KEY_B, KEY_START, KEY_UP, MENU_VS, SCENE_CHOOSE, Stub,  # noqa: E402
+                             save_bottom, save_top, to_main_menu)
 
 KEY_L, KEY_R = 1 << 9, 1 << 8
 CPAD_LEFT, CPAD_DOWN = 1 << 29, 1 << 31
@@ -265,7 +267,16 @@ def main():
             raise SystemExit(1)
         return False
 
-    def to_group_page(c):
+    def to_group_page(c, lists=None):
+        if lists is not None:
+            # back from the lobby: "Choose a game.", the Group list open again (the VS menu without the submenu)
+            end = time.monotonic() + 120
+            while time.monotonic() < end and c.scene() not in (1, SCENE_CHOOSE):
+                time.sleep(0.5)
+            if c.scene() == SCENE_CHOOSE:
+                wait_log(c, 'group: Group, looking for games', f'{c.name}: back on "Choose a game.", the list open', 60,
+                         lists + 1)
+                return
         s = c.stub.goto_vs_menu()
         check(f'{c.name}: reached the VS menu', s['scene'] == 1 and c.stub.menu()[0] == MENU_VS, str(c.stub.menu()))
         for _ in range(8):
@@ -453,7 +464,8 @@ def main():
             check(f'{c.name}: both doors\' handicap sliders show the new values',
                   all(k is not None and abs(k - 1.25 * (want[d] - 1)) < 0.05 for d, k in enumerate(ks)), str(ks))
 
-        # B leaves and comes back: the star stays.
+        # B leaves (to "Choose a game.", the list open) and comes back: the star stays.
+        lists_b = b.log().count('group: Group, looking for games')
         # Back held (as group_join_test: a tap only lifts the token) until the CSS takes it
         b.stub.press(KEY_B, 2, 4)
         b.stub.poke('mp_test_keys', KEY_B)
@@ -464,7 +476,7 @@ def main():
         wait_log(b, 'group: left the lobby', 'B leaves the lobby', 60)
         a.stub.until_frames(120)
         check('the stars stay on the host when B leaves', a.stars() == host_stars, str(a.stars()))
-        to_group_page(b)
+        to_group_page(b, lists_b)
         join(b, 'B rejoins')
         check('B sees the stars again after rejoining', b.stars() == host_stars, f'{b.stars()} != {host_stars}')
         b.capture('04-rejoined')
@@ -564,16 +576,40 @@ def main():
               f'{stays} stays, scene {a.scene()}')
         take_ok = a.css.doors()[0]['p_kind'] == 0
         check('A\'s door is still its own after the Back presses', take_ok, str(a.css.doors()[0]))
+        # The soft reset (L+R+Start) on the host's character select: as Back held, so "End the session?" asks first
+        # (vanilla's would jump to the main menu with the session open). No: still in the lobby.
+        a.stub.press(KEY_L | KEY_R | KEY_START, 4, 30)
+        a.stub.until_frames(20)
+        check('L+R+Start on the host asks "End the session?" too', bool(dialog()) and a.scene() == 8, f'scene {a.scene()}')
+        answer_dialog(a, False)
+        a.stub.until_frames(20)
+        check('No: A stays in the lobby', a.scene() == 8 and not dialog(), f'scene {a.scene()}')
         check('Back asks "End the session?" once more', ask_to_leave())
         # HOME and sleep were off on the host from Host on, through both matches and their results
         check('A: HOME and sleep off through the matches and results (one off, no on)',
               a.log().count('group: HOME and sleep off') == 1 and 'group: HOME and sleep on' not in a.log())
+        lists_a = a.log().count('group: Group, looking for games')
+        lists_b = b.log().count('group: Group, looking for games')
+        notes_a = a.log().count('group: dialog "')
+        notes_b = b.log().count('group: dialog "')
         answer_dialog(a, True)
-        wait_scene(a, 1, '"Yes": A is back on the menus', 120, False)
+        # "Yes": the host lands on "Choose a game." with the list open, no notice (it chose to leave); B lands there too,
+        # with a notice saying why and the list open under it.
+        wait_scene(a, SCENE_CHOOSE, '"Yes": A lands on "Choose a game."', 120, False)
         wait_log(a, 'group: HOME and sleep on', 'A: HOME and sleep on again once the session ends', 60)
+        wait_log(a, 'group: Group, looking for games', 'A: the Group list is open again', 60, lists_a + 1, False)
+        a.stub.until_frames(60)
+        a.capture('06-host-after-yes')
+        check('A: no notice (the host ended the session itself)', a.log().count('group: dialog "') == notes_a,
+              str([l for l in a.log().splitlines() if 'group: dialog "' in l][-1:]))
         check('ending the session does not crash A', a.proc.poll() is None and a.log().count('PANIC') == panics)
-        wait_scene(b, 1, 'B goes back to the menus as the session ends', 120, False)
+        wait_scene(b, SCENE_CHOOSE, 'B lands on "Choose a game." as the session ends', 120, False)
         wait_log(b, 'group: HOME and sleep on', 'B: HOME and sleep on again once the session ends', 60, 2)
+        wait_log(b, 'group: dialog "', 'B: a notice says why the session ended', 60, notes_b + 1, False)
+        wait_log(b, 'group: Group, looking for games', 'B: the Group list is open under the notice', 60, lists_b + 1,
+                 False)
+        b.stub.until_frames(40)
+        b.capture('06-joiner-notice')
         check('out of the session the stars are gone (A)', a.stars() == [0, 0, 0, 0], str(a.stars()))
     finally:
         for c in (a, b):

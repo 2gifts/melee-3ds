@@ -1120,6 +1120,7 @@ static void mp_sss_start_loading(void)
 SSS_CODE = r'''
 /* ---- the group's stage select: anyone's pick (the host's first) or Back ends it for everyone ---- */
 static int mp_sss_remote, mp_sss_sent;
+static int mp_sss_reset;   /* this frame's Back is L+R+Start (any console's), not the picker's B */
 int mp_group_sss_remote_exit(void)
 {
     int r = mp_sss_remote;
@@ -1130,7 +1131,11 @@ int mp_group_sss_remote_exit(void)
 static void mp_group_sss_back(void)
 {
     if (mp_group_mode()) {
-        mp_platform_group_lobby_back();
+        if (mp_sss_reset) {
+            mp_platform_group_lobby_back_reset();
+        } else {
+            mp_platform_group_lobby_back();
+        }
     }
 }
 
@@ -1249,6 +1254,15 @@ static int mp_group_sss_frame(void)
 
 FIXES = {
     'melee/mn/mncharsel.c': [
+        # The soft reset (L+R+Start) in the lobby: as Back held (leaving, the host asked "End the session?" first), so
+        # the session is closed the usual way and the console lands on "Choose a game." (vanilla's would jump to the main
+        # menu with the session still open).
+        ('    if (!mp_slippi_css_online() && mn_8022F218() != 0) {\n',
+         '    if (mp_group_mode() && mn_8022F218() != 0) {\n'
+         '        if (mnCharSel_804D6CF6 == 0 && !mp_group_dialog_up()) {\n'
+         '            mnCharSel_804D6CF6 = 2;\n'
+         '        }\n'
+         '    } else if (!mp_slippi_css_online() && mn_8022F218() != 0) {\n', 1),
         # A joiner's character select shows the host's rules (banner, handicap mode) and each door's auto handicap from
         # the console that owns it: every read of the rules and of auto handicap in this file goes through the group
         # code (inert outside a group). The group code calls the real functions as (gmMainLib_GetGameRules)() and
@@ -1364,6 +1378,11 @@ FIXES = {
     ],
     # The puck's own think: a token held by another console (state 5) follows no cursor and is hidden.
     'melee/mn/mnstagesel.c': [
+        # The soft reset (L+R+Start) on a group's stage select, from any console (as vanilla, which reads every
+        # controller for it, even when one player picks): everyone back to the character select (as the picker's B),
+        # not vanilla's jump to the main menu.
+        ('    if (sss_data->no_lras == 0 && mn_8022F218()) {\n',
+         '    if (!mp_group_mode() && sss_data->no_lras == 0 && mn_8022F218()) {\n', 1),
         ('#include "mnstagesel.h"\n',
          '#include <group_bridge.h>\n#include <group_engine.h>\n#include <slippi_net_bridge.h>\n#include "mnstagesel.h"\n', 1),
         ('            HSD_GObj_SetupProc(gobj, mn_8022BA1C, 5);\n',
@@ -1384,7 +1403,16 @@ FIXES = {
          '                do_anim(jobj2, mnStageSel_804D50A0 + 1);\n                mp_sss_cursor = jobj2;\n', 1),
         ('    if (mnStageSel_804D6CAC < -0x1E) {\n',
          '    if (mp_sss_no_cursor()) {\n        mnStageSel_804D6CA0 = 0;\n        mnStageSel_804D6CAC = 0;\n'
-         '        mnStageSel_804D6CAD = 0;\n    }\n    if (mnStageSel_804D6CAC < -0x1E) {\n', 1),
+         '        mnStageSel_804D6CAD = 0;\n    }\n'
+         '    if (mp_group_mode() && mn_8022F218()) {\n'
+         '        /* L+R+Start from any console, the picker or not (vanilla reads every controller for it): B, so everyone\n'
+         '         * goes back to the character select. B (0x200, as vanilla tests it), not Start, which would pick. */\n'
+         '        mnStageSel_804D6CA0 = 0x200;\n'
+         '        mp_sss_reset = 1;\n'
+         '    } else {\n'
+         '        mp_sss_reset = 0;\n'
+         '    }\n'
+         '    if (mnStageSel_804D6CAC < -0x1E) {\n', 1),
         ('    jobj = gobj->hsd_obj;\n    if (mnStageSel_804D6CAF != 0) {\n        HSD_JObjSetFlags(jobj, JOBJ_HIDDEN);\n'
          '        return;\n    }\n',
          '    jobj = gobj->hsd_obj;\n    if (mnStageSel_804D6CAF != 0 || mp_sss_no_cursor()) {\n'

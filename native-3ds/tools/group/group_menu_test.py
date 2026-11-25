@@ -3,8 +3,9 @@
 Boots with group.ini menu=1 and the loopback link (udp=1), then: main menu -> VS -> Melee (the top-screen Solo / Group
 submenu, menu kind 11, its art filled from the menu's own letters: "group: menu art filled"), Back (B), Melee again ->
 Group (the Group page), Host (the lobby CSS in the HANYU scene, with the connected-players strip), B out of the CSS (back
-on the submenu with Group hovered, the session closed), then Solo (the vanilla CSS) and B out of it (back on the submenu
-with Solo hovered).
+on "Choose a game." with the list open again; B there: the submenu with Group hovered), then Solo (the vanilla CSS) and B
+out of it (back on the submenu with Solo hovered), and finally Group again and the soft reset (L+R+Start) on "Choose a
+game.": the main menu, the session closed.
 --bottom-page (group.ini top_menu=0): the same through the bottom-screen touch page instead of the submenu.
 Every step saves both screens as PNGs and the log lines are checked.
 Wireless off: the first Group press runs with test_wireless_off=1 in group.ini and must show "Please enable wireless and
@@ -34,6 +35,7 @@ import emu  # noqa: E402
 from gdb_probe import packet, receive  # noqa: E402
 
 PORT = 24862
+KEY_L, KEY_R = 1 << 9, 1 << 8
 SCENE_CHOOSE = 36   # the tournament setup scene: "Choose a game." (group_lobby_screen.py)
 KEY_A, KEY_B, KEY_START, KEY_DOWN = 1, 2, 8, 0x80
 KEY_UP = 0x40
@@ -441,6 +443,20 @@ def main():
             back_from_css()
             capture('back-from-solo')
             check('Back from Solo\'s CSS: on the submenu with Solo hovered', stub.menu() == (11, 0), str(stub.menu()))
+            # The soft reset (L+R+Start) on "Choose a game.": the main menu, and the Group session closed with it.
+            lists = log_text().count('group: Group, looking for games')
+            stub.choose()                # Group
+            wait_log('group: Group, looking for games', lists + 1, 60)
+            wait(lambda s: s['scene'] == SCENE_CHOOSE, 'Group again: "Choose a game."', 120)
+            stub.until_frames(60)
+            on = log_text().count('group: HOME and sleep on')
+            stub.press(KEY_L | KEY_R | KEY_START, 4, 30)
+            wait(lambda s: s['scene'] == 1, 'the soft reset on "Choose a game.": back to the menus', 120)
+            stub.until_frames(60)
+            capture('soft-reset')
+            check('the soft reset lands on the main menu', stub.menu()[0] == 0, str(stub.menu()))
+            check('the soft reset closes the Group session (HOME and sleep on again)',
+                  wait_log('group: HOME and sleep on', on + 1, 30))
     finally:
         emu.stop(proc)
         time.sleep(1)

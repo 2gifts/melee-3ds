@@ -11,9 +11,13 @@ with name tag id 5, as if chosen on the character select). A hosts a 1 minute ti
            no KOs credited against another tag (B has no tag of A's save); B's slot carries no tag on A (0x78) and A's
            none on B.
   Loser    Stage Selection Loser: A lost match 1, so port 1 (A) picks; B's pad does nothing on the stage select.
+  reset    L+R+Start there on B (not the picker; vanilla reads every controller for it): everyone back to the character
+           select (no main menu, nobody leaves the session); then A's Start again.
   leaving  Both saves at 99 VS matches; match 2 (B walks off); both reach their prize screens; A goes back to the
            character select and leaves the lobby (Back, "Yes") while B is still on its prize screen. B's prize screen
            ends normally, its character select sees the session gone and leaves, and B's earned challenger starts.
+           A lands on "Choose a game."; B loses the challenger fight and lands there too, with a notice saying why
+           the session ended and the Group list open under it.
 
     docker/emu-test.sh run tools/group/group_stage_rules_test.py [--show]
 Results: $MELEE_TEST_OUT/group-stage-rules/ (PNGs, both game.logs)."""
@@ -31,7 +35,7 @@ sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parent / 'slippi'))
 sys.path.insert(0, str(HERE.parent))
 import emu  # noqa: E402
-from group_menu_test import CPAD_RIGHT, CPAD_UP, KEY_A, KEY_B, KEY_START, KEY_UP, to_main_menu  # noqa: E402
+from group_menu_test import CPAD_RIGHT, CPAD_UP, KEY_A, KEY_B, KEY_L, KEY_R, KEY_START, KEY_UP, SCENE_CHOOSE, to_main_menu  # noqa: E402
 from group_results_test import CPAD_DOWN, CPAD_LEFT, FOX_TILE, RULES, Console, end_session_if_asked  # noqa: E402
 
 LINK_PORT = 44180
@@ -288,6 +292,18 @@ def main():
         b.stub.press(KEY_A, 4, 30)
         check('B (not the picker) picks nothing', a.log().count('group: starting a match') == 1)
 
+        # ---- the soft reset (L+R+Start) on the stage select, from a console that is not picking (as vanilla, which reads
+        # every controller for it): everyone back to the character select, never the main menu ----
+        lefts = (a.log().count('group: left the lobby'), b.log().count('group: left the lobby'))
+        b.stub.press(KEY_L | KEY_R | KEY_START, 4, 30)       # B, not the picker
+        for c in (a, b):
+            wait_scene(c, 8, f'L+R+Start on B (not the picker): {c.name} back on the character select', 120, False)
+        check('the soft reset left nobody\'s session (no "left the lobby")',
+              (a.log().count('group: left the lobby'), b.log().count('group: left the lobby')) == lefts)
+        a.stub.until_frames(60)
+        check('A presses Start again (Loser)', press_start(a))
+        wait_log(a, 'Group: stage selection rule 4, picker 1', 'Loser: A picks again', 120, 2)
+
         # ---- match 2, then the host leaves while B is on its prize screen ----
         for c in (a, b):
             c.stub.write(base + THING + 0x08, struct.pack('>I', 99))
@@ -317,6 +333,9 @@ def main():
         a.stub.until_frames(30)
         end_session_if_asked(a)
         wait_log(a, 'group: left the lobby', 'A (the host) leaves the lobby', 120)
+        wait_scene(a, SCENE_CHOOSE, 'A (the host) lands on "Choose a game."', 120, False)
+        lists_b = b.log().count('group: Group, looking for games')
+        notes_b = b.log().count('group: dialog "')
         b.stub.until_frames(240)
         b.capture('01-prize-host-gone')
         for _ in range(40):                                  # B goes through its prize screen now
@@ -327,6 +346,21 @@ def main():
                  'B: past its prize screen, the session gone, its earned challenger starts', 120)
         b.stub.until_frames(240)
         b.capture('02-challenger')
+        # B loses the challenger fight (walks off; A through any screen on the way), then, the session having ended
+        # under it, "Choose a game." with a notice saying why and the Group list open under it.
+        end = time.monotonic() + 900
+        i = 0
+        while time.monotonic() < end and b.scene() != SCENE_CHOOSE:
+            b.stub.poke('mp_test_keys', CPAD_LEFT | (KEY_A if i % 4 == 0 else 0))
+            b.stub.until_frames(30)
+            i += 1
+        b.stub.poke('mp_test_keys', 0)
+        check('B: after the challenger fight, "Choose a game."', b.scene() == SCENE_CHOOSE, f'scene {b.scene()}')
+        wait_log(b, 'group: dialog "', 'B: a notice says why the session ended', 60, notes_b + 1, False)
+        wait_log(b, 'group: Group, looking for games', 'B: the Group list is open under the notice', 60, lists_b + 1,
+                 False)
+        b.stub.until_frames(40)
+        b.capture('03-choose-after-challenger')
     finally:
         for c in (a, b):
             emu.stop(c.proc)

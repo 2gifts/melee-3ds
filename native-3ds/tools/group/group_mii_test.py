@@ -18,6 +18,11 @@ own Mii, test_miis.cfl_db): its own head shows on the "HOST GAME" button, and cf
 draws to the database's recently-seen list (checked in the file afterwards: three, and nothing printed by cfl-mii).
 With --no-mii: test_mii_fail=1 and no database: no head on the button, the rows' heads as before.
 
+MELEE_CFL_DB (docker/emu-test.sh) is a folder with a console's own Mii files from shared extdata F000000B
+(CFL_DB.dat, and CFL_OldDB.dat and ubll.lst if there): they are copied into the profile instead of the generated
+database, so cfl-mii's database work costs what it costs on that console. The folder itself is never written. A real
+recently-seen list is usually full, so the check becomes: every other console's Mii drawn is in it afterwards.
+
     docker/emu-test.sh run tools/group/group_mii_test.py [--no-mii]
 Results: $MELEE_TEST_OUT/group-mii[-no-mii]/ (PNGs, game.log, the PC hosts' logs)."""
 import argparse
@@ -95,9 +100,20 @@ def main():
     # the Mii Maker database (shared extdata F000000B), made on every run so a reset cannot change it
     db_path = emu.user_dir(home) / 'nand/data/00000000000000000000000000000000/extdata/00048000/F000000B/user/CFL_DB.dat'
     shutil.rmtree(db_path.parent.parent, ignore_errors=True)
+    real_db = os.environ.get('MELEE_CFL_DB_DIR')
     if not args.no_mii:
         db_path.parent.mkdir(parents=True, exist_ok=True)
-        db_path.write_bytes(test_miis.cfl_db())
+        if real_db:
+            copied = []
+            for name in ('CFL_DB.dat', 'CFL_OldDB.dat', 'ubll.lst'):
+                if (Path(real_db) / name).is_file():
+                    shutil.copyfile(Path(real_db) / name, db_path.parent / name)
+                    copied.append(name)
+            if 'CFL_DB.dat' not in copied:
+                sys.exit(f'MELEE_CFL_DB: no CFL_DB.dat in {real_db}')
+            print('the console\'s Mii files:', ', '.join(copied), flush=True)
+        else:
+            db_path.write_bytes(test_miis.cfl_db())
     (sd / 'no-scripted-input').write_text('')
     (sd / 'game.log').unlink(missing_ok=True)
     stub = Stub(emu.elf_symbols(args.elf))
@@ -235,9 +251,16 @@ def main():
                   any('CFL_DB.dat' in l for l in cfl_lines), str(cfl_lines[:3]))
         else:
             others = [k for k in listed if k == 'mii']
-            count = test_miis.recent_count(db_path.read_bytes()) if db_path.exists() else -2
-            check('the recently-seen list holds the other consoles\' Miis drawn (not this console\'s own)',
-                  count == len(others), f'{count} in the list, {len(others)} other Miis drawn')
+            if real_db:
+                ids = test_miis.recent_ids(db_path.read_bytes()) if db_path.exists() else None
+                drawn = {bytes.fromhex(h)[0x0C:0x16] for n, h in test_miis.hosts() if n in names and kinds.get(n) == 'mii'}
+                check('the recently-seen list holds the other consoles\' Miis drawn (the console\'s own database)',
+                      ids is not None and drawn <= ids,
+                      'not valid' if ids is None else f'{len(drawn & ids)} of {len(drawn)} drawn are listed, {len(ids)} listed')
+            else:
+                count = test_miis.recent_count(db_path.read_bytes()) if db_path.exists() else -2
+                check('the recently-seen list holds the other consoles\' Miis drawn (not this console\'s own)',
+                      count == len(others), f'{count} in the list, {len(others)} other Miis drawn')
             check('cfl-mii printed nothing (it found the database and wrote to it)', not cfl_lines, str(cfl_lines[:3]))
     finally:
         if proc is not None:

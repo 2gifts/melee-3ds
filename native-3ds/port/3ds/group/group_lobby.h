@@ -151,6 +151,7 @@ int lobby_cmd_door(uint8_t *out, int slot, const lobby_slot *s, int base);
 int lobby_cmd_start(uint8_t *out);                                      /* Start from the CSS: go to the stage select */
 int lobby_cmd_stage(uint8_t *out, int stage, int alt_stage);            /* a stage pick */
 int lobby_cmd_back(uint8_t *out);                                       /* B at the stage select: back to the CSS */
+int lobby_cmd_back_reset(uint8_t *out);                                 /* L+R+Start there: the same, from any console */
 /* The sender is busy (a LOBBY_BUSY_* code; 0 no longer), and which doors it is using (bit n: door n; see
  * lobby_state.in_use). An unknown code reads as LOBBY_BUSY_SLIDER (busy, no reason shown). */
 int lobby_cmd_busy(uint8_t *out, int busy, int doors);
@@ -198,7 +199,7 @@ int lobby_host_start(lobby_host *h, int from);                               /* 
  * its save and sends it from port 0, which replaces the random pick and starts the match. */
 int lobby_host_pick_stage(lobby_host *h, int from, int stage, int alt_stage);
 /* Back from the stage select (console `from`): only the picker may, and not once a stage is picked. */
-int lobby_host_back(lobby_host *h, int from);
+int lobby_host_back(lobby_host *h, int from, int reset);   /* reset: L+R+Start, taken from any console */
 int lobby_host_set_rules(lobby_host *h, const lobby_rules *r);      /* the host changed the rules */
 int lobby_host_set_busy(lobby_host *h, int port, int busy);                  /* a console's busy code (its own only) */
 int lobby_host_set_in_use(lobby_host *h, int port, int doors);               /* the doors a console is using */

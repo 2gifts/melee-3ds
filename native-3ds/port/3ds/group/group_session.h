@@ -105,6 +105,7 @@ void group_lobby_set_door(int port, const MpGroupDoor *door);
 void group_lobby_start(void);
 void group_lobby_stage(int stage, int alt_stage);
 void group_lobby_back(void);
+void group_lobby_back_reset(void);   /* L+R+Start on the stage select: back to the CSS, from any console */
 void group_lobby_busy(int busy);
 void group_lobby_rules(const MpGroupRules *rules);
 void group_menu_sticks(int x, int y, signed char *out);

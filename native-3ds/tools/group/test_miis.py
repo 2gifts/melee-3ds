@@ -76,6 +76,21 @@ def recent_count(db):
     return int.from_bytes(region[4:8], 'little')
 
 
+def recent_ids(db):
+    """The Mii IDs (10 bytes at 0x0C) of the Miis the recently-seen section lists, or None if it is not valid. A real
+    console's list is often full (100), so a new Mii replaces the oldest and the count does not change."""
+    region = db[RECENT_AT:RECENT_AT + RECENT_SIZE]
+    if len(region) != RECENT_SIZE or region[:4] != b'CFRA' or crc16(region) != 0:
+        return None
+    count = min(int.from_bytes(region[4:8], 'little'), 100)
+    ids = set()
+    for slot in region[8:8 + count]:
+        if slot < 100:
+            record = region[0x6C + slot * 72:0x6C + slot * 72 + 72]
+            ids.add(bytes(record[0x0C:0x16]))
+    return ids
+
+
 def hosts():
     return [(n, variant(n, *rest).hex()) for n, *rest in HOSTS]
 

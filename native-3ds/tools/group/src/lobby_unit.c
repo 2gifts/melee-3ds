@@ -631,6 +631,16 @@ int main(void)
         CHECK(!lobby_host_command(&u, other, c, lobby_cmd_stage(c, 0x20, 0)) && !u.st.stage_picked);
         CHECK(!lobby_host_command(&u, other, c, lobby_cmd_back(c)) && u.st.phase == LOBBY_STAGE);
         CHECK(lobby_host_command(&u, picker, c, lobby_cmd_back(c)) && u.st.phase == LOBBY_CSS);
+        /* L+R+Start (the soft reset) goes back from any console, the picker or not; never after the pick */
+        CHECK(lobby_host_start(&u, 0));
+        other = u.st.sss_picker == 0 ? 2 : 0;
+        CHECK(lobby_host_command(&u, other, c, lobby_cmd_back_reset(c)) && u.st.phase == LOBBY_CSS);
+        CHECK(lobby_host_start(&u, 0));
+        CHECK(lobby_host_pick_stage(&u, u.st.sss_picker, 0x1F, 0));
+        CHECK(!lobby_host_command(&u, other, c, lobby_cmd_back_reset(c)));
+        u.st.phase = LOBBY_CSS;
+        u.st.stage_picked = 0;
+        u.st.rules.stage_sel = LOBBY_SSS_TURNS;
         /* the picker leaving passes the pick to the next Human port with a console; a pick from it is refused */
         u.st.rules.stage_sel = LOBBY_SSS_LOSER;
         lobby_host_set_loser(&u, 2);

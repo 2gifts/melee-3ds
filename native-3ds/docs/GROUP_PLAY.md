@@ -109,6 +109,9 @@ timer, and each player's stocks and damage. You join the lobby when the match en
   the host and other players are there, a message asks **End the session?** first: choose **Yes** or **No** (No is
   highlighted; B is No). While it is up, nobody can start a match, and the other consoles show you as **ANSWERING A
   PROMPT**.
+- **L+R+Start** (the soft reset) never leaves the group behind: in the lobby it works like holding B (the host is asked
+  first), on the stage select it takes everyone back to the character select (from any console), and on **Choose a game.** it goes to the main menu
+  and closes the session.
 - If your save has earned a hidden fighter, **"A new challenger approaches!"** starts when you leave the lobby (or when
   the session ends), as it would after a Versus match on one console. Beat the challenger to unlock it.
 - **When the host leaves, the session ends for everyone.** The other consoles go back to **Choose a game.**, where a

@@ -705,10 +705,10 @@ void group_lobby_stage(int stage, int alt_stage)
     sp_unlock();
 }
 
-void group_lobby_back(void)
+static void lobby_back(int reset)
 {
     uint8_t c[LW_MAX_COMMAND];
-    int n = lobby_cmd_back(c);
+    int n = reset ? lobby_cmd_back_reset(c) : lobby_cmd_back(c);
     sp_lock();
     if (G.open && G.status == ST_CONNECTED) {
         if (G.host) host_apply(lobby_host_command(&G.host_lobby, 0, c, n));
@@ -716,6 +716,9 @@ void group_lobby_back(void)
     }
     sp_unlock();
 }
+
+void group_lobby_back(void) { lobby_back(0); }
+void group_lobby_back_reset(void) { lobby_back(1); }
 
 void group_lobby_busy(int busy)
 {

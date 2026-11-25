@@ -330,6 +330,8 @@ int lobby_cmd_stage(uint8_t *out, int stage, int alt_stage)
     return 4;
 }
 int lobby_cmd_back(uint8_t *out) { out[0] = LCMD_BACK; return 1; }
+/* The soft reset: the same command, a second byte 1 (an older host reads only the first: a plain Back). */
+int lobby_cmd_back_reset(uint8_t *out) { out[0] = LCMD_BACK; out[1] = 1; return 2; }
 int lobby_cmd_busy(uint8_t *out, int busy, int doors)
 {
     out[0] = LCMD_BUSY; out[1] = (uint8_t)(busy < 0 ? 0 : busy > 255 ? 255 : busy); out[2] = (uint8_t)(doors & 0xF);
@@ -536,10 +538,11 @@ int lobby_host_pick_stage(lobby_host *h, int from, int stage, int alt_stage)
     return stage == LOBBY_STAGE_RANDOM ? LOBBY_CHANGED : LOBBY_CHANGED | LOBBY_START_MATCH;
 }
 
-int lobby_host_back(lobby_host *h, int from)
+int lobby_host_back(lobby_host *h, int from, int reset)
 {
     if (h->st.phase != LOBBY_STAGE || h->st.stage_picked) return 0;
-    if (h->st.sss_picker < LOBBY_SLOTS && from != h->st.sss_picker) return 0;
+    /* B: only the picker's, when one console picks. L+R+Start: anyone's, as vanilla reads every controller for it. */
+    if (!reset && h->st.sss_picker < LOBBY_SLOTS && from != h->st.sss_picker) return 0;
     h->st.phase = LOBBY_CSS;
     return LOBBY_CHANGED;
 }
@@ -624,7 +627,7 @@ int lobby_host_command(lobby_host *h, int from, const uint8_t *cmd, int len)
         case LCMD_RESULTS:
             if (len < 3) return 0;
             return lobby_host_results(h, from, cmd[1], cmd[2]);
-        case LCMD_BACK: return lobby_host_back(h, from);
+        case LCMD_BACK: return lobby_host_back(h, from, len >= 2 && cmd[1] == 1);
         default: return 0;
     }
 }

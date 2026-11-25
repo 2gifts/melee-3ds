@@ -51,6 +51,19 @@ static void mp_group_lobby_leave(GameModeKind mode)
     gm_ChangeGameModeAfterCurrentScene(mode);
 }
 
+/* The soft reset (L+R+Start) leaves through vanilla's handler, which knows nothing of the Group list: close the list
+ * and the session first (Back from the list closes the session; Back again closes the page), and any notice. */
+static void mp_group_lobby_close(void)
+{
+    mp_group_dialog_close();
+    if (mp_platform_group_waiting()) {
+        (void) mp_platform_group_poll(1);
+    }
+    if (mp_platform_group_waiting()) {
+        (void) mp_platform_group_poll(1);
+    }
+}
+
 static void mp_group_lobby_frame(void)
 {
     int r, notice;
@@ -102,11 +115,14 @@ FIXES = {
          '    if (mp_group_lobby_screen) {\n'
          '        tm->x4E0->sis_buffer = (SIS*) mp_group_lobby_title;\n'
          '    }\n', 1),
-        # Our step instead of the rules' (the soft reset still works).
+        # Our step instead of the rules'. The soft reset still goes through vanilla's handler, the Group list closed first.
         ('    tm = gm_GetTournamentData();\n    r30 = fn_8018F674(4);\n    r29 = fn_8018F640(4);\n',
-         '    if (mp_group_lobby_screen && mn_8022F218() == 0) {\n'
-         '        mp_group_lobby_frame();\n'
-         '        return;\n'
+         '    if (mp_group_lobby_screen) {\n'
+         '        if (mn_8022F218() == 0) {\n'
+         '            mp_group_lobby_frame();\n'
+         '            return;\n'
+         '        }\n'
+         '        mp_group_lobby_close();   /* the soft reset: vanilla\'s handler below takes the game to the main menu */\n'
          '    }\n'
          '    tm = gm_GetTournamentData();\n    r30 = fn_8018F674(4);\n    r29 = fn_8018F640(4);\n', 1),
         # The first rule row's state, whatever the last tournament left (the header box and background follow it).

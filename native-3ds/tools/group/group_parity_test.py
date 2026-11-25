@@ -12,7 +12,8 @@ Fox.
   Start 2  Turns: now port 2 (B) picks, and A's stage select follows; then B vanishes: the pick passes to port 1 (A),
            whose stage select takes it ("port 1 picks the stage now") and goes back to the character select with B.
   leaving  A leaves the lobby (Back, "Yes"): its save has earned a fighter, so "A new challenger approaches" starts
-           (the GM_CHALLENGER_APPROACH mode) instead of the menus.
+           (the GM_CHALLENGER_APPROACH mode) first. A loses that fight and lands on "Choose a game." with the Group list
+           open and no notice.
 
     docker/emu-test.sh run tools/group/group_parity_test.py [--show]
 Results: $MELEE_TEST_OUT/group-parity/ (PNGs, both game.logs)."""
@@ -29,7 +30,7 @@ sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parent / 'slippi'))
 sys.path.insert(0, str(HERE.parent))
 import emu  # noqa: E402
-from group_menu_test import CPAD_RIGHT, CPAD_UP, KEY_A, KEY_B, KEY_START, KEY_UP, MENU_VS, to_main_menu  # noqa: E402
+from group_menu_test import CPAD_RIGHT, CPAD_UP, KEY_A, KEY_B, KEY_START, KEY_UP, MENU_VS, SCENE_CHOOSE, to_main_menu  # noqa: E402
 from group_results_test import CPAD_DOWN, CPAD_LEFT, FOX_TILE, RULES, Console, end_session_if_asked  # noqa: E402
 
 LINK_PORT = 44170
@@ -257,10 +258,28 @@ def main():
         a.stub.until_frames(60)
         a.stub.poke('mp_test_keys', 0)
         a.stub.until_frames(30)
+        notes_a = a.log().count('group: dialog "')
+        lists_a = a.log().count('group: Group, looking for games')
         end_session_if_asked(a)                              # "End the session?" -> Yes (if asked)
+        notes_a = max(notes_a, a.log().count('group: dialog "'))   # "End the session?" itself is a dialog line
         wait_log(a, 'Group: a new challenger approaches', 'A leaves: "A new challenger approaches" (its earned fighter)', 120)
         a.stub.until_frames(240)
         a.capture('07-challenger')
+        # A loses the challenger fight (walks off; A through any screen on the way), then lands on "Choose a game." with
+        # the Group list open, and no notice: it left the session itself.
+        end = time.monotonic() + 900
+        i = 0
+        while time.monotonic() < end and a.scene() != SCENE_CHOOSE:
+            a.stub.poke('mp_test_keys', CPAD_LEFT | (KEY_A if i % 4 == 0 else 0))
+            a.stub.until_frames(30)
+            i += 1
+        a.stub.poke('mp_test_keys', 0)
+        check('A: after the challenger fight, "Choose a game."', a.scene() == SCENE_CHOOSE, f'scene {a.scene()}')
+        wait_log(a, 'group: Group, looking for games', 'A: the Group list is open again', 60, lists_a + 1, False)
+        a.stub.until_frames(40)
+        a.capture('08-choose-after-challenger')
+        check('A: no notice (the host left the session itself)', a.log().count('group: dialog "') == notes_a,
+              str([l for l in a.log().splitlines() if 'group: dialog "' in l][-1:]))
     finally:
         for c in (a, b):
             emu.stop(c.proc)

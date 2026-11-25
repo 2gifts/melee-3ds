@@ -107,6 +107,7 @@ void mp_platform_group_lobby_set_door(int port, const MpGroupDoor *door);
 void mp_platform_group_lobby_start(void);
 void mp_platform_group_lobby_stage(int stage, int alt_stage);
 void mp_platform_group_lobby_back(void);
+void mp_platform_group_lobby_back_reset(void);   /* L+R+Start on the stage select: the same, from any console */
 /* This console is busy or not: bits 0..3 why (0 not busy, 1 a held slider or the results screen, 2 a name tag list, 3 the
  * rules menu, 4 name entry, 5 the prize screen); bits 4..7: the doors it is using (bit 4 + n: door n), see
  * MpGroupLobby.in_use. */

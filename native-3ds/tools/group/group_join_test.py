@@ -11,7 +11,11 @@ joins, then does what this test appends to its control file. Checked on the emul
     again, and back to Off the level slider is right again;
   * Back leaves; a rejoin over a door the host made a CPU keeps that CPU (the old door is never sent back).
   * the host quits: back on "Choose a game." a top-screen dialog says why (one button, OK), the Group list open under
-    it at once; OK closes the dialog.
+    it at once; OK closes the dialog;
+  * a game picked under that notice goes straight in, without OK: a second PC host is joined from "Choose a game." and
+    quits, a third opens a game while the notice is up, and the console taps it;
+  * L+R+Start in that lobby leaves it, as Back held, to "Choose a game."; there a tap on that game and B in the same
+    frame: the join or B wins, cleanly.
 Screenshots of each step.
 
     docker/emu-test.sh run tools/group/group_join_test.py
@@ -30,7 +34,7 @@ sys.path.insert(0, str(HERE.parent / 'slippi'))
 sys.path.insert(0, str(HERE.parent))
 import emu  # noqa: E402
 from css_probe import CLOSED, CPU, Css, knob_x  # noqa: E402
-from group_menu_test import to_main_menu, KEY_A, KEY_B, MENU_VS, PORT, SCENE_CHOOSE, Stub, save_bottom, save_top  # noqa: E402
+from group_menu_test import to_main_menu, KEY_A, KEY_B, KEY_L, KEY_R, KEY_START, MENU_VS, PORT, SCENE_CHOOSE, Stub, save_bottom, save_top  # noqa: E402
 
 KEY_UP = 0x40
 TOOLS = Path(os.environ.get('MELEE_GROUP_TOOLS_DIR') or emu.ROOT / 'build/group-tools')
@@ -67,6 +71,7 @@ def main():
     t0 = time.monotonic()
     results = []
     pc_proc = None
+    more_hosts = []   # the PC hosts after the first (the game picked under the notice)
     sent = [0]
 
     def check(name, ok, detail=''):
@@ -325,10 +330,77 @@ def main():
             check('OK: still on ' + ('"Choose a game.", the list open' if top else 'the VS menu'),
                   (s['scene'] == SCENE_CHOOSE and log_text().count('group: Group, looking for games') == n + 1) if top
                   else stub.menu() == (MENU_VS, 0), f'{s}, menu {stub.menu()}')
+
+        # A game picked under the notice goes straight in, without OK: a second PC host is joined from "Choose a game."
+        # and quits (the notice again); a third opens a game while the notice is still up, and the console taps it.
+        def pc_host(name):
+            d = out / name
+            d.mkdir()
+            (d / 'group.ini').write_text((pc / 'group.ini').read_text())
+            (d / 'control.txt').write_text('')
+            log = open(out / f'{name}.log', 'w')
+            more_hosts.append(subprocess.Popen([str(TOOLS / 'group_client'), '--dir', str(d)], stdout=log,
+                                               stderr=subprocess.STDOUT))
+            text = lambda: (out / f'{name}.log').read_text(errors='replace')   # noqa: E731
+            ok = wait_text(text, 'group-test: in the lobby on port', f'{name}: the PC host opens its lobby', 60)
+            return d / 'control.txt', ok
+
+        if top and ok:
+            control2, up = pc_host('pc2')
+            if up:
+                join('joined a second PC host from "Choose a game."')
+                mark = len(log_text())
+                with open(control2, 'a') as f:
+                    f.write('quit\n')
+                if wait_text(lambda: log_text()[mark:], 'group: dialog "The host',
+                             'the second host leaving: the notice again', 120):
+                    control3, up = pc_host('pc3')
+                    if up:
+                        presses = log_text().count('group: dialog "')
+                        capture('09-notice-before-pick')
+                        join('a game picked under the notice: straight into its lobby, no OK pressed')
+                        check('no other dialog came up on the way in', log_text().count('group: dialog "') == presses)
+                        capture('10-joined-under-notice')
+                        # The soft reset (L+R+Start) in the lobby: leaving, as Back held, to "Choose a game." (the
+                        # third host's game listed). Then a tap on that game and B in the same frame: either the join
+                        # wins (its lobby) or B does (the submenu, the session closed); never half-joined or stuck.
+                        lists = log_text().count('group: Group, looking for games')
+                        lefts = log_text().count('group: left the lobby')
+                        stub.press(KEY_L | KEY_R | KEY_START, 4, 30)
+                        wait_text(log_text, 'group: left the lobby', 'L+R+Start in the lobby leaves it', 60, lefts + 1)
+                        to_group_page(lists)
+                        stub.until_frames(120)   # a few scans: the game is in the list
+                        on = log_text().count('group: HOME and sleep on')
+                        stub.poke('mp_test_keys', KEY_B)
+                        stub.poke('mp_test_bottom_touch', 160 | (80 << 16))
+                        stub.until_frames(4)
+                        stub.poke('mp_test_keys', 0)
+                        end = time.monotonic() + 120
+                        s = stub.state()
+                        while time.monotonic() < end and s['scene'] not in (1, 8):
+                            time.sleep(0.5)
+                            s = stub.state()
+                        stub.until_frames(60)
+                        capture('11-tap-and-b')
+                        s = stub.state()
+                        if s['scene'] == 8:
+                            check('a tap and B together: the join won, in the lobby', s['mode'] == 8, str(s))
+                        else:
+                            check('a tap and B together: B won, on the submenu with Group hovered',
+                                  s['scene'] == 1 and stub.menu() == (11, 1), f'{s}, menu {stub.menu()}')
+                            check('a tap and B together: the session closed (HOME and sleep on)',
+                                  log_text().count('group: HOME and sleep on') > on)
+                        check('a tap and B together: the console still runs', proc.poll() is None and
+                              'PANIC' not in log_text())
+                        with open(control3, 'a') as f:
+                            f.write('quit\n')
     finally:
         if pc_proc is not None and pc_proc.poll() is None:
             time.sleep(2)
             pc_proc.kill()
+        for p in more_hosts:
+            if p.poll() is None:
+                p.kill()
         emu.stop(proc)
         time.sleep(1)
         if (sd / 'game.log').exists():
