@@ -513,6 +513,18 @@ void mp_group_check_block(const StartMeleeData* vanilla, const unsigned char* bl
     logf_("Group: the match block's rules checked against vanilla: %d differences\n", diffs, 0);
 }
 
+/* The name of the console that played each port, as the match began (see mp_group_result_name). */
+static char result_names[4][12];
+
+int mp_group_result_name(int port, char* out, int len)
+{
+    if (len <= 0 || port < 0 || port > 3 || result_names[port][0] == 0 || mp_platform_group_players() <= 0) {
+        return 0;
+    }
+    mp_platform_slippi_ui_sis(result_names[port], out, len);
+    return out[0] != 0;
+}
+
 void mp_group_match_begin(StartMeleeData* data, int local_index, const unsigned char* block)
 {
     MpGroupLobby lobby;
@@ -533,6 +545,22 @@ void mp_group_match_begin(StartMeleeData* data, int local_index, const unsigned 
         return;
     }
     if (block[0x13F] != 1) {
+        /* The results screen's names: every port that is a Human in this match, by the name of its console now. Later
+         * roster changes (a console leaving, a new one taking its port) must not change them, and a player who drops
+         * keeps theirs; a sudden death keeps the tied match's. */
+        for (i = 0; i < 4; i++) {
+            result_names[i][0] = 0;
+            if (data->players[i].slot_type == Gm_PKind_Human) {
+                mp_platform_group_player_name(i, result_names[i], sizeof result_names[i]);
+                result_names[i][sizeof result_names[i] - 1] = 0;
+            }
+        }
+        {
+            char line[96];
+            snprintf(line, sizeof line, "Group: results names: 1 '%s' 2 '%s' 3 '%s' 4 '%s'\n", result_names[0],
+                     result_names[1], result_names[2], result_names[3]);
+            mp_platform_log(line);
+        }
         /* auto handicap after this match starts from the handicaps it is played with (the doors are frozen since the
          * stage select, so every console holds the same) */
         match_auto = lobby.rules.handicap == 1;

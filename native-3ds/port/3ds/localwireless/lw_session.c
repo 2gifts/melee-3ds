@@ -191,7 +191,7 @@ int lw_open(const lw_config *cfg, char *err, int errlen)
     S.lob_seq = 1;
     S.cmd_next = 1;
     S.browsing = !S.is_host;
-    if (LINK(open, (S.is_host, cfg->port, LW_MAX_PLAYERS, err, errlen)) != 0) return -1;
+    if (LINK(open, (S.is_host, cfg->port, LW_MAX_PLAYERS, S.cfg.name, err, errlen)) != 0) return -1;
     S.open = 1;
     S.status = LW_SEARCHING;
     return 0;

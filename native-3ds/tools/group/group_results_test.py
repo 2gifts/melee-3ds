@@ -10,6 +10,9 @@ door's value. B leaves and rejoins: the star is still there. A second match (A a
 from the pause menu: its results go through the cancelled-match skip, and nothing changes. Then Back on the host,
 answered "Stay" many times (the "End the session?" dialog), and finally "End it": the character select keeps working
 and the session ends cleanly; out of the session the stars are gone.
+Names: the consoles are named Anna and Beeb (group.ini name=); under the merged results' windows both
+screens show those names instead of "FOX"; on match 2's results (B's door a CPU) A's window keeps Anna and B's window
+its fighter's name. tools/group/group_names_test.py covers drops, leaving and late joiners.
 
     docker/emu-test.sh run tools/group/group_results_test.py [--show]
 Results: $MELEE_TEST_OUT/group-results/ (PNGs, both game.logs)."""
@@ -29,6 +32,7 @@ sys.path.insert(0, str(HERE.parent))
 import emu  # noqa: E402
 from css_probe import Css  # noqa: E402
 from gdb_probe import packet, receive  # noqa: E402
+from names_probe import labels, sis  # noqa: E402
 from group_menu_test import (CPAD_RIGHT, CPAD_UP, KEY_A, KEY_B, KEY_START, KEY_UP, MENU_VS, Stub, save_bottom,  # noqa: E402
                              save_top, to_main_menu)
 
@@ -119,13 +123,14 @@ class PortStub(Stub):
 
 
 class Console:
-    def __init__(self, name, gdb_port, sym, out, dsx, show):
+    def __init__(self, name, gdb_port, sym, out, dsx, show, ini='', prefix='group-results', link_port=None):
         self.name, self.out = name, out
-        self.home = emu.prepare(f'group-results-{name}', gdb_port)
+        self.home = emu.prepare(f'{prefix}-{name}', gdb_port)
         self.sd = emu.sd(self.home)
         (self.sd / 'slippi').mkdir(parents=True, exist_ok=True)
         (self.sd / 'slippi' / 'config.ini').write_text('prefetch=0\ndelay=2\n')
-        (self.sd / 'slippi' / 'group.ini').write_text(f'menu=1\nudp=1\nport={LINK_PORT}\ndelay=2\ntimeout_ms=90000\n')
+        (self.sd / 'slippi' / 'group.ini').write_bytes(
+            (ini + f'menu=1\nudp=1\nport={link_port or LINK_PORT}\ndelay=2\ntimeout_ms=90000\n').encode())   # ini's keys first: they win
         (self.sd / 'no-scripted-input').write_text('')   # no smoke-build scripted presses
         (self.sd / 'game.log').unlink(missing_ok=True)
         self.stub = PortStub(sym, gdb_port)
@@ -173,9 +178,9 @@ def main():
     sym = emu.elf_symbols(args.elf)
     results = []
     t0 = time.monotonic()
-    a = Console('A', 24871, sym, out, args.dsx, args.show)
+    a = Console('A', 24871, sym, out, args.dsx, args.show, 'name=Anna\n')
     time.sleep(3)
-    b = Console('B', 24872, sym, out, args.dsx, args.show)
+    b = Console('B', 24872, sym, out, args.dsx, args.show, 'name=Beeb\n')
 
     def check(name, ok, detail=''):
         results.append((name, ok))
@@ -365,6 +370,11 @@ def main():
             time.sleep(0.2)
         a.capture('02-results')
         b.capture('02-results')
+        want = [sis('Anna'), sis('Beeb'), b'', b'']
+        for c in (a, b):
+            got, named = labels(c.stub)
+            check(f'{c.name}: the merged results show Anna and Beeb under the windows, not the fighter',
+                  got == want and named == 0x3, f'{got}, named {named:x}')
 
         # B toggles its ready both ways, A gets ready, then B: both screens end together.
         press(b, KEY_START)
@@ -461,6 +471,10 @@ def main():
             press(a, KEY_START)
             time.sleep(0.5)
         b.stub.until_frames(60)
+        got, named = labels(a.stub)
+        check('match 2 (B\'s door a CPU): A\'s window shows Anna, the CPU\'s keeps its fighter\'s name',
+              got == [sis('Anna'), b'', b'', b''] and named == 0x1, f'{got}, named {named:x}')
+        a.capture('04b-results-cpu')
         check('a cancelled match: A\'s Start skips to the panels on both screens',
               any(st >= 3 for st, _ in steps(a, a_mark)) and any(st >= 3 for st, _ in steps(b, b_mark)),
               f'A {steps(a, a_mark)}, B {steps(b, b_mark)}')

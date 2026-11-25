@@ -45,6 +45,10 @@ typedef struct MpGroupResults {
     int panels_live;           /* the panels take Start (x0_23 == 2) */
     unsigned char ready;       /* bit n: port n's player is ready (player_data[n].x0_0) */
 } MpGroupResults;
+/* The name the results screen shows under port's window instead of its fighter's: the game text of the name of the
+ * console that played that port, as the match began (a player who dropped to a CPU keeps it; a CPU door has none).
+ * 1 with `out` filled, 0 to keep vanilla's label. */
+int mp_group_result_name(int port, char* out, int len);
 struct HSD_PadStatus;
 struct MatchEnd;
 void mp_group_results_pads(const MpGroupResults* r, const struct MatchEnd* end, struct HSD_PadStatus* copy,

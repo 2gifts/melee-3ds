@@ -28,12 +28,15 @@ typedef struct {
     int udp, port, drop_pct;
     int net_thread, net_thread_core;
     int auto_players;
+    char name[12];        /* name=: this console's name on the loopback link (tests; UTF-8, up to 11 bytes) */
 } group_config;
 
 /* group.ini, read each time (missing keys keep their defaults). */
 void group_config_load(group_config *cfg);
 /* An integer key from an ini text ("key=value" lines), def when missing. */
 int group_ini_int(const char *text, const char *key, int def);
+/* A text key: the rest of its line, cut to fit `len` bytes (not inside a UTF-8 character); "" when missing. */
+void group_ini_str(const char *text, const char *key, char *out, int len);
 
 /* ---- the session ---- */
 /* Open a lobby: host it, or browse the games nearby (join one with group_join). automatic: the test mode of

@@ -66,6 +66,26 @@ int group_ini_int(const char *text, const char *key, int def)
     return def;
 }
 
+void group_ini_str(const char *text, const char *key, char *out, int len)
+{
+    size_t kl = strlen(key);
+    if (len <= 0) return;
+    out[0] = 0;
+    for (const char *line = text; line && *line;) {
+        while (*line == ' ' || *line == '\t' || *line == '\r' || *line == '\n') ++line;
+        if (!strncmp(line, key, kl) && line[kl] == '=') {
+            const char *v = line + kl + 1;
+            int n = 0;
+            while (v[n] && v[n] != '\r' && v[n] != '\n' && n < len - 1) ++n;
+            while (n > 0 && (v[n] & 0xC0) == 0x80 && v[n] != '\r' && v[n] != '\n') --n;   /* not inside a character */
+            memcpy(out, v, (size_t)n);
+            out[n] = 0;
+            return;
+        }
+        line = strchr(line, '\n');
+    }
+}
+
 void group_config_load(group_config *c)
 {
     char path[256];
@@ -85,6 +105,7 @@ void group_config_load(group_config *c)
     c->net_thread = group_ini_int(s, "net_thread", 1);
     c->net_thread_core = group_ini_int(s, "net_thread_core", -2);
     c->auto_players = group_ini_int(s, "auto_players", 2);
+    group_ini_str(s, "name", c->name, sizeof(c->name));
     free(t);
 }
 
@@ -270,6 +291,7 @@ int group_session_start(int host, int automatic)
 #endif
     c.port = G.cfg.port;
     c.test_drop_pct = G.cfg.drop_pct;
+    memcpy(c.name, G.cfg.name, sizeof(c.name));
     if (host) lobby_host_init(&G.host_lobby, 1);
     sp_log("group: %s (delay %d)", host ? "hosting a game" : "looking for games", G.cfg.delay);
     if (lw_open(&c, err, sizeof(err)) != 0) {

@@ -95,7 +95,7 @@ static int node_of(const struct sockaddr_in *a)
     return 0;
 }
 
-int lw_udp_open(int host, int port, int max_nodes, char *err, int errlen)
+int lw_udp_open(int host, int port, int max_nodes, const char *name, char *err, int errlen)
 {
     lw_udp_close();
     base_port = port <= 0 ? DEFAULT_PORT : port;
@@ -111,7 +111,7 @@ int lw_udp_open(int host, int port, int max_nodes, char *err, int errlen)
     node_mask = 0;
     max_nodes_cfg = max_nodes < 2 ? 2 : max_nodes > MAX_NODES ? MAX_NODES : max_nodes;
     memset(node_names, 0, sizeof(node_names));
-    snprintf(local_name, sizeof(local_name), "%s", host ? "PC HOST" : "PC JOINER");
+    snprintf(local_name, sizeof(local_name), "%s", name && name[0] ? name : host ? "PC HOST" : "PC JOINER");
     sock = socket(AF_INET, SOCK_DGRAM, 0);
     if (sock == SOCK_NONE) { snprintf(err, (size_t)errlen, "cannot create a socket"); return -1; }
     struct sockaddr_in me;

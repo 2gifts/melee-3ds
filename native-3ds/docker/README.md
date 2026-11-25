@@ -79,6 +79,7 @@ docker/emu-test.sh run tools/group/group_join_test.py            # a PC console 
 docker/emu-test.sh run tools/group/group_late_test.py            # Azahar joins during a match: the read-only CSS, then the lobby
 docker/emu-test.sh run tools/group/group_cstick_test.py          # the CSS / stage select camera follows every console's C-stick; door plates
 docker/emu-test.sh run tools/group/group_results_test.py         # two emulated consoles: sudden death, the results screen, stars, auto handicap, Back
+docker/emu-test.sh run tools/group/group_names_test.py           # three emulated consoles and a PC one: the consoles' names under the results windows
 ```
 
 `group` (group_test.py) runs the lobby rules' unit test (`lobby_unit`) and vanilla's auto handicap rule

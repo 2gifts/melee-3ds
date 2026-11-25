@@ -45,6 +45,8 @@ typedef struct {
     int timeout_ms;        /* silence after which a console has dropped (0 = 2000) */
     int use_udp, port;     /* loopback UDP link instead of UDS (PC tools, development builds); port: the base port */
     int test_drop_pct;     /* tests: lose this % of outgoing packets */
+    char name[LW_NAME_MAX]; /* this console's name as the others see it (UTF-8); "": the link's own (the 3DS system
+                            * name over UDS). Only the loopback link uses it so far; a Mii name would go here. */
 } lw_config;
 
 /* 0 on success; on failure err holds the text. */

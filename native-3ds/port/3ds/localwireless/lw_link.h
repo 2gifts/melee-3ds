@@ -24,7 +24,8 @@ typedef struct {
 
 /* Each backend implements this set under its own prefix (uds_, udp_). */
 #define LW_LINK_DECLARE(p) \
-    int p##_open(int host, int port, int max_nodes, char *err, int errlen); /* host 0: browse (scan, keep a list) */ \
+    /* host 0: browse (scan, keep a list); name: this console's ("": the link's default) */ \
+    int p##_open(int host, int port, int max_nodes, const char *name, char *err, int errlen); \
     int p##_poll(char *err, int errlen);                   /* WAITING, READY or FAILED; refreshes nodes and the list */ \
     unsigned p##_nodes(void);                              /* bit (n-1) set for every node n, this one included */ \
     int p##_my_node(void); \

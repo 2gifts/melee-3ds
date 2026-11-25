@@ -47,9 +47,10 @@ unsigned lw_uds_nodes(void) { return node_mask; }
 int lw_uds_my_node(void) { return my_node; }
 const char *lw_uds_node_name(int node) { return node >= 1 && node <= LW_LINK_MAX_NODE ? node_names[node] : ""; }
 
-int lw_uds_open(int host, int port, int max_nodes, char *err, int errlen)
+int lw_uds_open(int host, int port, int max_nodes, const char *name, char *err, int errlen)
 {
     (void)port;
+    (void)name;   /* the system name for now (another name would be udsInit's username) */
     lw_uds_close();
     scan_n = 0;
     Result r = udsInit(SHAREDMEM, NULL);
@@ -234,7 +235,7 @@ void lw_uds_close(void)
     lw_platform_log("uds: closed");
 }
 #else /* not a 3DS: no UDS */
-int lw_uds_open(int host, int port, int max_nodes, char *err, int errlen) { (void)host; (void)port; (void)max_nodes; snprintf(err, (size_t)errlen, "UDS needs a 3DS"); return -1; }
+int lw_uds_open(int host, int port, int max_nodes, const char *name, char *err, int errlen) { (void)host; (void)name; (void)port; (void)max_nodes; snprintf(err, (size_t)errlen, "UDS needs a 3DS"); return -1; }
 int lw_uds_poll(char *err, int errlen) { (void)err; (void)errlen; return LW_LINK_FAILED; }
 unsigned lw_uds_nodes(void) { return 0; }
 int lw_uds_my_node(void) { return 0; }
