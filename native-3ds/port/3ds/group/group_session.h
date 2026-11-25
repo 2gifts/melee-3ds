@@ -7,7 +7,7 @@
  * A worker thread services the link every couple of milliseconds; without one, group_net_poll does.
  *
  * Settings come from group.ini in the data folder (sp_data_dir), all optional:
- *   menu=1         Melee on the VS menu asks Solo / Group (off: vanilla VS)
+ *   menu=1         Melee on the VS menu asks Solo / Group (0: vanilla VS). Default 1; 0 in development builds
  *   top_menu=1     ... on the top-screen submenu instead of the bottom-screen page (placeholder art)
  *   delay=2        input delay of group matches, 1..15 frames
  *   timeout_ms=2000  silence after which a console has dropped
@@ -65,7 +65,7 @@ int group_my_port(void);
 /* Browsing (a client before it joins). */
 typedef struct {
     uint32_t key;              /* which game; join by this, the list may change under a held copy */
-    char host[32];             /* the host's 3DS name */
+    char host[32];             /* the host's name (its Mii name, else its system name, else "3DS"; UTF-8) */
     int players, max;          /* consoles in the game / most it takes */
     lobby_beacon beacon;       /* the host's beacon: doors, in match or not */
     int has_mii;               /* the beacon carried the host's Mii and its CRC holds */
@@ -88,8 +88,8 @@ int group_watching(void);                      /* a match runs that this console
 /* Host: the running match's timer, stocks and damage, for consoles that joined during it. Call as often as convenient
  * (the bottom screen's thread does, every frame); it goes out a few times a second, only during a match. */
 void group_match_status(const lobby_status *st);
-int group_signal(int port);                    /* 0..3 */
-void group_name(int port, char *out, int len); /* that console's 3DS name, "" if none */
+int group_signal(int port);                    /* that console's link: 0..3 signal bars */
+void group_name(int port, char *out, int len); /* that console's name (as host[] above), "" if none */
 
 /* The lobby for the engine (group_bridge.h). */
 int group_lobby_get(MpGroupLobby *out);
@@ -100,7 +100,8 @@ void group_lobby_back(void);
 void group_lobby_busy(int busy);
 void group_lobby_rules(const MpGroupRules *rules);
 void group_menu_sticks(int x, int y, signed char *out);
-int group_door_names(void);
+int group_door_names(void);                    /* 1: names under the character select doors (0 in builds made with
+                                                * build_game.py --no-door-names) */
 int group_players(void);
 int group_player_name(int port, char *buf, int len);
 void group_game_end(void);

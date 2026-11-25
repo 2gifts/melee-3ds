@@ -99,13 +99,22 @@ void group_ini_str(const char *text, const char *key, char *out, int len)
     }
 }
 
+/* Group play is on by default in the builds people install. Development (smoke) builds keep vanilla VS unless
+ * group.ini says menu=1: their older emulator tests go from the VS menu straight to the character select, and every
+ * group test writes menu=1 itself. */
+#ifdef MP_SMOKE_TEST
+#define GROUP_MENU_DEFAULT 0
+#else
+#define GROUP_MENU_DEFAULT 1
+#endif
+
 void group_config_load(group_config *c)
 {
     char path[256];
     snprintf(path, sizeof(path), "%s/group.ini", sp_data_dir());
     char *t = sp_read_file(path, NULL);
     const char *s = t ? t : "";
-    c->menu = group_ini_int(s, "menu", 0);
+    c->menu = group_ini_int(s, "menu", GROUP_MENU_DEFAULT);
     c->top_menu = group_ini_int(s, "top_menu", 0);
     c->delay = group_ini_int(s, "delay", 2);
     if (c->delay < 1) c->delay = 1;

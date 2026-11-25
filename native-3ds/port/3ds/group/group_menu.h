@@ -26,7 +26,7 @@ typedef struct {
     unsigned serial;           /* changes whenever anything shown changes */
 } GroupView;
 
-/* Is the group menu on (group.ini menu=1)? */
+/* Is the group menu on (group.ini menu, on by default in release builds)? */
 int group_enabled(void);
 /* Engine (through the bridge, group_bridge.h). */
 int group_open(void);                        /* Melee was chosen: 1 = the Solo/Group page is up (wait), 0 = vanilla */

@@ -34,10 +34,11 @@ Around it:
 ## Settings
 
 `group.ini` in the data folder (`sdmc:/3ds/melee/slippi/` on the 3DS), all optional; see `group_session.h`.
-`menu=1` turns Melee -> Solo / Group on; without it the VS menu is vanilla.
+Melee -> Solo / Group is on by default; `menu=0` makes the VS menu vanilla. Development (smoke) builds
+default to off, so their older emulator tests keep vanilla VS; the group tests write `menu=1`.
 
-Build switch: `python tools/build_game.py ... --no-door-names` leaves out the console name and signal bars under the
-character select doors (the bottom-screen strip still shows both).
+Build switch: `python tools/build_game.py ... --no-door-names` leaves out the console names under the
+character select doors (shown by default; the bottom-screen strip shows names and signal bars either way).
 
 ## Tests
 
