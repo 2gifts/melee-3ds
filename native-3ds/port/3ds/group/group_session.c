@@ -59,6 +59,11 @@ static struct {
     /* the lockstep frame driver */
     int last_queued_frame, stall_frames;
     uint64_t stall_since_us;
+    /* the host's Mii for the beacon (read once per session) and the beacon last sent */
+    uint8_t mii[LOBBY_MII_BYTES];
+    int has_mii;
+    uint8_t beacon[LOBBY_BEACON_MAX];
+    int beacon_len;
 } G;
 
 /* ---- settings ---- */
@@ -125,6 +130,18 @@ void group_config_load(group_config *c)
         group_ini_str(s, "name", raw, sizeof(raw));
         name_clean(raw, c->name, sizeof(c->name), NAME_MAX_CHARS);
     }
+    c->test_mii_fail = group_ini_int(s, "test_mii_fail", 0);
+    c->test_mii_corrupt = group_ini_int(s, "test_mii_corrupt", 0);
+    {
+        char hex[2 * LOBBY_MII_BYTES + 2];
+        group_ini_str(s, "test_mii", hex, sizeof(hex));
+        c->test_mii_ok = (int)strlen(hex) == 2 * LOBBY_MII_BYTES;
+        for (int i = 0; c->test_mii_ok && i < LOBBY_MII_BYTES; ++i) {
+            unsigned v;
+            if (sscanf(hex + 2 * i, "%2x", &v) != 1) c->test_mii_ok = 0;
+            c->test_mii[i] = (uint8_t)v;
+        }
+    }
     free(t);
 }
 
@@ -183,6 +200,42 @@ static void pick_name(const group_config *c, char *out, int cap)
     sp_log("group: name from %s \"%s\"", from, out);
 }
 
+/* ---- this console's Mii ---- */
+
+/* The host's Mii as CFLStoreData, for the beacon (browsers draw its head). 1 with a valid one. */
+static int my_mii(const group_config *c, uint8_t *out)
+{
+    memset(out, 0, LOBBY_MII_BYTES);
+    if (c->test_mii_fail) { sp_log("group: Mii skipped (test_mii_fail)"); return 0; }
+    if (c->test_mii_ok) memcpy(out, c->test_mii, LOBBY_MII_BYTES);
+#ifdef __3DS__
+    else {
+        FriendMii m;
+        _Static_assert(sizeof(m) == LOBBY_MII_BYTES, "FriendMii is CFLStoreData");
+        memset(&m, 0, sizeof(m));
+        if (R_FAILED(frdInit(true))) { sp_log("group: no Mii (frd)"); return 0; }
+        Result r = FRD_GetMyMii(&m);
+        frdExit();
+        if (R_FAILED(r)) { sp_log("group: no Mii (FRD_GetMyMii 0x%08lx)", (unsigned long)r); return 0; }
+        memcpy(out, &m, LOBBY_MII_BYTES);
+    }
+#else
+    else return 0;                                /* the PC tools have no Friends service */
+#endif
+    if (!lobby_mii_ok(out)) lobby_mii_seal(out);  /* bare MiiData: build its CRC, as CFL_MakeStoreData does */
+    if (!lobby_mii_ok(out)) { sp_log("group: no Mii (empty)"); return 0; }
+    {
+        char hex[2 * LOBBY_MII_BYTES + 1];
+        for (int i = 0; i < LOBBY_MII_BYTES; ++i) snprintf(hex + 2 * i, 3, "%02x", out[i]);
+        sp_log("group: Mii for the beacon %s", hex);
+    }
+    if (c->test_mii_corrupt) {
+        out[0x20] ^= 0x5A;                        /* after the CRC: browsers must turn it down */
+        sp_log("group: Mii corrupted for the test (test_mii_corrupt)");
+    }
+    return 1;
+}
+
 /* ---- the lobby (lock held) ---- */
 
 /* The host's lobby state goes to every console, and into the beacon (so a console browsing sees who is here). */
@@ -192,9 +245,22 @@ static void lobby_publish(void)
     int n = lobby_encode(&G.host_lobby.st, b, sizeof(b));
     if (n <= 0) return;
     lw_host_set_lobby(b, n);
-    lw_host_set_beacon(b, n);
+    uint8_t beacon[LOBBY_BEACON_MAX];
+    int bn = lobby_encode_beacon(&G.host_lobby.st, G.has_mii ? G.mii : NULL, beacon, sizeof(beacon));
+    if (bn > 0 && (bn != G.beacon_len || memcmp(beacon, G.beacon, (size_t)bn))) {   /* only when it changes */
+        memcpy(G.beacon, beacon, (size_t)bn);
+        G.beacon_len = bn;
+        lw_host_set_beacon(beacon, bn);
+    }
     G.view = G.host_lobby.st;
     G.view_valid = 1;
+}
+
+/* Host: the names of the consoles in the match that just began, so the lobby keeps the name of one that leaves. */
+static void note_match_names(void)
+{
+    for (int i = 0; i < LOBBY_SLOTS; ++i)
+        lobby_host_name(&G.host_lobby, i, (G.host_lobby.st.played >> i & 1) ? lw_player_name(i) : "");
 }
 
 /* Host: the stage is picked, so build the block from the lobby and start the game (once the module is free). */
@@ -206,6 +272,7 @@ static int lobby_start_match(void)
     memcpy(G.last_block, blk, sizeof(blk));
     G.last_block_ok = 1;
     lobby_host_match_began(&G.host_lobby, 0);
+    note_match_names();
     sp_log("group: starting a match: stage 0x%02x, %d consoles present", G.host_lobby.st.stage, __builtin_popcount(lw_present()));
     lobby_publish();
     return 1;
@@ -225,6 +292,7 @@ static int sudden_start(void)
     if (lw_host_start_again(blk, sizeof(blk)) != 0) return 0;  /* the last game is still ending; try again */
     memcpy(G.last_block, blk, sizeof(blk));
     lobby_host_match_began(&G.host_lobby, 1);
+    note_match_names();
     G.host_lobby.st.mode = 1;
     sp_log("group: starting a sudden death");
     lobby_publish();
@@ -384,7 +452,10 @@ int group_session_start(int host, int automatic)
     c.test_drop_pct = G.cfg.drop_pct;
     c.test_wireless_off = G.cfg.test_wireless_off;
     pick_name(&G.cfg, c.name, sizeof(c.name));
-    if (host) lobby_host_init(&G.host_lobby, 1);
+    if (host) {
+        lobby_host_init(&G.host_lobby, 1);
+        G.has_mii = my_mii(&G.cfg, G.mii);
+    }
     sp_log("group: %s (delay %d)", host ? "hosting a game" : "looking for games", G.cfg.delay);
     if (lw_open(&c, err, sizeof(err)) != 0) {
         fail(ST_FAILED, err[0] ? err : "Local wireless is unavailable");
@@ -441,7 +512,11 @@ int group_scan(group_game *out, int max)
             snprintf(g->host, sizeof(g->host), "%s", net.host);
             g->players = net.players;
             g->max = net.max;
-            if (lobby_decode(&g->lobby, net.data, net.len) != 0) memset(&g->lobby, 0, sizeof(g->lobby));
+            if (lobby_decode_beacon(&g->beacon, g->mii, &g->has_mii, net.data, net.len) != 0) {
+                memset(&g->beacon, 0, sizeof(g->beacon));
+                for (int k = 0; k < LOBBY_SLOTS; ++k) g->beacon.slot[k].kind = LOBBY_EMPTY;
+            }
+            g->mii_crc = g->has_mii ? (uint16_t)(g->mii[LOBBY_MII_BYTES - 2] << 8 | g->mii[LOBBY_MII_BYTES - 1]) : 0;
         }
     }
     sp_unlock();

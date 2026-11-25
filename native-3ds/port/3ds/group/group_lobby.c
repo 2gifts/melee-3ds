@@ -48,6 +48,8 @@ static const unsigned char block_template[0x138] = {
 #define RESULTS_BYTES (3 + LOBBY_SLOTS)
 /* Then the busy reasons, a nibble per port (ports 0 and 1 in the first byte, low nibble first). */
 #define WHY_BYTES 2
+/* Then the consoles that left the running match: a mask, and for each bit in it, the name's length and bytes. A name
+ * that does not fit (more than two long names) is left out with its bit. */
 
 static int put_status(const lobby_status *st, uint8_t *out, int cap)
 {
@@ -123,7 +125,21 @@ int lobby_encode(const lobby_state *s, uint8_t *out, int cap)
     if (cap - n < WHY_BYTES) return n;
     out[n] = (uint8_t)((s->busy_why[0] & 0xF) | (s->busy_why[1] & 0xF) << 4);
     out[n + 1] = (uint8_t)((s->busy_why[2] & 0xF) | (s->busy_why[3] & 0xF) << 4);
-    return n + WHY_BYTES;
+    n += WHY_BYTES;
+    if (cap - n < 1) return n;
+    int mask_at = n++;
+    uint8_t gone = 0;
+    for (int i = 0; i < LOBBY_SLOTS; ++i) {
+        if (!(s->gone >> i & 1)) continue;
+        int len = (int)strnlen(s->gone_name[i], LOBBY_NAME_BYTES - 1);
+        if (cap - n < 1 + len) continue;
+        out[n] = (uint8_t)len;
+        memcpy(out + n + 1, s->gone_name[i], (size_t)len);
+        n += 1 + len;
+        gone |= (uint8_t)(1u << i);
+    }
+    out[mask_at] = gone;
+    return n;
 }
 
 /* Clamp a received slot to values the game can show. */
@@ -187,6 +203,101 @@ int lobby_decode(lobby_state *s, const uint8_t *in, int len)
         if (!(s->busy >> i & 1)) w = 0;
         else if (!w) w = LOBBY_BUSY_SLIDER;               /* busy with no reason: a slider, as before */
         s->busy_why[i] = w;
+    }
+    int at = why_at + WHY_BYTES;
+    if (len >= at + 1) {
+        uint8_t mask = in[at++] & 0xF;
+        for (int i = 0; i < LOBBY_SLOTS; ++i) {
+            if (!(mask >> i & 1)) continue;
+            if (at >= len || in[at] >= LOBBY_NAME_BYTES || at + 1 + in[at] > len) break;   /* cut short: keep what came */
+            memcpy(s->gone_name[i], in + at + 1, in[at]);
+            s->gone |= (uint8_t)(1u << i);
+            at += 1 + in[at];
+        }
+    }
+    return 0;
+}
+
+/* ---- the beacon ---- */
+
+#define BEACON_ID 'B'
+#define BEACON_VERSION 1
+#define BEACON_HEAD 4
+
+uint16_t lobby_crc16(const uint8_t *data, int len)
+{
+    uint32_t crc = 0;
+    for (int i = 0; i < len; ++i) {
+        for (int b = 0; b < 8; ++b) crc = (crc & 0x8000) ? ((0x1021 ^ (crc << 1)) & 0xFFFF) : ((crc << 1) & 0xFFFF);
+        crc ^= data[i];
+    }
+    return (uint16_t)crc;
+}
+
+int lobby_mii_ok(const uint8_t *mii)
+{
+    int any = 0;
+    for (int i = 0; i < LOBBY_MII_BYTES - 2; ++i) any |= mii[i];
+    return any && lobby_crc16(mii, LOBBY_MII_BYTES) == 0;
+}
+
+void lobby_mii_seal(uint8_t *mii)
+{
+    mii[LOBBY_MII_BYTES - 2] = mii[LOBBY_MII_BYTES - 1] = 0;
+    uint16_t crc = lobby_crc16(mii, LOBBY_MII_BYTES);
+    mii[LOBBY_MII_BYTES - 2] = (uint8_t)(crc >> 8);
+    mii[LOBBY_MII_BYTES - 1] = (uint8_t)crc;
+}
+
+int lobby_encode_beacon(const lobby_state *s, const uint8_t *mii, uint8_t *out, int cap)
+{
+    int need = BEACON_HEAD + 4 * LOBBY_SLOTS + (mii ? LOBBY_MII_BYTES : 0);
+    if (cap < need) return 0;
+    int live = (s->phase == LOBBY_MATCH || s->phase == LOBBY_RESULTS) && s->status.valid;
+    out[0] = BEACON_ID;
+    out[1] = BEACON_VERSION;
+    out[2] = s->phase;
+    out[3] = (uint8_t)((mii ? 1 : 0) | (s->rules.teams ? 2 : 0));
+    for (int i = 0; i < LOBBY_SLOTS; ++i) {
+        const lobby_slot *l = &s->slot[i];
+        uint8_t *p = out + BEACON_HEAD + 4 * i;
+        uint8_t kind = l->kind, fighter = l->fighter, costume = l->color, chosen = l->chosen;
+        if (live && s->status.port[i].kind != 3) {   /* the match as it shows now: Zelda <-> Sheik, a dropped console's CPU */
+            kind = s->status.port[i].kind == 1 ? LOBBY_CPU : LOBBY_HUMAN;
+            fighter = s->status.port[i].fighter;
+            costume = s->status.port[i].costume;
+            chosen = 1;
+        }
+        p[0] = (uint8_t)((kind & 3) | (l->team & 3) << 4);
+        p[1] = fighter;
+        p[2] = costume;
+        p[3] = chosen;
+    }
+    if (mii) memcpy(out + BEACON_HEAD + 4 * LOBBY_SLOTS, mii, LOBBY_MII_BYTES);
+    return need;
+}
+
+int lobby_decode_beacon(lobby_beacon *b, uint8_t *mii, int *has_mii, const uint8_t *in, int len)
+{
+    memset(b, 0, sizeof(*b));
+    if (has_mii) *has_mii = 0;
+    if (len < BEACON_HEAD + 4 * LOBBY_SLOTS || in[0] != BEACON_ID || in[1] != BEACON_VERSION) return -1;
+    b->phase = in[2] > LOBBY_RESULTS ? LOBBY_CSS : in[2];
+    b->teams = (in[3] >> 1) & 1;
+    for (int i = 0; i < LOBBY_SLOTS; ++i) {
+        const uint8_t *p = in + BEACON_HEAD + 4 * i;
+        b->slot[i].kind = (p[0] & 3) > LOBBY_EMPTY ? LOBBY_EMPTY : (p[0] & 3);
+        b->slot[i].team = (p[0] >> 4 & 3) > 2 ? 0 : (p[0] >> 4 & 3);
+        b->slot[i].fighter = p[1] > MAX_FIGHTER ? 0 : p[1];
+        b->slot[i].costume = p[2] > 5 ? 0 : p[2];
+        b->slot[i].chosen = p[3] > 3 || p[1] > MAX_FIGHTER ? 0 : p[3];
+        if (b->slot[i].kind == LOBBY_EMPTY) b->slot[i].chosen = 0;
+    }
+    int at = BEACON_HEAD + 4 * LOBBY_SLOTS;
+    if ((in[3] & 1) && len >= at + LOBBY_MII_BYTES && mii) {
+        memcpy(mii, in + at, LOBBY_MII_BYTES);
+        if (lobby_mii_ok(mii)) { if (has_mii) *has_mii = 1; }
+        else memset(mii, 0, LOBBY_MII_BYTES);
     }
     return 0;
 }
@@ -281,7 +392,14 @@ int lobby_host_sync(lobby_host *h, unsigned present)
             if (present & bit) h->joined_in_match |= bit;
             else {
                 h->left_in_match |= bit; h->joined_in_match &= ~bit;
-                if (h->st.played & bit) h->left_played |= bit;   /* whoever comes to this port now did not play */
+                if (h->st.played & bit) {
+                    h->left_played |= bit;                        /* whoever comes to this port now did not play */
+                    if (!(h->st.gone & bit)) {                    /* the overview keeps the name of the one who left */
+                        h->st.gone |= (uint8_t)bit;
+                        memcpy(h->st.gone_name[i], h->played_name[i], LOBBY_NAME_BYTES);
+                        changed = 1;
+                    }
+                }
             }
             if (h->st.phase == LOBBY_RESULTS && !(present & bit) && (h->st.played & bit) && !(h->st.ready & bit)) {
                 h->st.ready |= (uint8_t)bit;      /* as an unplugged controller on vanilla's results screen */
@@ -449,7 +567,21 @@ void lobby_host_match_began(lobby_host *h, int again)
     h->st.ready = 0;
     h->st.advance = 0;
     h->left_played = 0;
+    h->st.gone = 0;
+    memset(h->st.gone_name, 0, sizeof(h->st.gone_name));
+    memset(h->played_name, 0, sizeof(h->played_name));
     memset(&h->st.status, 0, sizeof(h->st.status));
+}
+
+void lobby_host_name(lobby_host *h, int port, const char *name)
+{
+    if (port < 0 || port >= LOBBY_SLOTS) return;
+    memset(h->played_name[port], 0, LOBBY_NAME_BYTES);
+    if (name) {
+        size_t n = strnlen(name, LOBBY_NAME_BYTES - 1);
+        while (n > 0 && ((unsigned char)name[n] & 0xC0) == 0x80) --n;   /* not inside a character */
+        memcpy(h->played_name[port], name, n);
+    }
 }
 
 int lobby_host_set_status(lobby_host *h, const lobby_status *st)
@@ -470,6 +602,8 @@ int lobby_host_match_over(lobby_host *h)
     h->st.mode = 0;
     h->st.played = h->st.ready = h->st.advance = 0;
     h->left_played = 0;
+    h->st.gone = 0;
+    memset(h->st.gone_name, 0, sizeof(h->st.gone_name));
     memset(&h->st.status, 0, sizeof(h->st.status));
     unsigned joined = h->joined_in_match, left = h->left_in_match;
     h->joined_in_match = h->left_in_match = 0;

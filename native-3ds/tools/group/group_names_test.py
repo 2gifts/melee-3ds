@@ -121,7 +121,7 @@ def main():
 
     def join(c, what):
         c.stub.until_frames(120)
-        c.touch(160, 108)                # the first game in the list
+        c.touch(160, 80)                 # the first game in the list (both layouts)
         wait_scene(c, 8, what, 120)
         c.stub.until_frames(120)
 

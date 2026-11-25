@@ -166,7 +166,7 @@ def main():
 
     def join(what):
         stub.until_frames(120)           # a few scans, so the game is in the list
-        touch(160, 108)                  # the first game in the list
+        touch(160, 80)                   # the first game in the list (both layouts)
         # The character select is the sign of a join (the native side's "joined" log line can reach game.log late).
         end = time.monotonic() + 120
         s = None

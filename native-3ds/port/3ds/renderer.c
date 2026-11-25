@@ -1114,6 +1114,18 @@ static void renderer_begin(void)
      * for the previous GPU queue before recycling any streaming storage. */
     if(frame_active)return;
     frame_pending=0;
+    /* The Group list's Mii heads (mii_icon.c): one cfl-mii job between this thread's frames, which runs its own
+     * C3D frames. Then nothing it left behind may survive into this frame: its fragment lighting and stencil, and the
+     * uniform values this renderer believes are installed (its shader wrote the same registers). The rest (program,
+     * attributes, texture units and combiners, raster state, target, viewport) is set again below. */
+    {extern int mp_mii_icon_frame(void);
+     if(mp_mii_icon_frame()){
+        C3D_LightEnvBind(NULL);C3D_StencilTest(false,GPU_ALWAYS,0,255,255);
+        C3D_StencilOp(GPU_STENCIL_KEEP,GPU_STENCIL_KEEP,GPU_STENCIL_KEEP);C3D_AlphaTest(false,GPU_ALWAYS,0);
+        C3D_SetScissor(GPU_SCISSOR_DISABLE,0,0,0,0);
+        memset(uniform_valid,0,sizeof(uniform_valid));material0_valid=0;stereo_shift_valid=0;
+        point_program_active=-1;
+     }}
 #ifdef MP_BANNER_CAPTURE
     banner_capture_begin();
 #endif

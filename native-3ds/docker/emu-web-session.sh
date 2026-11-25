@@ -54,9 +54,62 @@ put('confirmClose', 'false')
 put('check_for_update_on_start', 'false')
 open(os.path.join(os.environ['CFG'], 'qt-config.ini'), 'w', encoding='utf-8').write(text)
 PY
+# MELEE_CFL_RES (emu-web.sh): the console's Mii resource as a system title, installed into this profile's NAND.
+if [ -n "${MELEE_CFL_RES_CIA:-}" ]; then
+    QT_QPA_PLATFORM=offscreen /usr/sbin/azahar -i "$MELEE_CFL_RES_CIA" >"$DATA/log/cfl-res-install.txt" 2>&1 || true
+fi
+# The console's user name ($3), written into the emulated NAND's CFG config savegame (system save 0x00010017, block
+# 0x000A0000) on every start. Azahar has no setting for it: FRD GetMyScreenName (the game's "Mii name") and the CFG
+# system name both return this block. (FRD GetMyMii's MiiData name is hardcoded to "Citra" in Azahar.) A missing
+# config file is created with just this block and the console unique IDs (random, as Azahar's FormatConfig does);
+# Azahar adds every other block from its defaults on first use.
+CONFIG_SAVE=$DATA/nand/data/00000000000000000000000000000000/sysdata/00010017/00000000/config \
+USER_NAME=$3 python3 - <<'PY'
+import os, random, struct
+path, name = os.environ['CONFIG_SAVE'], os.environ['USER_NAME'][:10]
+SIZE, DATA_START, ENTRIES = 0x8000, 0x455C, 1479
+GLOBAL = 0xE   # UserRead | SystemRead | SystemWrite
+try:
+    buf = bytearray(open(path, 'rb').read())
+except FileNotFoundError:
+    buf = bytearray()
+if len(buf) != SIZE:
+    buf = bytearray(SIZE)
+    struct.pack_into('<HH', buf, 0, 0, DATA_START)
+entries = lambda: [struct.unpack_from('<IIHH', buf, 4 + 12 * i) for i in range(struct.unpack_from('<H', buf, 0)[0])]
+
+def put(block, data):
+    for i, (bid, off, size, _) in enumerate(entries()):
+        if bid == block:
+            assert size == len(data), (hex(block), size)
+            if size <= 4:   # small blocks live in the entry itself
+                struct.pack_into('<4s', buf, 4 + 12 * i + 4, data)
+            else:
+                buf[off:off + size] = data
+            return
+    n = len(entries())
+    assert n < ENTRIES
+    off = next((o + s for _, o, s, _ in reversed(entries()) if s > 4), DATA_START)
+    if len(data) > 4:
+        buf[off:off + len(data)] = data
+        struct.pack_into('<IIHH', buf, 4 + 12 * n, block, off, len(data), GLOBAL)
+    else:
+        struct.pack_into('<I4sHH', buf, 4 + 12 * n, block, data, len(data), GLOBAL)
+    struct.pack_into('<H', buf, 0, n + 1)
+
+if not entries():
+    rnd = random.getrandbits(16)
+    console_id = random.getrandbits(34) | rnd << 48
+    put(0x00090000, struct.pack('<Q', console_id))
+    put(0x00090001, struct.pack('<Q', console_id))
+    put(0x00090002, struct.pack('<I', rnd))
+put(0x000A0000, name.encode('utf-16-le').ljust(20, b'\0') + bytes(8))   # UsernameBlock: 10 UTF-16 chars, zero, ng_word
+os.makedirs(os.path.dirname(path), exist_ok=True)
+open(path, 'wb').write(buf)
+PY
 }
 
-setup "$HOME/.config" "$HOME/.local/share"
+setup "$HOME/.config" "$HOME/.local/share" Alice
 # Where the next Azahar window opens: a labwc window rule (x, y, width, height), applied when the window is created.
 place() {
     mkdir -p "$HOME/.config/labwc"
@@ -81,7 +134,7 @@ if [ "${MELEE_WEB_INSTANCES:-1}" = 2 ]; then
     # Console B in the left half, console A (this profile) in the right half. Both share one desktop and network
     # namespace, which the loopback link needs.
     place 0 0 "$HALF" "$H"
-    ( XDG_CONFIG_HOME=$HOME/p2/config XDG_DATA_HOME=$HOME/p2/data; setup "$XDG_CONFIG_HOME" "$XDG_DATA_HOME"; exec /usr/sbin/azahar "$MELEE_DSX" ) &
+    ( XDG_CONFIG_HOME=$HOME/p2/config XDG_DATA_HOME=$HOME/p2/data; setup "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" Bob; exec /usr/sbin/azahar "$MELEE_DSX" ) &
     sleep 15
     place "$HALF" 0 "$HALF" "$H"
 fi

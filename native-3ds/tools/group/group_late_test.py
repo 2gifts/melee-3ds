@@ -120,7 +120,7 @@ def main():
             raise SystemExit(1)
         stub.until_frames(120)           # a few scans, so the game is in the list
         capture('01-games-list')
-        touch(160, 108)                  # the first game in the list
+        touch(160, 80)                   # the first game in the list (both layouts)
         s = None
         end = time.monotonic() + 120
         while time.monotonic() < end:
@@ -135,6 +135,15 @@ def main():
         stub.until_frames(240)
         capture('03-match-in-progress-later')
         check('this console takes no part in the running match', 'group: match block' not in log_text())
+        # known bug 2: the late joiner's own name never shows on the overview (it is not in the match); a CPU's row says
+        # CPU and the host's row its name
+        import re as _re
+        me = int((_re.findall(r'group: in the lobby on port (\d)', log_text()) or ['0'])[-1]) - 1
+        mine = (_re.findall(r'group: name from \w+ "([^"]*)"', log_text()) or [''])[-1]
+        shown = [stub.peek('mp_group_watch_name', 128)[32 * i:32 * i + 32].split(b'\0')[0].decode('utf-8', 'replace') for i in range(4)]
+        check('the overview never shows the late joiner\'s own name (known bug 2)', me >= 1 and mine and mine not in shown,
+              f'port {me + 1}, name {mine!r}, rows {shown}')
+        check('a CPU\'s row says CPU; the host\'s row has a name', 'CPU' in shown and shown[0] not in ('', 'CPU'), str(shown))
 
         def badge(port):
             return int.from_bytes(stub.peek('mp_group_badge_drawn', 8)[2 * port:2 * port + 2], 'little') - 1

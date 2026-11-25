@@ -211,7 +211,7 @@ def main():
             raise SystemExit(1)
         host(f'door {CPU_DOOR} 1 {CPU_FIGHTER} 3 1 0')
         stub.until_frames(120)
-        touch(160, 108)                  # the first game in the list
+        touch(160, 80)                   # the first game in the list (both layouts)
         end = time.monotonic() + 120
         while time.monotonic() < end and stub.state()['scene'] != 8:
             time.sleep(0.5)

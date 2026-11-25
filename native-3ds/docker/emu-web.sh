@@ -27,11 +27,14 @@
 #
 # Environment: MELEE_VOLUME (work volume, default melee3ds-slippi-work), MELEE_WEB_PORT (default 3188),
 # MELEE_WEB_NAME (container name, default melee3ds-emu-web), MELEE_GRAPHICS (software|opengl, default opengl: the software renderer is about 40x slower under emulation here),
-# MELEE_WEB_RES (WxH of the desktop stream, default 1024x768), MELEE_KEYS (above), MELEE_WEB_DSX (a .3dsx on this
+# MELEE_CFL_RES (your console's CFL_Res.dat: installed as the Mii resource title, so Mii heads render with real face
+# parts instead of Azahar's stand-in; see docker/cfl_res.sh), MELEE_WEB_RES (WxH of the desktop stream, default 1024x768), MELEE_KEYS (above), MELEE_WEB_DSX (a .3dsx on this
 # machine to run instead of the development build, e.g. the release build, to compare speeds), MELEE_WEB_GDB=1 (open
 # Azahar's GDB stub inside the container, to read the game's frame counter), MELEE_WEB_INSTANCES=2 (a second console in
 # the same desktop with its own saves, so two consoles can host and join each other over the loopback link; console A
 # opens in the right half of the desktop, console B in the left; give MELEE_WEB_RES=1600x900 for two comfortable windows).
+# Console A's user name (the game's Mii name) is Alice, console B's Bob (emu-web-session.sh sets them at every start).
+# docker/emu-web-hosts.sh adds PC hosts with Miis to the consoles' Available Games lists.
 set -eu
 IMG=linuxserver/azahar:latest
 NAME=${MELEE_WEB_NAME:-melee3ds-emu-web}
@@ -47,6 +50,8 @@ case "${1:-start}" in
     *) sed -n '2,6p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2 ;;
 esac
 
+. "$HERE/cfl_res.sh"
+CFL_RES_CIA=$(cfl_res_cia "$VOLUME" "$(cd "$HERE/.." && pwd)")
 DSX_IN=/work/src/dist/3ds/melee/melee-development.3dsx
 [ -z "${MELEE_WEB_DSX:-}" ] || DSX_IN=/vanilla.3dsx
 docker rm -f "$NAME" >/dev/null 2>&1 || true
@@ -60,6 +65,7 @@ docker run -d --name "$NAME" --platform linux/amd64 --shm-size=1gb \
     -e MELEE_DSX="$DSX_IN" \
     -e MELEE_WEB_GDB="${MELEE_WEB_GDB:-}" -e MELEE_WEB_INSTANCES="${MELEE_WEB_INSTANCES:-1}" \
     ${MELEE_WEB_DSX:+-v "$MELEE_WEB_DSX":/vanilla.3dsx:ro} \
+    ${CFL_RES_CIA:+-v "$CFL_RES_CIA":/cfl-res.cia:ro -e MELEE_CFL_RES_CIA=/cfl-res.cia} \
     -v "$HERE/emu-web-session.sh":/defaults/autostart:ro \
     -v "$HERE/emu-web-session.sh":/defaults/autostart_wayland:ro \
     -v "$VOLUME":/work:ro \

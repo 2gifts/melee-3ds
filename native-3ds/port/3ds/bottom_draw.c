@@ -641,7 +641,13 @@ static void slippi_code_page(void){
 /* ---- Melee -> Solo / Group (port/3ds/group/group_menu.c) ----
  * Shown on the VS menu once Melee is chosen: Solo or Group, then Host and the games nearby. */
 enum{GP_SOLO_X=8,GP_GROUP_X=164,GP_BTN_Y=44,GP_BTN_W=148,GP_BTN_H=120,GP_BACK_X=8,GP_BACK_Y=180,GP_BACK_W=90,GP_BACK_H=24,
-     GL_HOST_X=8,GL_HOST_Y=36,GL_HOST_W=220,GL_HOST_H=28,GL_BACK_X=236,GL_BACK_W=76,GL_ROW_Y=94,GL_ROW_STEP=30,GL_ROW_H=28};
+     GL_HOST_X=8,GL_HOST_Y=35,GL_HOST_W=220,GL_HOST_H=27,GL_BACK_X=236,GL_BACK_W=76,
+     /* with two pages or more, the Host button narrows for the page controls: < 1/2 > */
+     GL_HOST_PAGED_W=146,GL_PREV_X=158,GL_NEXT_X=226,GL_PAGE_W=32,GL_BACK_PAGED_X=262,GL_BACK_PAGED_W=50};
+/* The Available Games rows, between the Host row and the footer (y 214): GROUP_ROWS (3) rows of 48 px with a 48 px
+ * Mii head (owner, 2026-11-25, chosen over 4 rows with 32 px heads). */
+typedef struct{int y,step,h,head,name,badge,badge_step,badge_x;}GroupRows;
+static const GroupRows group_rows={65,49,48,48,16,24,27,156};
 /* The Group list (Host, games nearby) is touch-driven. The Solo/Group choice itself is made on the top-screen menu (menu
  * kind 11) and its bottom page is information only, like the other menus'; the touch buttons only show when the menu files
  * for that menu are missing (the fallback, on the VS menu). */
@@ -706,51 +712,81 @@ static void mp_group_strip_text_set(int i,const char* s){
     if(i<0||i>=4)return;size_t n=strlen(s);if(n>sizeof(mp_group_strip_text[i])-1)n=sizeof(mp_group_strip_text[i])-1;
     memcpy(mp_group_strip_text[i],s,n);mp_group_strip_text[i][n]=0;
 }   /* tests: the fighter each port's last badge showed + 1 (0 none), as read by the Azahar test */
-static void stock_badge(int x,int y,int d,const lobby_slot* door,const lobby_status* st,int phase,int port,int dim){
+/* A port's colour: its team's under Teams (red, blue, green), else the port's own. */
+static uint16_t player_color(int port,const lobby_slot* door,int teams){
+    static const uint16_t team_colors[3]={RGB(246,73,75),RGB(70,149,255),RGB(68,211,127)};
+    return teams&&door->team<3?team_colors[door->team]:colors[port&3];
+}
+static void stock_badge(int x,int y,int d,const lobby_slot* door,const lobby_status* st,int phase,int port,int dim,int teams){
     unsigned f,c;
     if(door->kind==LOBBY_EMPTY&&!((phase==LOBBY_MATCH||phase==LOBBY_RESULTS)&&st->valid&&st->port[port].kind!=3))return;
     badge_fighter(door,st,phase,port,&f,&c);
     int cpu=door->kind==LOBBY_CPU||((phase==LOBBY_MATCH||phase==LOBBY_RESULTS)&&st->valid&&st->port[port].kind==1);
-    disc(x,y,d,cpu?RGB(110,120,130):colors[port&3],dim?12:32);
+    /* the badge's disc: the player's colour muted, as the match draws it behind the percentage (owner, 2026-11-25) */
+    disc(x,y,d,cpu?RGB(78,86,96):blend(player_color(port,door,teams),RGB(25,36,51),17),dim?12:32);
     int placed=door->chosen==1||((phase==LOBBY_MATCH||phase==LOBBY_RESULTS)&&st->valid);
     if(!placed||!stock_draw(x+2,y+2,d-4,f,c,dim)){center(x+d/2,y+(d-d*2/3)/2,"?",d*2/3,ink);if(port>=0&&port<4)mp_group_badge_drawn[port]=0;return;}
     if(port>=0&&port<4)mp_group_badge_drawn[port]=(uint16_t)(f+1);
 }
-static void group_fighters(const lobby_state* l,char* out,int len){
-    int n=0;out[0]=0;
-    for(int i=0;i<LOBBY_SLOTS;++i){
-        const lobby_slot* d=&l->slot[i];
-        if(d->kind==LOBBY_EMPTY||d->chosen!=1||d->fighter>=26)continue;
-        n+=snprintf(out+n,len-n>0?len-n:0,"%s%s",n?", ":"",names[d->fighter]);
-        if(n>=len-1)break;
+/* tests: what each row of the page drew as its head: 1 the host's Mii, 2 the emblem, 0 no row */
+unsigned char mp_group_row_head[GROUP_ROWS];
+/* The host's Mii head (mp_group_mii_icon: 64 x 64 RGBA, ready once rendered), box-filtered to d x d. 0 if not ready. */
+static int mii_head(const group_game* r,int x,int y,int d){
+    if(!r->has_mii)return 0;
+    const uint32_t* icon=mp_group_mii_icon(r->key,r->mii_crc,r->mii);
+    if(!icon)return 0;
+    for(int yy=0;yy<d;++yy)for(int xx=0;xx<d;++xx){
+        int x0=xx*64/d,x1=(xx+1)*64/d,y0=yy*64/d,y1=(yy+1)*64/d;unsigned rr=0,gg=0,bb=0,aa=0,n=0;
+        for(int sy=y0;sy<y1;++sy)for(int sx=x0;sx<x1;++sx){uint32_t p=icon[sy*64+sx];unsigned a=p&255;
+            rr+=(p>>24)*a;gg+=(p>>16&255)*a;bb+=(p>>8&255)*a;aa+=a;++n;}
+        if(!aa)continue;
+        unsigned alpha=(aa/n*32+127)/255;if(!alpha)continue;
+        pixel(x+xx,y+yy,RGB(rr/aa,gg/aa,bb/aa),alpha);
     }
+    return 1;
+}
+/* a page button: a triangle pointing left (dir -1) or right, gold when it can turn */
+static void page_button(int x,int y,int w,int h,int dir,int on){
+    rect(x,y,w,h,on?gold:card_color);
+    for(int k=0;k<7;++k){int len=2*k+1;int cx=x+w/2+(dir<0?k-3:3-k);rect(cx,y+h/2-k,1,len,on?dark:line_color);}
 }
 static void group_list_page(const GroupView* v){
-    header("GROUP",v->busy?"JOINING":"SEARCHING");
-    pill(GL_HOST_X,GL_HOST_Y,GL_HOST_W,GL_HOST_H,v->busy?"PLEASE WAIT":"HOST A GAME",14,!v->busy);
-    pill(GL_BACK_X,GL_HOST_Y,GL_BACK_W,GL_HOST_H,"BACK",13,0);
-    text(14,72,"AVAILABLE GAMES",12,muted);rect(14,86,292,1,line_color);
-    if(!v->count)center(160,GL_ROW_Y+22,"LOOKING FOR GAMES NEARBY...",12,muted);
-    for(int i=0;i<v->count&&i<GROUP_ROWS;++i){
-        const group_game* r=&v->row[i];char b[64],f[64];int y=GL_ROW_Y+i*GL_ROW_STEP;
-        int busy=r->lobby.phase==LOBBY_MATCH||r->lobby.phase==LOBBY_RESULTS;
-        rect(8,y,304,GL_ROW_H,card_color);rect(8,y,3,GL_ROW_H,busy?line_color:slippi_done);
-        if(r->max>0&&r->players>=r->max)right(304,y+2,"FULL",13,slippi_red);
-        else{snprintf(b,sizeof(b),"%d/4",r->players);right(304,y+2,b,13,gold);}
-        if(stocks_ready){
-            /* the default Smash emblem, the host's name, and a badge per port at fixed places (an empty port: a gap) */
-            emblem(15,y+4,20,muted);
-            fit(40,y+2,r->host[0]?r->host:"3DS",14,116,ink);
-            if(busy)text(40,y+17,"IN MATCH",9,muted);
-            for(int p=0;p<LOBBY_SLOTS;++p)stock_badge(160+p*22,y+5,18,&r->lobby.slot[p],&r->lobby.status,r->lobby.phase,p,0);
-        }else{
-            fit(19,y+2,r->host[0]?r->host:"3DS",14,170,ink);
-            group_fighters(&r->lobby,f,sizeof(f));
-            if(busy)right(274,y+3,"IN MATCH",11,muted);
-            fit(19,y+17,f[0]?f:"NO FIGHTERS CHOSEN YET",10,busy?186:260,muted);
+    const GroupRows* L=&group_rows;int per=GROUP_ROWS,first=v->list_page*per,paged=v->pages>1;
+    /* an error takes the header's right side ("SEARCHING") */
+    header("GROUP",v->error[0]?"":v->busy?"JOINING":"SEARCHING");
+    if(v->error[0]){int h=12;while(h>8&&width(v->error,h)>205)--h;text(309-width(v->error,h),10,v->error,h,slippi_red);}
+    pill(GL_HOST_X,GL_HOST_Y,paged?GL_HOST_PAGED_W:GL_HOST_W,GL_HOST_H,v->busy?"PLEASE WAIT":"HOST A GAME",14,!v->busy);
+    if(paged){char b[16];
+        page_button(GL_PREV_X,GL_HOST_Y,GL_PAGE_W,GL_HOST_H,-1,v->list_page>0);
+        page_button(GL_NEXT_X,GL_HOST_Y,GL_PAGE_W,GL_HOST_H,1,v->list_page<v->pages-1);
+        snprintf(b,sizeof(b),"%d/%d",v->list_page+1,v->pages);center((GL_PREV_X+GL_PAGE_W+GL_NEXT_X)/2,GL_HOST_Y+8,b,12,ink);
+        pill(GL_BACK_PAGED_X,GL_HOST_Y,GL_BACK_PAGED_W,GL_HOST_H,"BACK",13,0);
+    }else pill(GL_BACK_X,GL_HOST_Y,GL_BACK_W,GL_HOST_H,"BACK",13,0);
+    if(!v->count)center(160,L->y+22,"LOOKING FOR GAMES NEARBY...",12,muted);
+    memset(mp_group_row_head,0,sizeof(mp_group_row_head));
+    for(int k=0;k<per&&first+k<v->count&&first+k<GROUP_KEEP;++k){
+        const group_game* r=&v->row[first+k];char b[64];int y=L->y+k*L->step,h=L->h;
+        int busy=r->beacon.phase==LOBBY_MATCH||r->beacon.phase==LOBBY_RESULTS;
+        rect(8,y,304,h,card_color);rect(8,y,3,h,busy?line_color:slippi_done);
+        int full=r->max>0&&r->players>=r->max,cnt=L->name;
+        if(full)right(304,y+3,"FULL",cnt,slippi_red);
+        else{snprintf(b,sizeof(b),"%d/4",r->players);right(304,y+3,b,cnt,gold);}
+        /* the host's Mii head (the emblem until it is drawn, or without one), its name, a badge per port at fixed
+         * places (an empty door: a gap) */
+        int hx=15,hy=y+(h-L->head)/2,nx=hx+L->head+7;
+        if(mii_head(r,hx,hy,L->head))mp_group_row_head[k]=1;
+        else{int e=L->head*5/8;emblem(hx+(L->head-e)/2,hy+(L->head-e)/2,e,muted);mp_group_row_head[k]=2;}
+        int name_y=busy?y+(h-L->name-10)/2-1:y+(h-L->name)/2-1;
+        fit(nx,name_y,r->host[0]?r->host:"3DS",L->name,L->badge_x-nx-4,ink);
+        if(busy)text(nx,name_y+L->name+2,"IN MATCH",11,muted);
+        if(stocks_ready)for(int p=0;p<LOBBY_SLOTS;++p){
+            lobby_slot door;memset(&door,0,sizeof(door));
+            door.kind=r->beacon.slot[p].kind;door.fighter=r->beacon.slot[p].fighter;door.color=r->beacon.slot[p].costume;
+            door.team=r->beacon.slot[p].team;door.chosen=r->beacon.slot[p].chosen;
+            lobby_status none;memset(&none,0,sizeof(none));
+            stock_badge(L->badge_x+p*L->badge_step,y+h-L->badge-4,L->badge,&door,&none,r->beacon.phase,p,0,r->beacon.teams);
         }
     }
-    group_error(v,208-14);
 }
 /* The connected-players strip: who is on which port, the host, signal and what each is doing. */
 static void group_bars(int x,int y,int level,uint16_t on){
@@ -764,22 +800,31 @@ static void group_dialog_page(void){
     pill(GD_YES_X,GD_Y,GD_W,GD_H,"END IT",14,1);pill(GD_NO_X,GD_Y,GD_W,GD_H,"STAY",14,0);
 }
 /* A console that joined during a match: the match as the host reports it, live, until it ends (then the lobby). */
+char mp_group_watch_name[4][32];   /* tests: the name each row of the match overview showed ("" for no character) */
 static void group_watch_page(const GroupStrip* g){
     char b[64];
     const lobby_status* st=&g->status;
     header("GROUP",g->phase==LOBBY_RESULTS?"RESULTS":"MATCH IN PROGRESS");
-    if(!st->valid)center(160,44,"WAITING FOR THE MATCH...",13,muted);
+    /* no timer once the match is over (the others are on its results screen: the header says so) */
+    if(g->phase==LOBBY_RESULTS){}
+    else if(!st->valid)center(160,44,"WAITING FOR THE MATCH...",13,muted);
     else if(st->timer){snprintf(b,sizeof(b),"%u:%02u",st->seconds/60,st->seconds%60);center(160,40,b,20,ink);}
     else center(160,44,"NO TIME LIMIT",13,muted);
     for(int i=0;i<LOBBY_SLOTS;++i){
         int y=70+i*30;const lobby_slot* d=&g->port[i].door;int kind=st->valid?st->port[i].kind:(d->kind==LOBBY_EMPTY?3:d->kind);
-        rect(8,y,304,26,card_color);rect(8,y,4,26,kind==3?line_color:colors[i]);
-        if(kind==3){text(20,y+6,"-",13,muted);continue;}
+        /* the accent: the team or port colour for a human player, grey for a CPU, none without a character */
+        rect(8,y,304,26,card_color);
+        if(kind==0)rect(8,y,4,26,player_color(i,d,g->rules.teams));else if(kind==1)rect(8,y,4,26,RGB(110,120,130));
+        if(kind==3){text(20,y+6,"-",13,muted);mp_group_watch_name[i][0]=0;continue;}
+        /* the player's name: the console that plays this port, or the one that played it and left; never a console that
+         * joined since (this one included) */
+        const char* who=g->port[i].player[0]?g->port[i].player:kind==1?"CPU":"";
+        snprintf(mp_group_watch_name[i],sizeof(mp_group_watch_name[i]),"%s",who);
         if(stocks_ready){
             /* the live fighter's badge (a Zelda who transforms shows Sheik), the console's name, the stocks left */
             int out=st->valid&&!g->rules.time_mode&&st->port[i].stocks==0;
-            stock_badge(16,y+1,24,d,st,g->phase,i,out);
-            fit(46,y+7,g->port[i].present&&g->port[i].name[0]?g->port[i].name:kind==1?"CPU":"",13,96,out?muted:ink);
+            stock_badge(16,y+1,24,d,st,g->phase,i,out,g->rules.teams);
+            fit(46,y+7,who,13,96,out?muted:ink);
             if(st->valid&&!g->rules.time_mode){
                 unsigned f,c,n=st->port[i].stocks;badge_fighter(d,st,g->phase,i,&f,&c);
                 if(n<=5)for(unsigned k=0;k<n;++k)stock_draw(148+k*13,y+7,12,f,c,0);
@@ -790,7 +835,7 @@ static void group_watch_page(const GroupStrip* g){
         }
         snprintf(b,sizeof(b),"%s%s",kind==1?"CPU ":"",d->chosen==1&&d->fighter<26?names[d->fighter]:"FIGHTER");
         fit(20,y+2,b,13,150,ink);
-        fit(20,y+15,g->port[i].present&&g->port[i].name[0]?g->port[i].name:kind==1?"CPU":"",10,150,muted);
+        fit(20,y+15,who,10,150,muted);
         if(st->valid){
             snprintf(b,sizeof(b),"%u%%",st->port[i].damage);right(300,y+5,b,16,st->port[i].stocks?ink:muted);
             snprintf(b,sizeof(b),"x%u",st->port[i].stocks);right(236,y+7,b,13,gold);
@@ -807,8 +852,8 @@ static void group_strip_page(const GroupStrip* g,unsigned scene){
         rect(8,y,304,34,card_color);rect(8,y,4,34,colors[i]);
         if(g->port[i].present){
             fit(20,y+3,g->port[i].name[0]?g->port[i].name:"3DS",15,150,i==g->me?gold:ink);
-            if(i==0)right(stocks_ready?230:240,y+5,"HOST",11,gold);
-            group_bars(266,y+5,g->port[i].signal,slippi_done);
+            /* the signal bars (10 px tall) centred on the badge (24 px at y+5): owner, 2026-11-25; no "HOST" word */
+            group_bars(266,y+12,g->port[i].signal,slippi_done);
         }else text(20,y+3,"-",15,muted);
         /* what the port is doing: why it is busy (on the character select), else its state; the fighter itself is the
          * badge (without the icons, its name as before) */
@@ -821,7 +866,7 @@ static void group_strip_page(const GroupStrip* g,unsigned scene){
         else if(d->chosen==1&&d->fighter<26)snprintf(b,sizeof(b),"%s%s",d->kind==LOBBY_CPU?"CPU: ":"",names[d->fighter]);
         else snprintf(b,sizeof(b),"%s",d->kind==LOBBY_CPU?"CPU":"CHOOSING");
         fit(20,y+19,b,11,stocks_ready?200:270,muted);
-        if(stocks_ready)stock_badge(236,y+5,24,d,&g->status,g->phase,i,0);
+        if(stocks_ready)stock_badge(236,y+5,24,d,&g->status,g->phase,i,0,g->rules.teams);
         mp_group_strip_text_set(i,b);
     }
     if(g->rules.time_mode)snprintf(b,sizeof(b),"TIME %d MIN",g->rules.minutes);else snprintf(b,sizeof(b),"%d STOCKS",g->rules.stocks);
@@ -840,9 +885,13 @@ static unsigned group_touch(unsigned x,unsigned y){
         else if(inside(x,y,GP_BACK_X,GP_BACK_Y,GP_BACK_W,GP_BACK_H))group_back();
         return 1;
     }
-    if(inside(x,y,GL_HOST_X,GL_HOST_Y,GL_HOST_W,GL_HOST_H))group_host();
-    else if(inside(x,y,GL_BACK_X,GL_HOST_Y,GL_BACK_W,GL_HOST_H))group_back();
-    else for(int i=0;i<GROUP_ROWS;++i)if(inside(x,y,8,GL_ROW_Y+i*GL_ROW_STEP,304,GL_ROW_H)){group_join_row(i);break;}
+    int paged=v->pages>1;
+    if(inside(x,y,GL_HOST_X,GL_HOST_Y,paged?GL_HOST_PAGED_W:GL_HOST_W,GL_HOST_H))group_host();
+    else if(paged?inside(x,y,GL_BACK_PAGED_X,GL_HOST_Y,GL_BACK_PAGED_W,GL_HOST_H):inside(x,y,GL_BACK_X,GL_HOST_Y,GL_BACK_W,GL_HOST_H))group_back();
+    else if(paged&&inside(x,y,GL_PREV_X-2,GL_HOST_Y,GL_PAGE_W+4,GL_HOST_H))group_list_turn(-1);
+    else if(paged&&inside(x,y,GL_NEXT_X-2,GL_HOST_Y,GL_PAGE_W+4,GL_HOST_H))group_list_turn(1);
+    else{const GroupRows* L=&group_rows;
+        for(int i=0;i<GROUP_ROWS;++i)if(inside(x,y,8,L->y+i*L->step,304,L->h)){group_join_row(i);break;}}
     return 1;
 }
 /* A touch on an online page (not the footer); 1 if used. */

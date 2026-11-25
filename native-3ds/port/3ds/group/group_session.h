@@ -19,7 +19,10 @@
  *   test_wireless_off=1  tests: every session fails to open with "Please enable wireless and try again"
  *   name=N         this console's name (tests); without it the Mii name, then the system name, then "3DS"
  *   test_screen_name=N, test_screen_name_fail=1   tests: the Mii name's FRD call is skipped; N is its result, or it
- *                  fails (fail wins), so the chain falls to the system name */
+ *                  fails (fail wins), so the chain falls to the system name
+ *   test_mii_fail=1      tests: the host's Mii (FRD_GetMyMii) is skipped and treated as failed: no Mii in the beacon
+ *   test_mii_corrupt=1   tests: the host flips one byte of its Mii after the CRC, so browsers must reject it
+ *   test_mii=HEX         tests (PC hosts): this Mii (192 hex digits, CFLStoreData) instead of FRD's */
 #ifndef GROUP_SESSION_H
 #define GROUP_SESSION_H
 #include "group_bridge.h"
@@ -36,6 +39,9 @@ typedef struct {
     int test_screen_name_fail;   /* tests: the Mii name (FRD) is skipped and treated as failed */
     char test_screen_name[32];   /* tests: the Mii name (FRD) is skipped and this is its result */
     char name[32];        /* name=: this console's name (tests; UTF-8, up to 10 characters, LW_NAME_MAX) */
+    int test_mii_fail, test_mii_corrupt;
+    uint8_t test_mii[LOBBY_MII_BYTES];   /* test_mii=: a Mii for hosts without FRD (PC); test_mii_ok when it parsed */
+    int test_mii_ok;
 } group_config;
 
 /* group.ini, read each time (missing keys keep their defaults). */
@@ -60,7 +66,10 @@ typedef struct {
     uint32_t key;              /* which game; join by this, the list may change under a held copy */
     char host[32];             /* the host's 3DS name */
     int players, max;          /* consoles in the game / most it takes */
-    lobby_state lobby;         /* the host's beacon: doors, stage, in match or not */
+    lobby_beacon beacon;       /* the host's beacon: doors, in match or not */
+    int has_mii;               /* the beacon carried the host's Mii and its CRC holds */
+    uint16_t mii_crc;          /* that Mii's CRC (with key, what the icon cache is keyed by) */
+    uint8_t mii[LOBBY_MII_BYTES];
 } group_game;
 int group_scan(group_game *out, int max);      /* the games in range, in list order; how many */
 int group_join(uint32_t key);                  /* 0: joining; -1: failed (group_net_error) */

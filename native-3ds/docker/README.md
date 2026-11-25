@@ -87,6 +87,7 @@ docker/emu-test.sh run tools/group/group_cstick_test.py          # the CSS / sta
 docker/emu-test.sh run tools/group/group_results_test.py         # two emulated consoles: sudden death, the results screen, stars, auto handicap, Back
 docker/emu-test.sh run tools/group/group_door_test.py            # a door in use on one console cannot be switched from another
 docker/emu-test.sh run tools/group/group_names_test.py           # three emulated consoles and a PC one: the consoles' names under the results windows
+docker/emu-test.sh run tools/group/group_mii_test.py              # five PC hosts: Mii heads, the emblem, pages of games
 ```
 
 Names and the bottom screen's group pages (Phase 6), no emulator:
@@ -129,11 +130,13 @@ Interactive testing of the development build, no emulator installed on the host.
     docker/emu-test.sh build-dev   # after every code change: rebuilds melee-development.3dsx into the work volume
     docker/emu-web.sh              # (re)starts the container on the latest build; open http://localhost:3188
     docker/emu-web.sh stop         # removes it (the profile and saves live in the container and go with it)
+    docker/emu-web-hosts.sh        # PC hosts in that container (Mii heads, the emblem, an IN MATCH row, two pages)
 
 Two consoles in one desktop, for testing the Melee group lobby (they reach each other over the loopback link, which
 needs one network namespace): `MELEE_WEB_INSTANCES=2 MELEE_WEB_RES=1600x900 docker/emu-web.sh`. Console A opens in the
 right half and console B in the left; each has its own save. Host from one (Melee -> Group -> Host) and join from the
-other. Do not run an `emu-test.sh` test at the same time (CPU).
+other. Console A's user name (its Mii name in the game) is Alice and console B's is Bob: the session script
+writes them into each profile's CFG config savegame at every start (Azahar has no setting for it). Do not run an `emu-test.sh` test at the same time (CPU).
 
 Restart `emu-web.sh` after each `build-dev`: Azahar loads the `.3dsx` when it starts. The game takes about a minute to
 boot. `docker/emu-web.sh logs` shows the container log.

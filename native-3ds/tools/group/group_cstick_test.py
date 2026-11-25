@@ -186,7 +186,7 @@ def main():
         host('door 2 1 10 3 1 0')        # a CPU, so the PC's Start can open the stage select later
         host('stick 0 120')              # held up before the emulated console arrives
         stub.until_frames(120)
-        touch(160, 108)                  # the first game in the list
+        touch(160, 80)                   # the first game in the list (both layouts)
         end = time.monotonic() + 120
         while time.monotonic() < end and stub.state()['scene'] != 8:
             time.sleep(0.5)

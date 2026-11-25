@@ -72,7 +72,7 @@ def main():
     sdk=ROOT/'.toolchain/devkitpro';arm=sdk/'devkitARM'
     arch=['--no-default-config','--target=arm-none-eabi','-mcpu=mpcore',
           '-mfpu=vfp','-mfloat-abi=hard','-mtp=soft']
-    includes=[*prepare(),'-I'+str(sdk/'libctru/include'),'-isystem',str(arm/'arm-none-eabi/include'),'-I'+str(ROOT/'port/3ds/slippi'),'-I'+str(ROOT/'port/3ds/slippi/enet/include'),'-I'+str(ROOT/'port/3ds/localwireless'),'-I'+str(ROOT/'port/3ds/group')]
+    includes=[*prepare(),'-I'+str(sdk/'libctru/include'),'-isystem',str(arm/'arm-none-eabi/include'),'-I'+str(ROOT/'port/3ds/slippi'),'-I'+str(ROOT/'port/3ds/slippi/enet/include'),'-I'+str(ROOT/'port/3ds/localwireless'),'-I'+str(ROOT/'port/3ds/group'),'-I'+str(ROOT/'port/3ds/third_party/cfl-mii/include')]
     shader=out/'vertex.shbin'
     shader_dir=args.shader_dir or ROOT/'port/3ds'
     if not shader_dir.is_absolute():shader_dir=ROOT/shader_dir
@@ -143,11 +143,22 @@ def main():
         from async_renderqueue import generate
         extra.append(generate(out))
         includes+=['-I'+str(ROOT/'port/3ds'),'-DMP_ASYNC_PRESENTATION']
-    for src in (ROOT/'port/3ds/game.c',ROOT/'port/3ds/bottom.c',ROOT/'port/3ds/bottom_draw.c',ROOT/'port/3ds/renderer.c',ROOT/'port/3ds/early_queue.c',ROOT/'port/3ds/gx_thread.c',ROOT/'port/3ds/linear_lock.c',ROOT/'port/3ds/gpu_busy.c',ROOT/'port/3ds/citro3d_fix.c',ROOT/'port/3ds/uniform_dispatch.c',ROOT/'port/3ds/services.c',ROOT/'port/3ds/cpu_speed.c',ROOT/'port/3ds/file_io.c',ROOT/'port/3ds/audio.c',ROOT/'port/3ds/command_cache.c',ROOT/'port/3ds/log_io.c',ROOT/'port/3ds/jpeg_still.c',ROOT/'port/3ds/card_storage.c',ROOT/'port/3ds/settings.c',ROOT/'port/3ds/controls.c',ROOT/'port/3ds/name_text.c',*sorted((ROOT/'port/3ds/slippi').glob('*.c')),*sorted((ROOT/'port/3ds/localwireless').glob('*.c')),*sorted((ROOT/'port/3ds/group').glob('*.c')),ROOT/'port/3ds/net_select.c',ROOT/'port/3ds/game_bridge.S',shader_c,*([ROOT/'tests/stereo_bounds_reference.c'] if args.smoke else []),*extra):
+    for src in (ROOT/'port/3ds/game.c',ROOT/'port/3ds/bottom.c',ROOT/'port/3ds/bottom_draw.c',ROOT/'port/3ds/renderer.c',ROOT/'port/3ds/early_queue.c',ROOT/'port/3ds/gx_thread.c',ROOT/'port/3ds/linear_lock.c',ROOT/'port/3ds/gpu_busy.c',ROOT/'port/3ds/citro3d_fix.c',ROOT/'port/3ds/uniform_dispatch.c',ROOT/'port/3ds/services.c',ROOT/'port/3ds/cpu_speed.c',ROOT/'port/3ds/file_io.c',ROOT/'port/3ds/audio.c',ROOT/'port/3ds/command_cache.c',ROOT/'port/3ds/log_io.c',ROOT/'port/3ds/jpeg_still.c',ROOT/'port/3ds/card_storage.c',ROOT/'port/3ds/settings.c',ROOT/'port/3ds/controls.c',ROOT/'port/3ds/name_text.c',ROOT/'port/3ds/mii_icon.c',*sorted((ROOT/'port/3ds/slippi').glob('*.c')),*sorted((ROOT/'port/3ds/localwireless').glob('*.c')),*sorted((ROOT/'port/3ds/group').glob('*.c')),ROOT/'port/3ds/net_select.c',ROOT/'port/3ds/game_bridge.S',shader_c,*([ROOT/'tests/stereo_bounds_reference.c'] if args.smoke else []),*extra):
         obj=out/(src.stem+'.o')
         run([cc,*arch,*common_flags(),'-fshort-enums','-D__3DS__',
              *(['-DMP_SMOKE_TEST'] if args.smoke else ['-DLW_NO_UDP']),*(['-DMP_AFFINE_IDENTITY_SHADER'] if args.identity_affine else []),*(['-DMP_UNLIT_AFFINE_SHADER'] if args.unlit_affine else []),*(['-DMP_BANNER_CAPTURE'] if args.banner_capture else []),*(['-DMP_AUDIO_HLE_TEST'] if args.audio_hle else []),*(['-DMP_BOOTMODE'] if args.boot else []),*(['-DMP_PROFILE_FRESH'] if args.profile=='fresh' else []),*(['-DMP_PROFILE_SLIPPI'] if args.profile=='slippi' else []),*(['-DMP_PROFILE_SLIPPI'] if args.profile=='slippi' else []),*includes,*(['-I'+str(sdk/'portlibs/3ds/include')] if src.name=='jpeg_still.c' else []),'-c',src,'-o',obj])
         objects.append(obj)
+    # cfl-mii (port/3ds/third_party/cfl-mii, a git submodule): the Group list's Mii heads (mii_icon.c). Its vertex
+    # shader goes in as a header it includes (vshader_shbin.h).
+    cfl=ROOT/'port/3ds/third_party/cfl-mii'
+    if not (cfl/'source/cfl_mii.c').is_file():raise SystemExit('cfl-mii is missing: git submodule update --init port/3ds/third_party/cfl-mii')
+    cfl_out=out/'cfl';cfl_out.mkdir(exist_ok=True)
+    run([ROOT/'.toolchain/bin'/('picasso'+EXE),'-o',cfl_out/'vshader.shbin',cfl/'source/vshader.v.pica'])
+    blob=(cfl_out/'vshader.shbin').read_bytes()
+    (cfl_out/'vshader_shbin.h').write_text('static const unsigned char vshader_shbin[] __attribute__((aligned(4)))={'+','.join(str(b) for b in blob)+'};\nstatic const unsigned int vshader_shbin_size='+str(len(blob))+';\n')
+    obj=out/'cfl_mii.o'
+    run([cc,*arch,*common_flags(),'-w','-fshort-enums','-D__3DS__',*includes,'-I'+str(cfl_out),'-include',str(ROOT/'port/3ds/mii_cfl_compat.h'),'-c',cfl/'source/cfl_mii.c','-o',obj])
+    objects.append(obj)
     # Slippi experiment: vendored ENet (port/3ds/slippi/enet, MIT); prefixed
     # object names keep its host.c/list.c/... apart from port sources.
     for src in sorted((ROOT/'port/3ds/slippi/enet').glob('*.c')):

@@ -222,7 +222,8 @@ int main(void)
     lobby_host_match_began(&h, 0);
     CHECK(h.st.phase == LOBBY_MATCH);
     CHECK(lobby_host_sync(&h, 0x7) == 0 && h.st.slot[1].kind == LOBBY_EMPTY);       /* late joiner: not touched yet */
-    CHECK(lobby_host_sync(&h, 0x6) == 0 && h.st.slot[0].kind == LOBBY_HUMAN);       /* host? slot 0 left: still Human during the match */
+    CHECK((lobby_host_sync(&h, 0x6) & LOBBY_CHANGED) && h.st.slot[0].kind == LOBBY_HUMAN && h.st.gone == 0x1);   /* slot 0 left:
+                                                                                      * still Human during the match; its name is kept */
     /* the running match's status rides at the end of the blob, for consoles that joined during it */
     lobby_status ms;
     memset(&ms, 0, sizeof(ms));
@@ -374,7 +375,8 @@ int main(void)
         CHECK(lobby_host_sync(&r, 0x7) == 0);                                            /* console 2 joins in the tied game */
         lobby_host_match_began(&r, 1);
         CHECK(r.st.played == 0x3 && r.st.phase == LOBBY_MATCH && (r.joined_in_match & 0x4));
-        CHECK(lobby_host_sync(&r, 0x5) == 0);                                            /* console 1 leaves in the sudden death */
+        CHECK(lobby_host_sync(&r, 0x5) == LOBBY_CHANGED && r.st.gone == 0x2);            /* console 1 leaves in the sudden death
+                                                                                          * (its name is kept: a change) */
         lobby_host_match_began(&r, 1);                                                   /* (another tie) */
         CHECK(r.st.played == 0x1);
         CHECK(lobby_host_results_begin(&r) && r.st.ready == 0x0);                         /* console 1 left: not played any more */
@@ -388,7 +390,8 @@ int main(void)
         CHECK(lobby_host_set_door(&r, 0, &p0) && door(&r, 1, 1, p1));
         lobby_host_match_began(&r, 0);
         CHECK(r.st.played == 0x3);
-        CHECK(lobby_host_sync(&r, 0x1) == 0 && lobby_host_sync(&r, 0x3) == 0);           /* port 1 drops, a newcomer takes it */
+        CHECK(lobby_host_sync(&r, 0x1) == LOBBY_CHANGED && lobby_host_sync(&r, 0x3) == 0);   /* port 1 drops (its name is kept),
+                                                                                              * a newcomer takes it */
         CHECK(r.left_played == 0x2);
         CHECK(lobby_host_results_begin(&r) && r.st.ready == 0x2);                         /* the player who left counts as ready */
         CHECK(!lobby_host_results(&r, 1, 0, 2) && r.st.ready == 0x2);                    /* the newcomer cannot unready it */
@@ -507,6 +510,96 @@ int main(void)
         CHECK(busy_cmd(&u, 1, 0, 0) && !(u.st.busy & 0x2) && u.st.busy_why[1] == 0);
         uint8_t old[2] = {LCMD_BUSY, 1};                                                  /* an older console's command */
         CHECK(lobby_host_command(&u, 2, old, 2) && u.st.busy_why[2] == LOBBY_BUSY_SLIDER);
+    }
+
+    /* Phase 6, known bug 2: a console that leaves the running match keeps its name in the lobby (gone), and one that
+     * takes its port meanwhile did not play */
+    {
+        lobby_host u;
+        lobby_state x;
+        uint8_t b[LOBBY_BLOB_MAX];
+        lobby_host_init(&u, 0x7);
+        lobby_host_match_began(&u, 0);
+        lobby_host_name(&u, 0, "Alice");
+        lobby_host_name(&u, 1, "\xE3\x82\x86\xE3\x81\x86\xE3\x81\x8D\xE3\x82\x86\xE3\x81\x86\xE3\x81\x8D\xE3\x82\x86\xE3\x81\x86\xE3\x81\x8D\xE3\x82\x86");
+        lobby_host_name(&u, 2, "Carol");
+        CHECK(u.st.gone == 0);
+        CHECK(lobby_host_sync(&u, 0x5) & LOBBY_CHANGED);                                  /* port 1 leaves mid-match */
+        CHECK(u.st.gone == 0x2 && !strcmp(u.st.gone_name[1], u.played_name[1]));
+        lobby_host_sync(&u, 0x7);                                                         /* another console takes port 1 */
+        CHECK(u.st.gone == 0x2);
+        CHECK(lobby_host_sync(&u, 0x3) & LOBBY_CHANGED);                                  /* port 2 leaves too */
+        CHECK(u.st.gone == 0x6);
+        int n = lobby_encode(&u.st, b, sizeof(b));
+        CHECK(n > 0 && n <= LOBBY_BLOB_MAX && lobby_decode(&x, b, n) == 0);
+        CHECK(x.gone == 0x6 && !strcmp(x.gone_name[1], u.played_name[1]) && !strcmp(x.gone_name[2], "Carol"));
+        CHECK(lobby_decode(&x, b, n - 3) == 0 && x.gone == 0x2);                          /* cut short: the names that came */
+        /* the largest lobby, with three long names that left: still within the blob, names that do not fit are left out */
+        u.st.played = 0xF; u.st.in_use = 0xF; u.st.busy = 0xF;
+        for (int i = 0; i < 4; ++i) { u.st.slot[i] = fighter(LOBBY_HUMAN, 0x19, 5); memset(u.st.slot[i].tag, 0x82, 8); u.st.busy_why[i] = 4; }
+        u.st.status.valid = 1;
+        for (int i = 1; i < 4; ++i) { u.st.gone |= (uint8_t)(1u << i); memset(u.st.gone_name[i], 'W', 30); u.st.gone_name[i][30] = 0; }
+        n = lobby_encode(&u.st, b, sizeof(b));
+        CHECK(n > 0 && n <= LOBBY_BLOB_MAX && lobby_decode(&x, b, n) == 0 && x.gone == 0x6 && strlen(x.gone_name[2]) == 30);
+        printf("lobby_unit: the largest blob is %d of %d bytes\n", n, LOBBY_BLOB_MAX);
+        lobby_host_results_begin(&u);
+        lobby_host_results_over(&u, NULL, NULL);
+        CHECK(u.st.gone == 0 && !u.st.gone_name[1][0]);                                  /* the lobby reopened */
+    }
+
+    /* Phase 6, step 8b: the beacon, with and without the host's Mii */
+    {
+        lobby_host u;
+        lobby_beacon bb;
+        uint8_t b[LOBBY_BEACON_MAX + 8], mii[LOBBY_MII_BYTES], got[LOBBY_MII_BYTES];
+        int has;
+        for (int i = 0; i < LOBBY_MII_BYTES; ++i) mii[i] = (uint8_t)(i * 7 + 3);
+        CHECK(!lobby_mii_ok(mii));
+        lobby_mii_seal(mii);
+        CHECK(lobby_mii_ok(mii));
+        uint8_t zero[LOBBY_MII_BYTES];
+        memset(zero, 0, sizeof(zero));
+        CHECK(!lobby_mii_ok(zero));                                                       /* all zero: no Mii, though its CRC is 0 */
+        lobby_host_init(&u, 0x3);
+        u.st.rules.teams = 1;
+        u.st.slot[0] = fighter(LOBBY_HUMAN, 18, 2); u.st.slot[0].team = 2;
+        u.st.slot[1] = fighter(LOBBY_CPU, 9, 1); u.st.slot[1].team = 1;
+        u.st.slot[2].kind = LOBBY_HUMAN; u.st.slot[2].chosen = 0;
+        u.st.slot[3].kind = LOBBY_EMPTY;
+        int n = lobby_encode_beacon(&u.st, NULL, b, sizeof(b));
+        CHECK(n == 20);
+        CHECK(lobby_decode_beacon(&bb, got, &has, b, n) == 0 && !has && bb.teams == 1 && bb.phase == LOBBY_CSS);
+        CHECK(bb.slot[0].kind == LOBBY_HUMAN && bb.slot[0].fighter == 18 && bb.slot[0].costume == 2 && bb.slot[0].team == 2 && bb.slot[0].chosen == 1);
+        CHECK(bb.slot[1].kind == LOBBY_CPU && bb.slot[1].team == 1 && bb.slot[2].chosen == 0 && bb.slot[3].kind == LOBBY_EMPTY);
+        n = lobby_encode_beacon(&u.st, mii, b, sizeof(b));
+        CHECK(n == 116 && n <= 200);
+        CHECK(lobby_decode_beacon(&bb, got, &has, b, n) == 0 && has && !memcmp(got, mii, sizeof(mii)));
+        b[20 + 0x20] ^= 0x5A;                                                             /* test_mii_corrupt: rejected */
+        CHECK(lobby_decode_beacon(&bb, got, &has, b, n) == 0 && !has);
+        b[20 + 0x20] ^= 0x5A;
+        b[n - 1] ^= 1;                                                                    /* a flipped CRC byte: no Mii */
+        CHECK(lobby_decode_beacon(&bb, got, &has, b, n) == 0 && !has);
+        CHECK(lobby_decode_beacon(&bb, got, &has, b, n - 10) == 0 && !has);              /* cut short */
+        CHECK(lobby_encode_beacon(&u.st, mii, b, 100) == 0);
+        uint8_t blob[LOBBY_BLOB_MAX];
+        CHECK(lobby_decode_beacon(&bb, got, &has, blob, lobby_encode(&u.st, blob, sizeof(blob))) == -1);   /* a lobby blob is not a beacon */
+        /* during a match: the live fighter and a dropped console's CPU */
+        lobby_host_match_began(&u, 0);
+        lobby_status st;
+        memset(&st, 0, sizeof(st));
+        st.port[0].kind = 0; st.port[0].fighter = 19; st.port[0].costume = 2;
+        st.port[1].kind = 1; st.port[1].fighter = 9;
+        st.port[2].kind = 1; st.port[2].fighter = 4;
+        st.port[3].kind = 3;
+        lobby_host_set_status(&u, &st);
+        n = lobby_encode_beacon(&u.st, mii, b, sizeof(b));
+        CHECK(lobby_decode_beacon(&bb, got, &has, b, n) == 0 && bb.phase == LOBBY_MATCH && bb.slot[0].fighter == 19);
+        CHECK(bb.slot[2].kind == LOBBY_CPU && bb.slot[2].fighter == 4 && bb.slot[2].chosen == 1 && bb.slot[3].kind == LOBBY_EMPTY);
+        /* every lobby state stays within a beacon's 200 bytes */
+        for (int phase = LOBBY_CSS; phase <= LOBBY_RESULTS; ++phase) {
+            u.st.phase = (uint8_t)phase;
+            CHECK(lobby_encode_beacon(&u.st, mii, b, sizeof(b)) <= 200);
+        }
     }
 
     printf("lobby_unit: ok\n");

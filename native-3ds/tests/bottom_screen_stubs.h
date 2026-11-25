@@ -9,4 +9,6 @@ extern GroupView bottom_stub_view;    /* group_view() */
 extern GroupStrip bottom_stub_strip;  /* group_strip(), when bottom_stub_strip_on */
 extern int bottom_stub_strip_on, bottom_stub_home_note;
 
+extern int bottom_stub_joined, bottom_stub_turned, bottom_stub_mii_ready;
+extern unsigned bottom_stub_mii_asks;
 #endif

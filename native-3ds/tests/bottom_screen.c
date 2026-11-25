@@ -19,18 +19,42 @@ extern uint16_t mp_group_badge_drawn[4];
 extern char mp_group_strip_text[4][24];
 static void group_pages(void){
     MPBottomState s={0};s.scene=1;
-    /* the Available Games list: four games covering every badge state */
-    GroupView* v=&bottom_stub_view;memset(v,0,sizeof *v);v->page=GROUP_PAGE_LIST;v->count=4;
-    const char* hosts[4]={"\xE3\x82\x86\xE3\x81\x86\xE3\x81\x8D","Zo\xC3\xAB",KANA10,"Anna"};
-    for(int i=0;i<4;++i){snprintf(v->row[i].host,sizeof v->row[i].host,"%s",hosts[i]);v->row[i].players=i+1;v->row[i].max=4;v->row[i].key=i;}
-    lobby_state* l=&v->row[0].lobby;l->slot[0]=door(0,2,0,1);l->slot[1]=door(2,0,0,0);l->slot[2]=door(2,0,0,0);l->slot[3]=door(2,0,0,0);
-    l=&v->row[1].lobby;l->slot[0]=door(0,9,1,1);l->slot[1]=door(1,25,2,1);l->slot[2]=door(0,0,0,0);l->slot[3]=door(2,0,0,0);   /* Human, CPU, choosing, closed */
-    l=&v->row[2].lobby;for(int p=0;p<4;++p)l->slot[p]=door(0,p*6,p,1);l->phase=LOBBY_MATCH;                               /* in a match */
-    l->status.valid=1;l->status.port[0].fighter=19;l->status.port[0].costume=0;l->slot[0]=door(0,18,0,1);                 /* Zelda, now Sheik */
-    for(int p=1;p<4;++p){l->status.port[p].fighter=(uint8_t)(p*6);l->status.port[p].costume=(uint8_t)p;}
-    l=&v->row[3].lobby;l->slot[0]=door(0,4,5,1);l->slot[1]=door(0,17,5,1);l->slot[2]=door(0,30,0,1);l->slot[3]=door(1,12,4,1);   /* sixth costumes, a bad fighter */
-    v->count=3;save("group-list-3",&s,0,0);assert(mp_group_badge_drawn[0]==20);   /* the IN MATCH row's Zelda shows Sheik (19 + 1) */
-    v->count=4;save("group-list",&s,0,0);
+    /* the Available Games list (3 rows, 48 px heads): a Mii head, the emblem, a busy "IN MATCH" row, a full game, Teams
+     * colours; nine games over pages; the head before it is ready */
+    GroupView* v=&bottom_stub_view;
+    extern unsigned char mp_group_row_head[GROUP_ROWS];
+    const char* hosts[9]={"Alice","Zo\xC3\xAB",KANA10,"Anna","Bob","\xE3\x82\x86\xE3\x81\x86\xE3\x81\x8D","Carol","Dave","Eve"};
+    memset(v,0,sizeof *v);v->page=GROUP_PAGE_LIST;
+    for(int i=0;i<9;++i){group_game* r=&v->row[i];snprintf(r->host,sizeof r->host,"%s",hosts[i]);r->players=1+i%4;r->max=4;r->key=(uint32_t)i;
+        r->has_mii=i%2==0;r->mii_crc=(uint16_t)(0x1000+i);r->mii[0]=1;
+        for(int p=0;p<4;++p){r->beacon.slot[p].kind=LOBBY_EMPTY;}
+        r->beacon.slot[0].kind=LOBBY_HUMAN;r->beacon.slot[0].fighter=(uint8_t)(i*3%26);r->beacon.slot[0].chosen=1;}
+    /* row 1: Human, CPU, choosing, closed; row 2: in a match (Sheik live); row 3: full, Teams on (red, blue, green, red CPU) */
+    group_game* r=&v->row[1];r->beacon.slot[0].fighter=9;r->beacon.slot[0].costume=1;
+    r->beacon.slot[1].kind=LOBBY_CPU;r->beacon.slot[1].fighter=25;r->beacon.slot[1].costume=2;r->beacon.slot[1].chosen=1;
+    r->beacon.slot[2].kind=LOBBY_HUMAN;r->beacon.slot[2].chosen=0;
+    r=&v->row[2];r->beacon.phase=LOBBY_MATCH;for(int p=0;p<4;++p){r->beacon.slot[p].kind=LOBBY_HUMAN;r->beacon.slot[p].fighter=(uint8_t)(p*6);r->beacon.slot[p].costume=(uint8_t)p;r->beacon.slot[p].chosen=1;}
+    r->beacon.slot[0].fighter=19;
+    r=&v->row[3];r->players=4;r->beacon.teams=1;
+    for(int p=0;p<4;++p){r->beacon.slot[p].kind=p==3?LOBBY_CPU:LOBBY_HUMAN;r->beacon.slot[p].fighter=(uint8_t)(p*5+1);r->beacon.slot[p].chosen=1;r->beacon.slot[p].team=(uint8_t)(p==3?0:p);}
+    v->count=3;v->pages=1;bottom_stub_mii_ready=1;
+    save("group-list",&s,0,0);
+    assert(mp_group_row_head[0]==1&&mp_group_row_head[1]==2&&mp_group_row_head[2]==1);   /* a Mii head, the emblem, a head */
+    assert(mp_group_badge_drawn[0]==20);                                                   /* the IN MATCH row's Sheik (19 + 1) */
+    bottom_stub_mii_ready=0;save("group-list-waiting",&s,0,0);assert(mp_group_row_head[0]==2);   /* the emblem until the head is ready */
+    bottom_stub_mii_ready=1;
+    /* the full game with Teams on page 2 of two */
+    v->count=4;v->pages=2;v->list_page=1;save("group-list-teams",&s,0,0);assert(mp_group_row_head[0]==2&&mp_group_row_head[1]==0);
+    /* nine games: the last page; a tap on its first row joins the game drawn there; the page buttons */
+    v->count=9;v->pages=3;v->list_page=2;save("group-list-last-page",&s,0,0);
+    assert(mp_group_row_head[0]==1);
+    bottom_stub_joined=-1;mp_bottom_online_touch(150,65+10);assert(bottom_stub_joined==0);
+    bottom_stub_joined=-1;mp_bottom_online_touch(150,65+49+10);assert(bottom_stub_joined==1);
+    bottom_stub_turned=0;mp_bottom_online_touch(170,45);assert(bottom_stub_turned==-1);
+    mp_bottom_online_touch(240,45);assert(bottom_stub_turned==0);
+    v->list_page=0;save("group-list-page-1",&s,0,0);
+    snprintf(v->error,sizeof v->error,"That game is full (4 consoles)");save("group-list-error",&s,0,0);
+    v->error[0]=0;v->count=0;v->pages=1;v->list_page=0;save("group-list-empty",&s,0,0);
     /* the strip: a full lobby with a CPU, a closed door and an empty port; names in kana; busy reasons */
     v->page=GROUP_PAGE_NONE;
     GroupStrip* g=&bottom_stub_strip;memset(g,0,sizeof *g);bottom_stub_strip_on=1;g->active=1;g->me=1;g->phase=LOBBY_CSS;g->rules.stocks=4;
@@ -49,9 +73,18 @@ static void group_pages(void){
     for(int i=0;i<4;++i){g->port[i].door=door(i==3?1:0,i?i*5:18,0,1);g->status.port[i].kind=(uint8_t)(i==3);g->status.port[i].stocks=(uint8_t)st[i];
         g->status.port[i].damage=(uint16_t)(i*47);g->status.port[i].fighter=(uint8_t)(i?i*5:19);}
     g->port[2].present=1;
+    snprintf(g->port[0].player,sizeof g->port[0].player,"%s","Anna");snprintf(g->port[1].player,sizeof g->port[1].player,"%s",KANA10);
+    snprintf(g->port[2].player,sizeof g->port[2].player,"%s","Left Early");   /* a console that played port 3 and left */
     save("group-watch-sheik",&s,0,0);assert(mp_group_badge_drawn[0]==20);
     g->status.port[0].fighter=18;save("group-watch-zelda",&s,0,0);assert(mp_group_badge_drawn[0]==19);
     g->rules.time_mode=1;save("group-watch-time",&s,0,0);
+    g->phase=LOBBY_RESULTS;save("group-watch-results",&s,0,0);g->phase=LOBBY_MATCH;   /* no timer on the results */
+    /* Teams: each badge and human accent in its team's colour (port 2 on red, 3 on green); the late joiner on port 4,
+     * where a CPU plays, does not lend the CPU its name (bug 2: the row says CPU) */
+    g->rules.time_mode=0;g->rules.teams=1;g->port[0].door.team=1;g->port[1].door.team=0;g->port[2].door.team=2;g->port[3].door.team=0;
+    g->port[3].present=1;snprintf(g->port[3].name,sizeof g->port[3].name,"%s","Joiner");g->port[3].player[0]=0;g->me=3;
+    save("group-watch-teams",&s,0,0);
+    g->rules.teams=0;g->me=1;g->port[3].present=0;
     /* the HOME notice (Phase 5) over the strip */
     g->watching=0;g->phase=LOBBY_CSS;bottom_stub_home_note=1;save("group-home-note",&s,0,0);bottom_stub_home_note=0;
     bottom_stub_strip_on=0;

@@ -121,8 +121,14 @@ int lw_udp_open(int host, int port, int max_nodes, const char *name, char *err, 
     memset(&me, 0, sizeof(me));
     me.sin_family = AF_INET;
     me.sin_addr.s_addr = htonl(INADDR_ANY);
-    me.sin_port = htons((uint16_t)(host ? port : 0));
-    if (bind(sock, (struct sockaddr *)&me, sizeof(me)) != 0) { snprintf(err, (size_t)errlen, "cannot bind port %d", port); lw_udp_close(); return -1; }
+    /* a host takes the first free port of the ones browsers scan (base..base+7), as a free channel: several hosts on
+     * one machine (PC tests, the interactive demo's PC hosts beside its consoles) */
+    int bound = -1;
+    for (int k = 0; k < (host ? SCAN_PORTS : 1) && bound != 0; ++k) {
+        me.sin_port = htons((uint16_t)(host ? port + k : 0));
+        bound = bind(sock, (struct sockaddr *)&me, sizeof(me));
+    }
+    if (bound != 0) { snprintf(err, (size_t)errlen, "cannot bind port %d", port); lw_udp_close(); return -1; }
 #ifdef _WIN32
     { u_long one = 1; ioctlsocket(sock, FIONBIO, &one); }
 #else

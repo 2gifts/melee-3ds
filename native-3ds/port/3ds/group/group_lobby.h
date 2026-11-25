@@ -11,7 +11,8 @@
 #include <stdint.h>
 
 #define LOBBY_SLOTS 4
-#define LOBBY_BLOB_MAX 200         /* LW_MAX_LOBBY */
+#define LOBBY_BLOB_MAX 255         /* LW_MAX_LOBBY */
+#define LOBBY_NAME_BYTES 32        /* a console's name: up to 10 characters of UTF-8 and the NUL (LW_NAME_MAX) */
 #define LOBBY_TAG_BYTES 8          /* a name tag's game-encoded text (gm/types.h namedata) */
 #define LOBBY_BLOCK_SIZE 0x140     /* match block + trailer (SLIPPI_NET_MATCH_BLOCK_TOTAL rounded for the 3 flag bytes) */
 
@@ -89,11 +90,43 @@ typedef struct {
     uint8_t advance;               /* how far the results screen was moved on by a press: 1 past its wait (a cancelled
                                     * match), 2 past its intro (to the players' panels) */
     uint8_t stars[LOBBY_SLOTS];    /* the stars over each door: each port's KOs, as vanilla's VS mode counts them */
+    /* Consoles that played the running match (or the results up) and have left it: bit n, with the name the console on
+     * port n had when the match began. A console on that port now (one that joined since) did not play, so the
+     * match overview of a console watching shows the name of the one that left until the lobby reopens. */
+    uint8_t gone;
+    char gone_name[LOBBY_SLOTS][LOBBY_NAME_BYTES];
 } lobby_state;
 
 /* ---- the wire ---- */
 int lobby_encode(const lobby_state *s, uint8_t *out, int cap);          /* bytes written, 0 if cap is too small */
 int lobby_decode(lobby_state *s, const uint8_t *in, int len);           /* 0 ok, -1 not a lobby blob */
+
+/* ---- the beacon ----
+ * What a console browsing for games sees of a lobby (lw_host_set_beacon), apart from the lobby blob: the phase, the
+ * doors (during a match, the fighter the match shows now and Human/CPU as it plays) and, when the host has one, its Mii
+ * as CFLStoreData (MiiData, 2 bytes of padding, CRC-16 big-endian), checked on arrival. 20 or 116 bytes. */
+#define LOBBY_MII_BYTES 96
+#define LOBBY_BEACON_MAX (4 + 4 * LOBBY_SLOTS + LOBBY_MII_BYTES)
+typedef struct {
+    uint8_t phase;                 /* LOBBY_CSS / STAGE / MATCH / RESULTS */
+    uint8_t teams;                 /* the rules say Teams: a door's colour is its team's */
+    struct {
+        uint8_t kind;              /* LOBBY_HUMAN / LOBBY_CPU / LOBBY_EMPTY */
+        uint8_t team;              /* 0 red, 1 blue, 2 green */
+        uint8_t fighter, costume;  /* external id and costume */
+        uint8_t chosen;            /* 1: a fighter is placed (always during a match) */
+    } slot[LOBBY_SLOTS];
+} lobby_beacon;
+/* mii: the host's CFLStoreData (LOBBY_MII_BYTES) or NULL. Bytes written, 0 if cap is too small. */
+int lobby_encode_beacon(const lobby_state *s, const uint8_t *mii, uint8_t *out, int cap);
+/* 0 ok, -1 not a beacon. mii (LOBBY_MII_BYTES) receives the Mii; *has_mii is 1 only when one came and its CRC holds. */
+int lobby_decode_beacon(lobby_beacon *b, uint8_t *mii, int *has_mii, const uint8_t *in, int len);
+/* CFL's CRC-16 (CCITT polynomial, seed 0, as cfl-mii's cflComputeCRC16). */
+uint16_t lobby_crc16(const uint8_t *data, int len);
+/* A Mii's CRC holds (the CRC over all LOBBY_MII_BYTES, its own two included, is 0). */
+int lobby_mii_ok(const uint8_t *mii);
+/* Write the CRC into a Mii (bytes 94 and 95). */
+void lobby_mii_seal(uint8_t *mii);
 
 /* A console's commands to the host. Each returns its length. */
 enum { LCMD_DOOR = 1, LCMD_START = 2, LCMD_STAGE = 3, LCMD_BACK = 4, LCMD_BUSY = 5, LCMD_RESULTS = 6 };
@@ -121,6 +154,7 @@ typedef struct {
     uint8_t last_tag[LOBBY_SLOTS][LOBBY_TAG_BYTES];   /* each port's last Human tag (a change clears its stars) */
     uint8_t last_tag_ok[LOBBY_SLOTS];
     uint8_t in_use_by[LOBBY_SLOTS];   /* the doors each port's console is using; st.in_use is their OR */
+    char played_name[LOBBY_SLOTS][LOBBY_NAME_BYTES];   /* the names of the consoles in the running match (lobby_host_name) */
 } lobby_host;
 
 enum { LOBBY_CHANGED = 1, LOBBY_STAGE_REACHED = 2, LOBBY_START_MATCH = 4 };
@@ -147,6 +181,9 @@ int lobby_host_set_busy(lobby_host *h, int port, int busy);                  /* 
 int lobby_host_set_in_use(lobby_host *h, int port, int doors);               /* the doors a console is using */
 /* Phase MATCH; call after lw_host_start. `again`: a follow-up game (sudden death) with the consoles of the last one. */
 void lobby_host_match_began(lobby_host *h, int again);
+/* The name of the console on `port` as the match begins (call for each port after lobby_host_match_began): if it
+ * leaves before the lobby reopens, the lobby keeps showing it (lobby_state.gone). */
+void lobby_host_name(lobby_host *h, int port, const char *name);
 int lobby_host_set_status(lobby_host *h, const lobby_status *st);            /* the running match's status; LOBBY_CHANGED if it differs */
 int lobby_host_match_over(lobby_host *h);                                    /* phase CSS again; applies waiting joins/leaves */
 /* The match is over and its results screen is up: phase RESULTS until lobby_host_results_over. Joins and leaves still

@@ -106,7 +106,7 @@ void mp_native_bottom_frame(unsigned fps,unsigned expanded,unsigned rate,unsigne
 #ifdef MP_SMOKE_TEST
     mp_bottom_observed=state;mp_bottom_fps_visible=show_fps;mp_bottom_guide_visible=guide;
 #endif
-    {extern unsigned slippi_ui_serial(void);extern unsigned group_serial(void);static unsigned online_serial;unsigned serial=slippi_ui_serial()+group_serial();
+    {extern unsigned slippi_ui_serial(void);extern unsigned group_serial(void);static unsigned online_serial;unsigned serial=slippi_ui_serial()+group_serial()+mp_group_mii_serial()*0x9E3779B1u;
      if(serial!=online_serial){online_serial=serial;dirty=1;}}
     unsigned shown=show_fps?fps:0;
     if(shown!=last_fps||expanded!=last_view||rate!=last_rate||

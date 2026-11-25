@@ -53,7 +53,31 @@ int group_dialog(void) { return 0; }
 void group_dialog_answer(int yes) { (void)yes; }
 void group_back(void) {}
 void group_host(void) {}
-void group_join_row(int row) { (void)row; }
+void group_join_row(int row) { bottom_stub_joined = row; }
+void group_list_turn(int delta) { bottom_stub_turned += delta; }
+int bottom_stub_joined = -1, bottom_stub_turned, bottom_stub_mii_ready = 1;
+/* mii_icon.c: a drawn face stands in for a rendered head (a skin disc, hair, eyes), the same for every Mii */
+static uint32_t stub_icon[64 * 64];
+unsigned bottom_stub_mii_asks;
+const uint32_t *mp_group_mii_icon(uint32_t key, uint16_t crc, const unsigned char *mii)
+{
+    (void)key; (void)crc; (void)mii;
+    ++bottom_stub_mii_asks;
+    if (!bottom_stub_mii_ready) return NULL;
+    for (int y = 0; y < 64; ++y)
+        for (int x = 0; x < 64; ++x) {
+            int dx = x - 32, dy = y - 34, d = dx * dx * 100 / 26 / 26 + dy * dy * 100 / 28 / 28;
+            uint32_t c = 0;
+            if (d <= 100) c = 0xF2C8A0FFu;                                         /* skin */
+            if (d <= 100 && dy < -12) c = 0x5A3A22FFu;                             /* hair */
+            if ((dx + 10) * (dx + 10) + (dy - 2) * (dy - 2) < 12 || (dx - 10) * (dx - 10) + (dy - 2) * (dy - 2) < 12) c = 0x202020FFu;
+            if (dy == 16 && dx > -8 && dx < 8) c = 0xB04040FFu;                   /* mouth */
+            if (!c && d <= 112) c = 0x5A3A2280u;                                   /* a soft edge */
+            stub_icon[y * 64 + x] = c;
+        }
+    return stub_icon;
+}
+unsigned mp_group_mii_serial(void) { return 0; }
 void group_note_touch(unsigned x, unsigned y) { (void)x; (void)y; }
 void group_pick_group(void) {}
 void group_pick_solo(void) {}

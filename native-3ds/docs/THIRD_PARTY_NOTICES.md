@@ -96,3 +96,12 @@ UCF algorithms are credited to tauKhan, Altimor, PracticalTAS, CarVac and Krohno
 Optional simplified stage assets are from [Diet Melee Classic](https://diet.melee.tv/), patched locally from the user's ISO. Original settings and selected animation data are restored for native compatibility; these modifications are checked by the preparation tools and their generated archive audits. The official 1.0.3 patch's stage archives were verified identical to the 1.0.2 inputs. The user's original disc assets are preserved separately. No game data has been published or uploaded.
 
 The original RNG and spline routines are from the pinned doldecomp/melee checkout. The CRT, newlib and libgcc binaries are from the official devkitPro image recorded in toolchain.lock.json. Upstream notices and licensing are not replaced by this document.
+
+## cfl-mii
+
+https://github.com/jamesrhg/cfl-mii (git submodule at `port/3ds/third_party/cfl-mii`, commit `b85be4d`)
+
+A reimplementation of the 3DS CFL Mii head renderer for libctru and citro3d. The repository has no license
+file. The game uses it to draw the Mii heads of the hosts in the Group list (`port/3ds/mii_icon.c`; built by
+`tools/build_game.py`). It reads the console's own `CFL_Res.dat` at run time.
+That file is not part of this repository.

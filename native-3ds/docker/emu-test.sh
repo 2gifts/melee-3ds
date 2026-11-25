@@ -18,6 +18,8 @@
 #   MELEE_VOLUME   work volume (default melee3ds-slippi-work, the one MELEE_VARIANT=slippi builds use)
 #   MELEE_TEST_OUT where test logs and records land (default native-3ds/build/emu-test)
 #   MELEE_GRAPHICS emulator renderer: opengl (default) or software
+#   MELEE_CFL_RES  your console's CFL_Res.dat: every emulator profile installs it as the Mii resource title, so Mii
+#                  heads render with real face parts instead of Azahar's stand-in (docker/cfl_res.sh)
 #
 # The test container is the stock linuxserver/azahar image (amd64 only, so it runs under Rosetta/QEMU on
 # Apple Silicon). With opengl, Azahar runs as a Wayland client of a headless labwc compositor started in the
@@ -58,6 +60,8 @@ esac
 shift
 
 mkdir -p "$OUT"
+. "$HERE/docker/cfl_res.sh"
+CFL_RES_CIA=$(cfl_res_cia "$VOLUME" "$HERE")
 # opengl needs a display: a headless labwc (the image's own Wayland compositor) in the container's /tmp.
 wayland='if [ "$MELEE_GRAPHICS" = opengl ]; then mkdir -p /tmp/wl && chmod 700 /tmp/wl && XDG_RUNTIME_DIR=/tmp/wl WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 WLR_RENDERER=pixman labwc >/tmp/labwc.log 2>&1 & sleep 2; export MELEE_QT_PLATFORM=wayland WAYLAND_DISPLAY=/tmp/wl/wayland-0; fi; '
 if [ -n "$script" ]; then
@@ -76,6 +80,7 @@ exec docker run --rm -t --platform linux/amd64 --entrypoint sh \
     -e MELEE_GROUP_TOOLS_DIR=/tmp/group-tools \
     -e MELEE_EMU_DIR=/tmp/azahar \
     -e MELEE_GRAPHICS="${MELEE_GRAPHICS:-opengl}" \
+    ${CFL_RES_CIA:+-v "$CFL_RES_CIA":/cfl-res.cia:ro -e MELEE_CFL_RES_CIA=/cfl-res.cia} \
     -e MELEE_GAME_FILES=/work/src/dist/native-alpha/3ds/melee/files \
     -e MELEE_SLIPPI_FILES=/work/src/dist/native-alpha/3ds/melee/slippi/files \
     -e MELEE_DSX=/work/src/dist/3ds/melee/melee-development.3dsx \

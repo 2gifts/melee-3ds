@@ -66,6 +66,26 @@ static void reset_view(void)
     unsigned serial = view.serial;      /* keeps counting up, so the bottom screen sees a new page and redraws */
     memset(&view, 0, sizeof(view));
     view.serial = serial + 1;
+    view.pages = 1;
+}
+
+/* The pages for view.count games; the page shown moves back when its games are gone. */
+static void fix_pages(void)
+{
+    int count = view.count < GROUP_KEEP ? view.count : GROUP_KEEP;
+    view.pages = count > 0 ? (count + GROUP_ROWS - 1) / GROUP_ROWS : 1;
+    if (view.list_page >= view.pages) view.list_page = view.pages - 1;
+    if (view.list_page < 0) view.list_page = 0;
+}
+
+void group_list_turn(int delta)
+{
+    if (view.page != GROUP_PAGE_LIST || view.busy) return;
+    int to = view.list_page + delta;
+    if (to < 0 || to >= view.pages) return;
+    view.list_page = to;
+    ++view.serial;
+    sp_log("group: list page %d of %d", to + 1, view.pages);
 }
 
 int group_open(void)
@@ -92,14 +112,15 @@ void group_pick_group(void) { if (view.page == GROUP_PAGE_ASK) req = REQ_GROUP; 
 void group_host(void) { if (view.page == GROUP_PAGE_LIST && !view.busy) req = REQ_HOST; }
 void group_join_row(int row)
 {
-    if (view.page == GROUP_PAGE_LIST && !view.busy && row >= 0 && row < view.count && row < GROUP_ROWS) {
-        if (view.row[row].max > 0 && view.row[row].players >= view.row[row].max) {
-            set_error("That game is full (4 consoles)");
-            return;
-        }
-        req_key = view.row[row].key;   /* the game shown in that row, even if the list moves before the poll */
-        req = REQ_JOIN;
+    if (view.page != GROUP_PAGE_LIST || view.busy || row < 0 || row >= GROUP_ROWS) return;
+    int i = view.list_page * GROUP_ROWS + row;
+    if (i >= view.count || i >= GROUP_KEEP) return;
+    if (view.row[i].max > 0 && view.row[i].players >= view.row[i].max) {
+        set_error("That game is full (4 consoles)");
+        return;
     }
+    req_key = view.row[i].key;         /* the game shown in that row, even if the list moves before the poll */
+    req = REQ_JOIN;
 }
 void group_back(void) { req = REQ_BACK; }
 
@@ -128,12 +149,23 @@ static void close_session(void)
 /* The games nearby, from the module's scan. */
 static void refresh_rows(void)
 {
-    group_game rows[GROUP_ROWS];
+    static group_game rows[GROUP_KEEP];  /* the engine thread only; too big for its stack */
     memset(rows, 0, sizeof(rows));
-    int n = group_scan(rows, GROUP_ROWS);
+    int n = group_scan(rows, GROUP_KEEP);
     if (n != view.count || memcmp(rows, view.row, sizeof(rows)) != 0) {
+        int moved = n != view.count;
+        for (int i = 0; i < n && !moved; ++i) moved = rows[i].key != view.row[i].key || rows[i].has_mii != view.row[i].has_mii;
+        if (n != view.count) sp_log("group: %d game%s listed", n, n == 1 ? "" : "s");
+        if (moved) {                   /* the order and which hosts sent a Mii (tests read it) */
+            char line[400];
+            int len = snprintf(line, sizeof(line), "group: list order:");
+            for (int i = 0; i < n && len < (int)sizeof(line) - 40; ++i)
+                len += snprintf(line + len, sizeof(line) - (size_t)len, " %.31s%s", rows[i].host, rows[i].has_mii ? "(Mii)" : "(-)");
+            sp_log("%s", line);
+        }
         view.count = n;
         memcpy(view.row, rows, sizeof(rows));
+        fix_pages();
         ++view.serial;
     }
 }
@@ -158,6 +190,8 @@ int group_poll(int back)
             if (lost_note[0]) { set_error(lost_note); lost_note[0] = 0; }
             view.page = GROUP_PAGE_LIST;
             view.count = 0;
+            view.list_page = 0;
+            fix_pages();
             ++view.serial;
         }
         break;
@@ -365,6 +399,10 @@ int group_strip(GroupStrip *out)
             out->port[i].signal = group_signal(i);
             snprintf(out->port[i].name, sizeof(out->port[i].name), "%.31s", names[i]);   /* always the 3DS name: a tag only shows over the fighter in the match */
         }
+        /* The match overview: a console that joined since (even on the port of one that left) is not in the match */
+        if (st.gone >> i & 1) snprintf(out->port[i].player, sizeof(out->port[i].player), "%.31s", st.gone_name[i]);
+        else if ((st.played >> i & 1) && out->port[i].present)
+            snprintf(out->port[i].player, sizeof(out->port[i].player), "%.31s", names[i]);
     }
     return 1;
 }

@@ -104,7 +104,7 @@ static int join_first(void)
 {
     if (group_net_status() == 3) return 1;
     group_game g;
-    if (!joined && group_scan(&g, 1) > 0 && (!T.late || g.lobby.phase == LOBBY_MATCH)) {
+    if (!joined && group_scan(&g, 1) > 0 && (!T.late || g.beacon.phase == LOBBY_MATCH)) {
         sp_log("group-test: found a game by '%s' with %d consoles; joining", g.host, g.players);
         if (group_join(g.key) == 0) joined = 1;
     }

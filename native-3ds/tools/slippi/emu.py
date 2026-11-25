@@ -92,7 +92,24 @@ def _prepare_linux(name, gdb_port, graphics):
                       '\n[Renderer]\n' + setting('graphics_api', api) + setting('use_vsync_new', 'false') +
                       '\n[UI]\n' + setting('confirmClose', 'false') + setting('firstStart', 'false') +
                       setting('check_for_update_on_start', 'false'), encoding='utf-8')
+    _install_cfl_res(home)
     return home
+
+
+def _install_cfl_res(home):
+    """$MELEE_CFL_RES_CIA (docker/emu-test.sh MELEE_CFL_RES): the console's Mii resource as a system title, installed
+    once into this profile's NAND so Mii heads render with real face parts."""
+    cia = os.environ.get('MELEE_CFL_RES_CIA')
+    marker = user_dir(home) / 'cfl-res-installed'
+    if not cia or marker.exists():
+        return
+    env = dict(os.environ, HOME=str(home), XDG_DATA_HOME=str(home / 'data'), XDG_CONFIG_HOME=str(home / 'config'),
+               XDG_RUNTIME_DIR=str(_runtime_dir(home)), QT_QPA_PLATFORM='offscreen')
+    result = subprocess.run([os.environ.get('AZAHAR', 'azahar'), '-i', cia], env=env, capture_output=True, text=True,
+                            timeout=300)
+    if 'success' not in (result.stdout + result.stderr).lower():
+        raise RuntimeError(f'installing {cia} failed: {result.stdout}{result.stderr}')
+    marker.write_text(cia + '\n')
 
 
 def prepare(name, gdb_port=24800, graphics=None):

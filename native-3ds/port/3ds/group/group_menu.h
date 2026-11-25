@@ -7,14 +7,17 @@
 #include "group_lobby.h"
 #include "group_session.h"
 
-#define GROUP_ROWS 4
+#define GROUP_ROWS 3                /* rows on a page of the Available Games list (48 px Mii heads; owner, 2026-11-25) */
+#define GROUP_KEEP 16               /* games kept from the scan, in its order; the list pages through them */
 
 enum { GROUP_PAGE_NONE, GROUP_PAGE_ASK, GROUP_PAGE_LIST };
 
 typedef struct {
     int page;                  /* GROUP_PAGE_* */
-    int count;                 /* games found (the first GROUP_ROWS are shown) */
-    group_game row[GROUP_ROWS];
+    int count;                 /* games found (the first GROUP_KEEP are kept) */
+    group_game row[GROUP_KEEP];
+    int list_page;             /* the page shown, 0-based: its first game is row[list_page * GROUP_ROWS] */
+    int pages;                 /* pages in all (at least 1) */
     int busy;                  /* 1 while a Host or Join is under way */
     char error[96];
     unsigned serial;           /* changes whenever anything shown changes */
@@ -56,6 +59,8 @@ typedef struct {
         int present;           /* a console is on this port */
         int signal;            /* 0..3 bars */
         char name[32];         /* its 3DS system name (never its name tag) */
+        char player[32];       /* the match overview's name for this port (watching): the console that plays it, or
+                                * one that played it and left; "" for a CPU or a console that joined since */
         int busy_why;          /* what it is busy with (LOBBY_BUSY_*: a slider, its name tag list, the rules, name entry) */
         lobby_slot door;       /* the port's door: Human, CPU or empty, and the fighter */
     } port[LOBBY_SLOTS];
@@ -69,7 +74,9 @@ const GroupView *group_view(void);
 void group_pick_solo(void);
 void group_pick_group(void);
 void group_host(void);
-void group_join_row(int row);                /* a full game (4 consoles) is refused with an error on the page */
+void group_join_row(int row);                /* the row'th game drawn on the page shown; a full game (4 consoles) is
+                                              * refused with an error on the page */
+void group_list_turn(int delta);             /* the next (+1) or previous (-1) page of games */
 void group_back(void);
 void group_note_touch(unsigned x, unsigned y);   /* log where the bottom screen was tapped on a group page */
 
