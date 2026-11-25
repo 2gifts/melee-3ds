@@ -439,19 +439,31 @@ static void mp_css_put_door(int d, const u8* o)
         mnCharSel_804A0BD0[d]->x5 = MP_CSS_REMOTE_HELD;   /* in someone's hand, over nothing: no puck here */
     }
     if (o[5] == 2) {
-        /* a preview: the token is held over this fighter (what the local hand's door shows while it hovers) */
-        int i;
+        /* A preview: the token is held over this fighter (what the local hand's door shows while it hovers). The
+         * fighter may be locked in this save: it still has a tile here (a "?" one, see mp_css_keep_locked_icon), so the
+         * door shows it as for a placed one. The token is marked held in every case, or this CSS would read it as
+         * dropped (no fighter under it) and, for a CPU's door, which anyone may edit, send that to the lobby: the
+         * holding console's puck would fall out of its hand. */
+        int i, found = -1;
         for (i = 0; i < 0x19; i++) {
-            if (icons[i].char_kind == (s8) o[1] && icons[i].state >= 1) {
-                u8 save = mnCharSel_804D6CF6;
-                mnCharSel_804D6CF6 = 4;
-                mnCharSel_803F0DFC.doors[d].sel_icon = i;
-                mnCharSel_803F0DFC.doors[d].costume = o[2];
-                mnCharSel_804A0BD0[d]->x5 = MP_CSS_REMOTE_HELD;
-                mnCharSel_8025DB34(d);
-                mnCharSel_804D6CF6 = save;
-                break;
+            if (icons[i].char_kind == (s8) o[1] && (found < 0 || icons[i].state >= 1)) {
+                found = i;
+                if (icons[i].state >= 1) {
+                    break;
+                }
             }
+        }
+        if (found >= 0) {
+            u8 save = mnCharSel_804D6CF6;
+            mnCharSel_804D6CF6 = 4;
+            mnCharSel_803F0DFC.doors[d].sel_icon = found;
+            mnCharSel_803F0DFC.doors[d].costume = o[2];
+            mnCharSel_804A0BD0[d]->x5 = MP_CSS_REMOTE_HELD;
+            mnCharSel_8025DB34(d);
+            mp_css_keep_locked_icon(found);
+            mnCharSel_804D6CF6 = save;
+        } else {
+            mnCharSel_804A0BD0[d]->x5 = MP_CSS_REMOTE_HELD;   /* no tile for it here: as held over nothing */
         }
     }
 }
@@ -999,6 +1011,35 @@ void mp_css_group_frame(void)
 
 '''
 
+# The second half of the vanilla pick (mnStageSel_80259C28 after skip_randomize): the "Now loading" overlay, the pick
+# state and the forward sound. Moved into a helper so the group's hidden pick can start it without the unlocked check.
+SSS_LOADING_BODY = '''skip_randomize:
+
+    gobj = GObj_Create(HSD_GOBJ_CLASS_FIGHTER, 5, 0x80);
+    jobj = HSD_JObjLoadJoint(mnStageSel_804D6C98->xB0);
+    HSD_GObjObject_80390A70(gobj, HSD_GObj_JObjKind, jobj);
+    GObj_SetupGXLink(gobj, HSD_GObj_JObjCallback, 4, 0x87);
+    HSD_GObj_SetupProc(gobj, mn_8022EAE0, 0);
+    HSD_JObjAddAnimAll(jobj, mnStageSel_804D6C98->xB4,
+                       mnStageSel_804D6C98->xB8, mnStageSel_804D6C98->xBC);
+    HSD_JObjReqAnimAll(gobj->hsd_obj, 0.0F);
+    HSD_JObjAnimAll(gobj->hsd_obj);
+    mnStageSel_804D6CAF = 1;
+    mnStageSel_804D6CA4 = 0x1E;
+    sfxForward();
+}
+'''
+SSS_LOADING = '''
+/* Another console picked a stage this save has not unlocked: its number, -1 otherwise. The selected icon is then the
+ * stage select's "nothing selected" index (0x1E: no outline, no name, an empty preview) during "Now loading", so the
+ * stage is not revealed; the vanilla exit would read the table at that index, so the group code leaves with this. */
+static int mp_sss_hidden_stage = -1;
+static void mp_sss_start_loading(void)
+{
+    HSD_JObj* jobj;
+    HSD_GObj* gobj;
+''' + SSS_LOADING_BODY.split('\n', 2)[2] + '\n'
+
 SSS_CODE = r'''
 /* ---- the group's stage select: anyone's pick (the host's first) or Back ends it for everyone ---- */
 static int mp_sss_remote, mp_sss_sent;
@@ -1033,8 +1074,19 @@ static int mp_group_sss_frame(void)
     if (mp_platform_group_lost()) {
         mnStageSel_804D6CAF = 0;   /* the session ended: back to the CSS, which leaves */
         mp_sss_remote = 1;
+        mp_sss_hidden_stage = -1;
         gm_801A4B60();
         return 1;
+    }
+    if (mp_sss_hidden_stage >= 0) {
+        /* A hidden pick's "Now loading" (30 to 90 frames, as for any pick): leave with its stage once it is over. */
+        if (mnStageSel_804D6CAF == 2 && mnStageSel_804D6CA4 == 0) {
+            sss_data->vs.start.rules.stkind = mp_sss_hidden_stage;
+            mp_sss_hidden_stage = -1;
+            gm_801A4B60();
+            return 1;
+        }
+        return 0;
     }
     if (mnStageSel_804D6CAF != 0) {
         /* The pick animation ("Now loading") is running here: tell the others at once. The cursor is already gone. */
@@ -1050,6 +1102,14 @@ static int mp_group_sss_frame(void)
         mp_sss_remote = 1;
         OSReport("GROUPCSS stage select: stage %d was picked\n", stage);
         for (i = 0; i < 0x1E; i++) {
+            if (mnStageSel_803F06D0[i].stkind == stage && mnStageSel_803F06D0[i].x8 < 2) {
+                /* not unlocked here: "Now loading" without showing which stage (vanilla would refuse the pick) */
+                OSReport("GROUPCSS stage select: stage %d is locked here; loading without showing it\n", stage);
+                mp_sss_hidden_stage = stage;
+                mnStageSel_804D6CAE = 0x1E;
+                mp_sss_start_loading();
+                return 0;
+            }
             if (mnStageSel_803F06D0[i].stkind == stage) {
                 mnStageSel_804D6CAE = i;
                 mnStageSel_804D6CA0 = 0x1100;
@@ -1199,6 +1259,9 @@ FIXES = {
          '#include <group_bridge.h>\n#include <group_engine.h>\n#include "mnstagesel.h"\n', 1),
         ('            HSD_GObj_SetupProc(gobj, mn_8022BA1C, 5);\n',
          '            HSD_GObj_SetupProc(gobj, mp_group_camera_proc, 5);\n', 1),
+        ('void mnStageSel_80259C28(void)\n{\n', SSS_LOADING + 'void mnStageSel_80259C28(void)\n{\n', 1),
+        (SSS_LOADING_BODY, 'skip_randomize:\n    mp_sss_start_loading();\n}\n', 1),
+        ('        mnStageSel_804D6CAE = 0x1E;\n', '        mnStageSel_804D6CAE = 0x1E;\n        mp_sss_hidden_stage = -1;\n', 1),
         ('void mnStageSel_Scene_OnFrame(void)\n{\n',
          SSS_CODE + 'void mnStageSel_Scene_OnFrame(void)\n{\n    if (mp_group_sss_frame()) {\n        return;\n    }\n', 1),
         ('        sfxBack();\n        gm_801A4B60();\n    }\n    if (mnStageSel_804D6CAF == 2) {\n',

@@ -34,7 +34,7 @@
  *                       door PORT KIND FIGHTER LEVEL CHOSEN HANDICAP, rules HANDICAP MODE TIME STOCKS, busy B (bit 0
  *                       busy, bits 4..7 the doors this console uses, as group_lobby_busy takes them),
  *                       stick X Y (this console's C-stick, -127..127, held until changed), start (Start on the CSS),
- *                       back (B on the stage select), sticks (log every port's C-stick as read here), dump, quit
+ *                       stage N (pick stage kind N on the stage select), back (B on the stage select), sticks (log every port's C-stick as read here), dump, quit
  * A host publishes made-up match status (timer, stocks, damage) during its games, as a real host's bottom screen does.
  * Every console prints "bundle hash" per game; consoles that stayed must agree. Exit 0 = PASS. */
 #include "group_bridge.h"
@@ -220,6 +220,7 @@ static void dump_lobby(void)
  *   door P KIND FIGHTER LEVEL CHOSEN HANDICAP   set door P (0..3; kind 0 Human, 1 CPU, 2 closed)
  *   rules HANDICAP MODE MINUTES STOCKS          the host's rules (handicap 0 off, 1 auto, 2 fixed; mode 0 time, 1 stock)
  *   busy B                                      this console's busy bit (as its name tag list or rules menu would)
+ *   stage N                                     pick stage kind N on the stage select (as the game's pick does)
  *   dump                                        log the lobby (dump_lobby)
  *   quit                                        close the session and exit 0
  * Gives up (exit 1) after 20 minutes without a quit. */
@@ -264,6 +265,8 @@ static int control(const char *dir, int me)
                 group_lobby_busy(a[0]);
             } else if (sscanf(s, "stick %d %d", &a[0], &a[1]) == 2) {
                 sx = a[0]; sy = a[1];
+            } else if (sscanf(s, "stage %d", &a[0]) == 1) {
+                group_lobby_stage(a[0], 0);
             } else if (!strcmp(s, "start")) {
                 group_lobby_start();
             } else if (!strcmp(s, "back")) {
