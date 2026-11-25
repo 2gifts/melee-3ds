@@ -253,6 +253,7 @@ def main():
         snap = [l for l in a.log().splitlines() if 'Group: results names:' in l]
         print('names as the match began on A:', snap[-1:], flush=True)
         a.stub.until_frames(300)
+        a.capture('01b-match')            # the names over the damage displays (Anna, Zoe Angstr, WWWWWWWWWW squeezed)
         emu.stop(c3.proc)
         print('C stopped', flush=True)
         wait_log(a, 'Group: port 3 dropped', 'C\'s fighter becomes a CPU on A', 240)

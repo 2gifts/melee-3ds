@@ -35,6 +35,10 @@
 # opens in the right half of the desktop, console B in the left; give MELEE_WEB_RES=1600x900 for two comfortable windows).
 # Console A's user name (the game's Mii name) is Alice, console B's Bob (emu-web-session.sh sets them at every start).
 # docker/emu-web-hosts.sh adds PC hosts with Miis to the consoles' Available Games lists.
+# With two consoles, A runs the everything-unlocked development build (as melee-3ds.cia) and B the fresh-save one (as
+# melee-3ds-fresh.cia: unlocks by playing; its save is new in every container). Build that one once with
+#   MELEE_BUILD_ARGS="--profile fresh" docker/emu-test.sh build-dev
+# (without it, B runs the unlocked build too). MELEE_WEB_DSX_B: another .3dsx on this machine for console B.
 set -eu
 IMG=linuxserver/azahar:latest
 NAME=${MELEE_WEB_NAME:-melee3ds-emu-web}
@@ -54,6 +58,8 @@ esac
 CFL_RES_CIA=$(cfl_res_cia "$VOLUME" "$(cd "$HERE/.." && pwd)")
 DSX_IN=/work/src/dist/3ds/melee/melee-development.3dsx
 [ -z "${MELEE_WEB_DSX:-}" ] || DSX_IN=/vanilla.3dsx
+DSX_B=/work/src/dist/3ds/melee/melee-fresh-development.3dsx
+[ -z "${MELEE_WEB_DSX_B:-}" ] || DSX_B=/vanilla-b.3dsx
 docker rm -f "$NAME" >/dev/null 2>&1 || true
 docker run -d --name "$NAME" --platform linux/amd64 --shm-size=1gb \
     -p "127.0.0.1:$PORT:3000" \
@@ -62,9 +68,10 @@ docker run -d --name "$NAME" --platform linux/amd64 --shm-size=1gb \
     -e MELEE_GRAPHICS="${MELEE_GRAPHICS:-opengl}" -e MELEE_KEYS="${MELEE_KEYS:-}" \
     -e MELEE_GAME_FILES=/work/src/dist/native-alpha/3ds/melee/files \
     -e MELEE_SLIPPI_FILES=/work/src/dist/native-alpha/3ds/melee/slippi/files \
-    -e MELEE_DSX="$DSX_IN" \
+    -e MELEE_DSX="$DSX_IN" -e MELEE_DSX_B="$DSX_B" \
     -e MELEE_WEB_GDB="${MELEE_WEB_GDB:-}" -e MELEE_WEB_INSTANCES="${MELEE_WEB_INSTANCES:-1}" \
     ${MELEE_WEB_DSX:+-v "$MELEE_WEB_DSX":/vanilla.3dsx:ro} \
+    ${MELEE_WEB_DSX_B:+-v "$MELEE_WEB_DSX_B":/vanilla-b.3dsx:ro} \
     ${CFL_RES_CIA:+-v "$CFL_RES_CIA":/cfl-res.cia:ro -e MELEE_CFL_RES_CIA=/cfl-res.cia} \
     -v "$HERE/emu-web-session.sh":/defaults/autostart:ro \
     -v "$HERE/emu-web-session.sh":/defaults/autostart_wayland:ro \

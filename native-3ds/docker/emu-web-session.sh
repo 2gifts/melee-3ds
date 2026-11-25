@@ -134,7 +134,10 @@ if [ "${MELEE_WEB_INSTANCES:-1}" = 2 ]; then
     # Console B in the left half, console A (this profile) in the right half. Both share one desktop and network
     # namespace, which the loopback link needs.
     place 0 0 "$HALF" "$H"
-    ( XDG_CONFIG_HOME=$HOME/p2/config XDG_DATA_HOME=$HOME/p2/data; setup "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" Bob; exec /usr/sbin/azahar "$MELEE_DSX" ) &
+    # Console B runs MELEE_DSX_B (by default the fresh-save build: its save starts empty in every new container)
+    DSX_B=${MELEE_DSX_B:-$MELEE_DSX}
+    [ -f "$DSX_B" ] || { echo "emu-web: $DSX_B is missing; console B runs $MELEE_DSX" >&2; DSX_B=$MELEE_DSX; }
+    ( XDG_CONFIG_HOME=$HOME/p2/config XDG_DATA_HOME=$HOME/p2/data; setup "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" Bob; exec /usr/sbin/azahar "$DSX_B" ) &
     sleep 15
     place "$HALF" 0 "$HALF" "$H"
 fi

@@ -13,8 +13,13 @@ lines), draw the emblem for the other two, turn the page by touch and render the
 the list is left. Each row's head is read from mp_group_row_head (1 head, 2 emblem, 0 no row); screenshots of both
 screens at each step (list-*-bottom.png). With MELEE_CFL_RES (docker/emu-test.sh) the heads have real faces.
 
-    docker/emu-test.sh run tools/group/group_mii_test.py
-Results: $MELEE_TEST_OUT/group-mii/ (PNGs, game.log, the PC hosts' logs)."""
+Two profiles (step 8d): by default the console has a Mii and a Mii Maker database (a generated CFL_DB.dat holding its
+own Mii, test_miis.cfl_db): its own head shows on the "HOST GAME" button, and cfl-mii adds each other console's Mii it
+draws to the database's recently-seen list (checked in the file afterwards: three, and nothing printed by cfl-mii).
+With --no-mii: test_mii_fail=1 and no database: no head on the button, the rows' heads as before.
+
+    docker/emu-test.sh run tools/group/group_mii_test.py [--no-mii]
+Results: $MELEE_TEST_OUT/group-mii[-no-mii]/ (PNGs, game.log, the PC hosts' logs)."""
 import argparse
 import os
 import re
@@ -74,18 +79,25 @@ def main():
     ap.add_argument('--dsx', default=os.environ.get('MELEE_DSX') or str(emu.ROOT / 'dist/3ds/melee/melee-development.3dsx'))
     ap.add_argument('--elf', default=os.environ.get('MELEE_ELF') or str(emu.ROOT / 'build/game-opt/melee.elf'))
     ap.add_argument('--show', action='store_true')
+    ap.add_argument('--no-mii', action='store_true', help='the profile without a Mii: test_mii_fail=1, no CFL_DB.dat')
     ap.add_argument('--burst', type=int, default=0, help='capture the displayed bottom screen every frame from the Group tap '
                     'through the page turn (at most N frames): burst/NNNN.png and burst-changes.png, the frames that changed')
     args = ap.parse_args()
     rows = 3
-    out = Path(os.environ.get('MELEE_TEST_OUT') or emu.ROOT / 'build/emu-test') / 'group-mii'
+    out = Path(os.environ.get('MELEE_TEST_OUT') or emu.ROOT / 'build/emu-test') / ('group-mii' + ('-no-mii' if args.no_mii else ''))
     shutil.rmtree(out, ignore_errors=True)
     out.mkdir(parents=True)
     home = emu.prepare('group', PORT)
     sd = emu.sd(home)
     (sd / 'slippi').mkdir(parents=True, exist_ok=True)
     (sd / 'slippi' / 'config.ini').write_text('prefetch=0\ndelay=2\n')
-    (sd / 'slippi' / 'group.ini').write_text('menu=1\nudp=1\nport=44100\ndelay=2\n')
+    (sd / 'slippi' / 'group.ini').write_text('menu=1\nudp=1\nport=44100\ndelay=2\n' + ('test_mii_fail=1\n' if args.no_mii else ''))
+    # the Mii Maker database (shared extdata F000000B), made on every run so a reset cannot change it
+    db_path = emu.user_dir(home) / 'nand/data/00000000000000000000000000000000/extdata/00048000/F000000B/user/CFL_DB.dat'
+    shutil.rmtree(db_path.parent.parent, ignore_errors=True)
+    if not args.no_mii:
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        db_path.write_bytes(test_miis.cfl_db())
     (sd / 'no-scripted-input').write_text('')
     (sd / 'game.log').unlink(missing_ok=True)
     stub = Stub(emu.elf_symbols(args.elf))
@@ -181,12 +193,16 @@ def main():
         capture('list-page-1')
         check(f'page 1 heads {want} (1 head, 2 emblem)', got[:rows] == want, str(got))
         n_icons = len(re.findall(r'mii: icon for game \S+ crc \S+ ok', log_text()))
-        check('page 1 rendered one icon per row with a Mii, and this console\'s own for the Host button',
-              n_icons == want.count(1) + 1, f'{n_icons} icons')
-        check('the Host button shows this console\'s own Mii head (Azahar\'s built-in Mii)', stub.peek('mp_group_host_head', 1)[0] == 1)
+        own = 0 if args.no_mii else 1
+        check('page 1 rendered one icon per row with a Mii' + ('' if args.no_mii else ', and this console\'s own for the Host button'),
+              n_icons == want.count(1) + own, f'{n_icons} icons')
+        if args.no_mii:
+            check('no Mii (test_mii_fail): no head on the Host button', stub.peek('mp_group_host_head', 1)[0] == 0)
+        else:
+            check('the Host button shows this console\'s own Mii head (Azahar\'s built-in Mii)', stub.peek('mp_group_host_head', 1)[0] == 1)
         check('cfl-mii loaded on the renderer thread', 'mii: CFL_Initialize ok' in log_text())
         check('the corrupt Mii never reached the renderer (the browser turned it down)',
-              n_icons == want.count(1) + 1 and 'FAILED' not in ''.join(l for l in log_text().splitlines() if 'mii:' in l))
+              n_icons == want.count(1) + own and 'FAILED' not in ''.join(l for l in log_text().splitlines() if 'mii:' in l))
         # page 2 by touch (the > button beside "1/2")
         touch(242, 48)
         ok = wait_log(r'group: list page 2 of 2')
@@ -205,7 +221,7 @@ def main():
         check('the < button turns back; the cached heads draw again', ok and got[:rows] == want, str(got))
         capture('list-page-1-again')
         total = len(re.findall(r'mii: icon for game \S+ crc \S+ ok', log_text()))
-        check('heads are cached (no render for a page seen before)', total == want.count(1) + rest.count(1) + 1, f'{total} icons')
+        check('heads are cached (no render for a page seen before)', total == want.count(1) + rest.count(1) + own, f'{total} icons')
         costs = [int(m) for m in re.findall(r'mii: icon for game .* all (\d+) ms', log_text())]
         check('each icon job is logged with its cost', len(costs) == total, f'all ms: {costs}')
         # leave the list: cfl-mii is let go after 2 s without a request
@@ -213,6 +229,16 @@ def main():
         ok = wait_log(r'mii: cfl-mii unloaded', 1, 60)
         check('cfl-mii unloads once the list is left', ok)
         capture('after-back')
+        cfl_lines = [l for l in log_text().splitlines() if 'cfl: ' in l]
+        if args.no_mii:
+            check('without a database cfl-mii says so in the log (and nothing on the screen)',
+                  any('CFL_DB.dat' in l for l in cfl_lines), str(cfl_lines[:3]))
+        else:
+            others = [k for k in listed if k == 'mii']
+            count = test_miis.recent_count(db_path.read_bytes()) if db_path.exists() else -2
+            check('the recently-seen list holds the other consoles\' Miis drawn (not this console\'s own)',
+                  count == len(others), f'{count} in the list, {len(others)} other Miis drawn')
+            check('cfl-mii printed nothing (it found the database and wrote to it)', not cfl_lines, str(cfl_lines[:3]))
     finally:
         if proc is not None:
             emu.stop(proc)

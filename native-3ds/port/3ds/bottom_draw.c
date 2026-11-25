@@ -886,8 +886,8 @@ static void group_strip_page(const GroupStrip* g,unsigned scene){
         mp_group_strip_text_set(i,b);
     }
     if(g->rules.time_mode)snprintf(b,sizeof(b),"TIME %d MIN",g->rules.minutes);else snprintf(b,sizeof(b),"%d STOCK%s",g->rules.stocks,g->rules.stocks==1?"":"S");
-    /* Only the host sets the rules: its CSS Rules banner and Teams switch do nothing on the other consoles. */
-    if(g->me!=0){size_t n=strlen(b);snprintf(b+n,sizeof(b)-n,"%s"," - THE HOST'S RULES");}
+    /* Only the host sets the rules (its CSS Rules banner and Teams switch do nothing on the other consoles); the line
+     * says no more than the rules: no "host" wording on the CSS's bottom screen (owner, 2026-11-25) */
     if(g->toast[0])center(160,192,g->toast,13,slippi_done);else center(160,192,b,12,gold);
     if(group_dialog())group_dialog_page();
 }

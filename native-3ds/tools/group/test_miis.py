@@ -28,6 +28,7 @@ def seal(mii):
 
 def variant(name, female, skin, hair_style, hair_color, favorite_color, base=AZAHAR):
     m = bytearray(bytes.fromhex(base))
+    m[0x0F] ^= (sum(name.encode()) & 0x7F) | 1   # the Mii ID's low byte: another Mii than this console's own
     info = m[0x18] | m[0x19] << 8
     info = (info & ~1 & ~(0xF << 10)) | (1 if female else 0) | (favorite_color & 0xF) << 10
     m[0x18], m[0x19] = info & 0xFF, info >> 8
@@ -48,6 +49,33 @@ HOSTS = [  # name, female, skin, hair style, hair colour, favourite colour
 ]
 
 
+DB_SIZE = 0xE4C0
+RECENT_AT, RECENT_SIZE = 0xC820, 0x1CA0
+
+
+def cfl_db(owner_hex=AZAHAR):
+    """CFL_DB.dat (shared extdata F000000B) as cfl-mii reads and writes it: "CFOG", the owner Mii's slot (0), 100
+    records of 92 bytes (MiiData; the owner's in slot 0, the rest empty), and the recently-seen section at 0xC820:
+    "CFRA", a count (0), 100 history bytes and 100 records of 72 bytes, with a CRC-16 at its end."""
+    db = bytearray(DB_SIZE)
+    db[0:4] = b'CFOG'
+    db[8:8 + 92] = bytes.fromhex(owner_hex)[:92]
+    region = bytearray(RECENT_SIZE)
+    region[0:4] = b'CFRA'
+    c = crc16(region)
+    region[-2], region[-1] = c >> 8, c & 0xFF
+    db[RECENT_AT:RECENT_AT + RECENT_SIZE] = region
+    return bytes(db)
+
+
+def recent_count(db):
+    """How many Miis the recently-seen section lists (0 if it is not valid)."""
+    region = db[RECENT_AT:RECENT_AT + RECENT_SIZE]
+    if len(region) != RECENT_SIZE or region[:4] != b'CFRA' or crc16(region) != 0:
+        return -1
+    return int.from_bytes(region[4:8], 'little')
+
+
 def hosts():
     return [(n, variant(n, *rest).hex()) for n, *rest in HOSTS]
 
@@ -56,7 +84,8 @@ def check():
     base = bytes.fromhex(AZAHAR)
     assert len(base) == 96 and crc16(base) == 0, 'the Azahar Mii must carry a valid CRC'
     for _, h in hosts():
-        assert crc16(bytes.fromhex(h)) == 0
+        assert crc16(bytes.fromhex(h)) == 0 and bytes.fromhex(h)[0x0C:0x16] != base[0x0C:0x16]
+    assert recent_count(cfl_db()) == 0
 
 
 if __name__ == '__main__':

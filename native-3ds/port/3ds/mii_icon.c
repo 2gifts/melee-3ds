@@ -41,6 +41,7 @@ static struct {
     uint8_t mii[96];
 } job;
 static unsigned clock_used, serial;
+static struct { int on; uint32_t key; uint16_t crc; } running;   /* the job being rendered (not queued, not cached yet) */
 static u64 list_seen_us;
 static int cfl_state;          /* 0 not loaded, 1 loaded, -1 CFL_Initialize failed (no heads this session) */
 
@@ -80,7 +81,8 @@ const uint32_t *mp_group_mii_icon(uint32_t key, uint16_t crc, const unsigned cha
         LightLock_Unlock(&lock);
         return out;                                  /* ready, or failed: the emblem */
     }
-    if (cfl_state >= 0 && !(job.pending && job.key == key && job.crc == crc)) {
+    if (cfl_state >= 0 && !(job.pending && job.key == key && job.crc == crc) &&
+        !(running.on && running.key == key && running.crc == crc)) {   /* already on its way */
         job.pending = 1;                             /* the latest asked wins */
         job.key = key;
         job.crc = crc;
@@ -147,6 +149,9 @@ int mp_mii_icon_frame(void)
     static uint8_t mii[96];
     memcpy(mii, job.mii, sizeof(mii));
     job.pending = 0;
+    running.on = 1;
+    running.key = key;
+    running.crc = crc;
     LightLock_Unlock(&lock);
 
     u64 t0 = now_us(), t1 = t0, t2 = t0, t3 = t0;
@@ -181,6 +186,7 @@ int mp_mii_icon_frame(void)
     Entry *e = slot_for(key, crc);
     e->state = ok ? READY : FAILED;
     if (ok) memcpy(e->px, px, sizeof(px));
+    running.on = 0;
     ++serial;
     LightLock_Unlock(&lock);
     snprintf(line, sizeof(line), "mii: icon for game %08lx crc %04x %s: model %llu ms, icon %llu ms, all %llu ms; free linear %lu KB, VRAM %lu KB\n",

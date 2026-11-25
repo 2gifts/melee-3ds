@@ -50,6 +50,11 @@ static HSD_Text* new_text(int canvas, float scale, u8 align)
     return t;
 }
 
+/* Group play's names over the damage displays (owner, 2026-11-25: bigger than Slippi's, which were too small to read):
+ * one size, and a name wider than its box is squeezed into it, as the names on the results screen and under the CSS
+ * doors are (SIS fitting at a fixed size, no per-string scale). Width in the HUD's units; tests may poke both. */
+float mp_hud_name_size = 0.054f, mp_hud_name_width = 9.0f;
+
 /* After the HUD's per-player setup (ifStatus_802F665C), once per match. */
 void mp_slippi_hud_init(void)
 {
@@ -99,7 +104,7 @@ void mp_slippi_hud_init(void)
             continue;
         }
         name[sizeof name - 1] = 0;
-        t = new_text(canvas, 0.06f, 1);
+        t = new_text(canvas, group > 0 ? mp_hud_name_size : 0.06f, 1);
         if (t == NULL) {
             continue;
         }
@@ -108,10 +113,12 @@ void mp_slippi_hud_init(void)
         t->x4C = 1;
         t->pos_x = hud->x + 0.8f;
         t->pos_y = 20.64f;
-        t->box_size_x = 150.0f;
+        t->box_size_x = group > 0 ? mp_hud_name_width / mp_hud_name_size : 150.0f;
         t->box_size_y = 150.0f;
         idx = HSD_SisLib_803A6B98(t, 0.0f, 0.0f, "%s", name);
-        HSD_SisLib_803A7548(t, idx, 0.54f, 0.54f);
+        if (group < 0) {
+            HSD_SisLib_803A7548(t, idx, 0.54f, 0.54f);   /* Slippi online: its names as they were */
+        }
     }
 }
 
