@@ -1,4 +1,4 @@
-"""The Group list's Mii heads and pages in Azahar (Phase 6, step 8): five PC hosts (tools/group/src/group_client.c) over
+"""The Group list's Mii heads and pages in Azahar: five PC hosts (tools/group/src/group_client.c) over
 the loopback link, started one after another so the list order is known:
 
     Dana    a Mii (tools/group/test_miis.py)          -> a head
@@ -13,7 +13,7 @@ lines), draw the emblem for the other two, turn the page by touch and render the
 the list is left. Each row's head is read from mp_group_row_head (1 head, 2 emblem, 0 no row); screenshots of both
 screens at each step (list-*-bottom.png). With MELEE_CFL_RES (docker/emu-test.sh) the heads have real faces.
 
-Two profiles (step 8d): by default the console has a Mii and a Mii Maker database (a generated CFL_DB.dat holding its
+Two profiles: by default the console has a Mii and a Mii Maker database (a generated CFL_DB.dat holding its
 own Mii, test_miis.cfl_db): its own head shows on the "HOST GAME" button, and cfl-mii adds each other console's Mii it
 draws to the database's recently-seen list (checked in the file afterwards: three, and nothing printed by cfl-mii).
 With --no-mii: test_mii_fail=1 and no database: no head on the button, the rows' heads as before.

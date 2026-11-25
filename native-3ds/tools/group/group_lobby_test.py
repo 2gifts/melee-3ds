@@ -217,7 +217,7 @@ def main():
         on_rules = lambda x, y: -15.0 < x < 13.0 and y > 23.0   # noqa: E731 (mncharsel.c: the Rules button's area)
         if not steer_cursor(on_rules, (0.0, 26.0)):
             print('the cursor did not reach the Rules button; at', css.cursor(0), flush=True)
-        # (the busy line also goes out when only the doors this console uses change, Phase 5: count from here)
+        # (the busy line also goes out when only the doors this console uses change: count from here)
         busy_mark = len(log_text())
         for _ in range(4):
             stub.press(KEY_A, 2, 20)

@@ -1,5 +1,5 @@
-"""A stage or fighter this console has not unlocked, chosen on another console, in Azahar (PLAN.md "Known bugs" 1,
-docs/local-wireless/LOCKED_STAGE_FIX.md, and the CPU puck dropped over a locked fighter).
+"""A stage or fighter this console has not unlocked, chosen on another console, in Azahar: the stage
+select's pick of a locked stage, and a CPU's puck held over a locked fighter.
 
 The emulated 3DS runs the fresh-save build (most stages locked); a PC console (tools/group/src/group_client.c,
 test_control) hosts with everything available. The emulated console joins (Melee -> Group -> the first game), the PC

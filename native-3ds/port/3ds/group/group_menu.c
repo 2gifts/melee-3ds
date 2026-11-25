@@ -421,7 +421,7 @@ unsigned group_serial(void)
     return h;
 }
 
-/* ---- HOME and sleep during a wireless session (Phase 5) ----
+/* ---- HOME and sleep during a wireless session ----
  * Pressing HOME suspends the game, and lockstep waits for that console: after 2 s the host makes it a CPU, or ends the
  * session if it is the host. Closing the lid sleeps the console with the same result. So while a session is open
  * (browsing the games nearby, the lobby, the stage select, a match, its results, watching one), HOME is refused and the

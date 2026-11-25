@@ -31,7 +31,7 @@ static const unsigned char block_template[0x138] = {
     0x3F, 0x80, 0x00, 0x00, 0x3F, 0x80, 0x00, 0x00, 0x3F, 0x80, 0x00, 0x00,
 };
 
-#define BLOB_ID 0x4D             /* 0x4D: each port's live fighter in the status, the busy reasons (Phase 6) */
+#define BLOB_ID 0x4D             /* 0x4D: each port's live fighter in the status, the busy reasons */
 #define BLOB_HEADER (18 + LOBBY_MELEE_RULES)
 #define SLOT_BYTES 15
 #define MAX_FIGHTER 0x19            /* external character ids 0..0x19 (Melee's 26 fighters) */

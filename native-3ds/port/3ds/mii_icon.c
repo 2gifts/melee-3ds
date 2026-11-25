@@ -1,4 +1,4 @@
-/* The Group list's Mii heads (Phase 6 step 8c): the bottom screen asks for a game host's icon
+/* The Group list's Mii heads: the bottom screen asks for a game host's icon
  * (mp_group_mii_icon, its thread), and the renderer renders it with cfl-mii at a frame boundary on the thread that
  * owns citro3d (mp_mii_icon_frame, from renderer_begin before its C3D_FrameBegin; cfl-mii runs its own frames).
  *
@@ -173,7 +173,7 @@ int mp_mii_icon_frame(void)
             t2 = now_us();
             C3D_Tex tex;
             CFLIconSetting setting = { CFL_ICON_BG_DIRECT, {0, 0, 0, 0}, NULL, NULL };
-            CFL_RebindShader();                      /* the icon pass binds no shader of its own (8a lesson) */
+            CFL_RebindShader();                      /* the icon pass binds no shader of its own */
             if (CFL_CommandMakeModelIcon(&model, CFL_EXPRESSION_NORMAL, ICON, &setting, &tex)) {
                 ok = read_back(&tex, px);
                 C3D_TexDelete(&tex);

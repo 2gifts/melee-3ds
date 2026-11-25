@@ -384,7 +384,7 @@ int main(void)
         CHECK(lobby_host_results_over(&r, NULL, NULL) && r.st.phase == LOBBY_CSS);
         CHECK(r.st.slot[1].kind == LOBBY_CPU && r.st.slot[2].kind == LOBBY_EMPTY && r.present == 0x5);
 
-        /* Phase 5: another console takes the port of a player who left during the match (a rejoin). It did not play:
+        /* Another console takes the port of a player who left during the match (a rejoin). It did not play:
          * its port counts as ready on the results screen and its presses there are not the player's. */
         lobby_host_init(&r, 0x3);
         CHECK(lobby_host_set_door(&r, 0, &p0) && door(&r, 1, 1, p1));
@@ -410,7 +410,7 @@ int main(void)
         CHECK(r.st.slot[1].kind == LOBBY_CPU);
     }
 
-    /* Phase 5, step 4: doors in use and edits from an older view. Consoles on ports 0..2; door 2 is a CPU. */
+    /* Doors in use and edits from an older view. Consoles on ports 0..2; door 2 is a CPU. */
     {
         lobby_host u;
         lobby_state x;
@@ -461,7 +461,7 @@ int main(void)
         CHECK(lobby_host_command(&u, 2, old, 2) && u.st.in_use == 0);
     }
 
-    /* Phase 6, step 5: the match status carries each port's live fighter (Zelda <-> Sheik), and the blob still fits */
+    /* The match status carries each port's live fighter (Zelda <-> Sheik), and the blob still fits */
     {
         lobby_host u;
         lobby_state x;
@@ -490,7 +490,7 @@ int main(void)
         CHECK(lobby_decode(&x, b, n) == -1);
     }
 
-    /* Phase 6, step 7: why a console is busy */
+    /* Why a console is busy */
     {
         lobby_host u;
         lobby_state x;
@@ -512,7 +512,7 @@ int main(void)
         CHECK(lobby_host_command(&u, 2, old, 2) && u.st.busy_why[2] == LOBBY_BUSY_SLIDER);
     }
 
-    /* Phase 6, known bug 2: a console that leaves the running match keeps its name in the lobby (gone), and one that
+    /* A console that leaves the running match keeps its name in the lobby (gone), and one that
      * takes its port meanwhile did not play */
     {
         lobby_host u;
@@ -547,7 +547,7 @@ int main(void)
         CHECK(u.st.gone == 0 && !u.st.gone_name[1][0]);                                  /* the lobby reopened */
     }
 
-    /* Phase 6, step 8b: the beacon, with and without the host's Mii */
+    /* The beacon, with and without the host's Mii */
     {
         lobby_host u;
         lobby_beacon bb;

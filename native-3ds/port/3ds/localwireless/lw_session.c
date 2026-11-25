@@ -32,7 +32,7 @@
 
 enum { MSG_PAD = 0x10, MSG_PAD_ACK = 0x11, MSG_BUNDLE = 0x13, MSG_BUNDLE_ACK = 0x14, MSG_START = 0x15, MSG_KEEPALIVE = 0x16,
        MSG_LOBBY = 0x18, MSG_LOBBY_ACK = 0x19, MSG_CMD = 0x1A, MSG_CMD_ACK = 0x1B, MSG_MENU = 0x1C, MSG_MENU_ALL = 0x1D,
-       MSG_LOBBY2 = 0x1E };   /* MSG_LOBBY with 32-byte names (Phase 6); MSG_LOBBY (12-byte names) is no longer sent */
+       MSG_LOBBY2 = 0x1E };   /* MSG_LOBBY with 32-byte names; MSG_LOBBY (12-byte names) is no longer sent */
 
 #define RING 512                 /* frames kept per player / bundles (power of two) */
 #define LOCAL_RING 256

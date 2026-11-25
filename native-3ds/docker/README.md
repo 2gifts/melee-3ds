@@ -90,7 +90,7 @@ docker/emu-test.sh run tools/group/group_names_test.py           # three emulate
 docker/emu-test.sh run tools/group/group_mii_test.py              # five PC hosts: Mii heads, the emblem, pages of games
 ```
 
-Names and the bottom screen's group pages (Phase 6), no emulator:
+Names and the bottom screen's group pages, no emulator:
 
 ```sh
 python3 tools/test_name_text.py                  # the name converter and its generated glyph table (host C compiler)

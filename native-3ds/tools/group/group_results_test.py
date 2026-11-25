@@ -524,7 +524,7 @@ def main():
         take_ok = a.css.doors()[0]['p_kind'] == 0
         check('A\'s door is still its own after the Back presses', take_ok, str(a.css.doors()[0]))
         check('Back asks "End the session?" once more', ask_to_leave())
-        # Phase 5: HOME and sleep were off on the host from Host on, through both matches and their results
+        # HOME and sleep were off on the host from Host on, through both matches and their results
         check('A: HOME and sleep off through the matches and results (one off, no on)',
               a.log().count('group: HOME and sleep off') == 1 and 'group: HOME and sleep on' not in a.log())
         a.touch(*DIALOG_YES)

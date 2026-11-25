@@ -1,4 +1,4 @@
-"""Doors in use (Phase 5, step 4): as on one GameCube, a door whose slider, name tag list, name entry or held token is in
+"""Doors in use: as on one GameCube, a door whose slider, name tag list, name entry or held token is in
 use on one console cannot be switched between Human, CPU and closed from another, and the switch works again once it
 is let go.
 
@@ -12,7 +12,7 @@ then reports the door in use as it would for a real hold. Checked:
   3. the joiner's name tag list open on its own door: the host cannot close that door until the list is shut;
   4. the other way round: the host marks door 3 in use (its busy command with a door mask), and the joiner's own click
      on door 3's Human / CPU / closed switch does nothing; once the host lets go, the same click switches it.
-Phase 6: the strip says why a console is busy (mp_group_strip_text, each row's status as drawn): the joiner's own row
+Busy reasons: the strip says why a console is busy (mp_group_strip_text, each row's status as drawn): the joiner's own row
 reads "CHOOSING A NAME TAG" while its list is open; the host's row "CHOOSING A NAME TAG", "SETTING THE RULES" and
 "ENTERING A NAME" as the PC host sends those reasons. And this console's name comes from its Mii (no name= in its
 group.ini): Azahar's FRD answers with the emulated console's user name.
@@ -316,7 +316,7 @@ def main():
             time.sleep(0.25)
         check('the host done: its row shows its state again', strip_text(0) not in ('CHOOSING A NAME TAG', 'SETTING THE RULES',
               'ENTERING A NAME'), repr(strip_text(0)))
-        # Phase 6, step 4: no name= here, so the Mii name (Azahar: the emulated user name)
+        # no name= here, so the Mii name (Azahar: the emulated user name)
         named = [l for l in log_text().splitlines() if 'group: name from ' in l]
         check('this console\'s name comes from its Mii', bool(named) and 'name from Mii' in named[0], str(named[:1]))
         host('quit')

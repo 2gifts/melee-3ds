@@ -5,7 +5,7 @@ the Host / Join page. The emulated 3DS joins that game from the list while the m
 must: land on the lobby's character select, show the bottom-screen "Match in progress" page (screenshots), not take
 part in the match, keep its CSS read-only (A, B, Start and the stick send nothing) with no READY although the host's
 door and its CPU have fighters, see the lobby come back when the match ends (the host's door mirrored, READY back), and
-leave with Back. Phase 6: the host plays Zelda and transforms halfway (its match status says Sheik from then on,
+leave with Back. Zelda and Sheik: the host plays Zelda and transforms halfway (its match status says Sheik from then on,
 test_zelda=1): the Match in progress page's badge for the host shows Zelda's stock icon, then Sheik's within a few
 seconds (mp_group_badge_drawn: the fighter each badge last drew, + 1).
 
@@ -135,13 +135,13 @@ def main():
         stub.until_frames(240)
         capture('03-match-in-progress-later')
         check('this console takes no part in the running match', 'group: match block' not in log_text())
-        # known bug 2: the late joiner's own name never shows on the overview (it is not in the match); a CPU's row says
+        # the late joiner's own name never shows on the overview (it is not in the match); a CPU's row says
         # CPU and the host's row its name
         import re as _re
         me = int((_re.findall(r'group: in the lobby on port (\d)', log_text()) or ['0'])[-1]) - 1
         mine = (_re.findall(r'group: name from \w+ "([^"]*)"', log_text()) or [''])[-1]
         shown = [stub.peek('mp_group_watch_name', 128)[32 * i:32 * i + 32].split(b'\0')[0].decode('utf-8', 'replace') for i in range(4)]
-        check('the overview never shows the late joiner\'s own name (known bug 2)', me >= 1 and mine and mine not in shown,
+        check('the overview never shows the late joiner\'s own name', me >= 1 and mine and mine not in shown,
               f'port {me + 1}, name {mine!r}, rows {shown}')
         check('the CPU on the late joiner\'s own port says CPU; the host\'s row has its name',
               shown[me] == 'CPU' and shown[0] not in ('', 'CPU'), str(shown))

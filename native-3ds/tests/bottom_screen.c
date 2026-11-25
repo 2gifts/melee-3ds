@@ -11,7 +11,7 @@ static void save(const char* name,const MPBottomState* state,int fps,int guide){
     char path[200];snprintf(path,sizeof(path),"build/bottom-host-%s.rgb565",name);
     FILE* f=fopen(path,"wb");assert(f);assert(fwrite(image.pixels,1,sizeof(image.pixels),f)==sizeof(image.pixels));fclose(f);
 }
-/* Phase 6: the group pages with names in kana and accented letters, stock icon badges in every state, the emblem, the
+/* The group pages with names in kana and accented letters, stock icon badges in every state, the emblem, the
  * busy reasons, the waiting room's stocks, and Zelda / Sheik following the host's live status. */
 #define KANA10 "\xE3\x82\x86\xE3\x81\x86\xE3\x81\x8D\xE3\x82\x86\xE3\x81\x86\xE3\x81\x8D\xE3\x82\x86\xE3\x81\x86\xE3\x81\x8D\xE3\x82\x86"
 static lobby_slot door(int kind,int fighter,int color,int chosen){lobby_slot d;memset(&d,0,sizeof d);d.kind=(uint8_t)kind;d.fighter=(uint8_t)fighter;d.color=(uint8_t)color;d.chosen=(uint8_t)chosen;d.level=3;return d;}
@@ -86,12 +86,12 @@ static void group_pages(void){
     g->rules.time_mode=1;save("group-watch-time",&s,0,0);
     g->phase=LOBBY_RESULTS;save("group-watch-results",&s,0,0);g->phase=LOBBY_MATCH;   /* no timer on the results */
     /* Teams: each badge and human accent in its team's colour (port 2 on red, 3 on green); the late joiner on port 4,
-     * where a CPU plays, does not lend the CPU its name (bug 2: the row says CPU) */
+     * where a CPU plays, does not lend the CPU its name (the row says CPU) */
     g->rules.time_mode=0;g->rules.teams=1;g->port[0].door.team=1;g->port[1].door.team=0;g->port[2].door.team=2;g->port[3].door.team=0;
     g->port[3].present=1;snprintf(g->port[3].name,sizeof g->port[3].name,"%s","Joiner");g->port[3].player[0]=0;g->me=3;
     save("group-watch-teams",&s,0,0);
     g->rules.teams=0;g->me=1;g->port[3].present=0;
-    /* the HOME notice (Phase 5) over the strip */
+    /* the HOME notice over the strip */
     g->watching=0;g->phase=LOBBY_CSS;bottom_stub_home_note=1;save("group-home-note",&s,0,0);bottom_stub_home_note=0;
     bottom_stub_strip_on=0;
 }

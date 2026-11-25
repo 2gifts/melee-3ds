@@ -4,11 +4,11 @@ Boots with group.ini menu=1 and the loopback link (udp=1), then: main menu -> VS
 Back (B), Melee again -> Group (the Group page), Host (the lobby CSS in the HANYU scene, with the connected-players strip),
 B out of the CSS (back on the VS menu, the session closed), and finally Melee -> Solo (the vanilla CSS).
 Every step saves both screens as PNGs and the log lines are checked.
-Phase 5 (bottom-screen page only): the first Group press runs with test_wireless_off=1 in group.ini and must show
+Wireless off (bottom-screen page only): the first Group press runs with test_wireless_off=1 in group.ini and must show
 "Please enable wireless and try again" and stay on Solo / Group; the key is then removed and Group opens the list.
 HOME and sleep are off from the Group list on ("group: HOME and sleep off"), a refused HOME press (poked through the
 GDB stub) shows the bottom-screen notice for 2 s, and they are on again once the lobby is left; Solo never turns them off.
-Phase 6 (the name): the first Group press also has test_screen_name_fail=1 (the Mii name fails: the system name is
+The name: the first Group press also has test_screen_name_fail=1 (the Mii name fails: the system name is
 used), the retry test_screen_name=MiiName (the Mii name wins; the strip shows it, screenshot lobby-css).
 
     docker/emu-test.sh run tools/group/group_menu_test.py [--seconds 600]

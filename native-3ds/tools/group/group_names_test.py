@@ -6,7 +6,7 @@ Fox), and starts the match; the CPU's window keeps vanilla's "FOX", for comparis
 C's fighter a CPU. A quits from the pause menu (a cancelled match), and on the results screen of A and B the windows
 show Anna, "Zoe Angstr" (folded, 10 characters) and WWWWWWWWWW instead of FOX: C keeps its name although its fighter ended as a CPU (screenshots).
 Then B's emulator is stopped on the results screen: A's labels do not change. A PC console, Dee, named with ten kana
-(ゆうきゆうきゆうきゆ, Phase 6: kana in the game's font) joins during the
+(ゆうきゆうきゆうきゆ: kana in the game's font) joins during the
 results and takes a free port in the roster (B's or C's): A's labels still do not change. A presses through; back on
 the character select. Match 2 (A, Dee, and the CPU C's door became; the PC console cannot reproduce the game's
 checksums, so it ends early on a desync): A's results show Anna and Dee's ten kana, and the CPU's window its fighter's name.
