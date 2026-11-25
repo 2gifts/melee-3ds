@@ -33,20 +33,20 @@ Group play is part of both regular builds (everything unlocked and fresh save), 
 
 ## Host a game
 
-1. Choose **VS Mode → Melee**.
-2. On the bottom screen, tap **Group**. The console starts looking for games nearby.
-3. Tap **HOST GAME**.
+1. Choose **VS Mode → Melee → Group**. The top screen says **Choose a game.** and the console starts looking for
+   games nearby (press **B** there to go back).
+2. On the bottom screen, tap **HOST GAME**.
 
 Your console opens the lobby (the character select screen) and other consoles can now find your game.
 
 ## Join a game
 
-1. Choose **VS Mode → Melee**, then tap **Group** on the bottom screen.
+1. Choose **VS Mode → Melee → Group**.
 2. The **Available Games** list shows the games nearby: the host's name and Mii, and a stock icon for each fighter
    already in the lobby. When more games are found than fit, use the arrows beside the page number.
 3. Tap a game to join it.
 
-You land in the host's lobby. To play on your own instead, tap **Solo** on the first page, or press **B** to go back.
+You land in the host's lobby. To play on your own instead, press **B** to go back and choose **Solo**.
 
 ## The lobby
 
@@ -104,13 +104,17 @@ timer, and each player's stocks and damage. You join the lobby when the match en
 
 ## Leaving
 
-- **Press B on the character select screen** to leave the lobby. If you are the host and other players are there, you
-  are asked to confirm first.
+- **Hold B on the character select screen** to leave the lobby. You are back on **Choose a game.** with the list of
+  games open (Back from Solo's character select returns to the Solo / Group menu, with Solo highlighted). If you are
+  the host and other players are there, a message asks **End the session?** first: choose **Yes** or **No** (No is
+  highlighted; B is No). While it is up, nobody can start a match, and the other consoles show you as **ANSWERING A
+  PROMPT**.
 - If your save has earned a hidden fighter, **"A new challenger approaches!"** starts when you leave the lobby (or when
   the session ends), as it would after a Versus match on one console. Beat the challenger to unlock it.
-- **When the host leaves, the session ends for everyone.** The other consoles go back to the Group page, which says why
-  the session ended (the host left, stopped responding, and so on).
-- If a console loses the connection, it goes back to the Group page with the reason.
+- **When the host leaves, the session ends for everyone.** The other consoles go back to **Choose a game.**, where a
+  message says why the session ended (the host left, stopped responding, and so on). The list of games is already
+  open underneath: press **A** to close the message, or tap a game to join it straight away.
+- If a console loses the connection, it shows the reason the same way.
 
 ## Your save
 
@@ -151,7 +155,7 @@ Group matches count on your save as Versus matches on one console do:
 
 | Problem | What to do |
 |---|---|
-| "Please enable wireless and try again" | Turn on wireless communication (the switch, or the HOME Menu settings), then tap Group again |
+| "Please enable wireless and try again" | Turn on wireless communication (the switch, or the HOME Menu settings), then choose Group again |
 | The host's game doesn't appear | Make sure the host tapped HOST GAME and is on the character select screen; move closer; check both consoles run the same version |
 | A game says FULL | Four consoles are already in it. Wait for someone to leave, or host your own game |
 | The session ends during play | The host left or lost the connection. Move closer and host again |

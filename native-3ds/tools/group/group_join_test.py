@@ -10,6 +10,8 @@ joins, then does what this test appends to its control file. Checked on the emul
     joiner does not send its own saved handicap over the CPU's), the closed doors do not play their closing animation
     again, and back to Off the level slider is right again;
   * Back leaves; a rejoin over a door the host made a CPU keeps that CPU (the old door is never sent back).
+  * the host quits: back on "Choose a game." a top-screen dialog says why (one button, OK), the Group list open under
+    it at once; OK closes the dialog.
 Screenshots of each step.
 
     docker/emu-test.sh run tools/group/group_join_test.py
@@ -28,7 +30,7 @@ sys.path.insert(0, str(HERE.parent / 'slippi'))
 sys.path.insert(0, str(HERE.parent))
 import emu  # noqa: E402
 from css_probe import CLOSED, CPU, Css, knob_x  # noqa: E402
-from group_menu_test import to_main_menu, KEY_A, KEY_B, MENU_VS, PORT, Stub, save_bottom, save_top  # noqa: E402
+from group_menu_test import to_main_menu, KEY_A, KEY_B, MENU_VS, PORT, SCENE_CHOOSE, Stub, save_bottom, save_top  # noqa: E402
 
 KEY_UP = 0x40
 TOOLS = Path(os.environ.get('MELEE_GROUP_TOOLS_DIR') or emu.ROOT / 'build/group-tools')
@@ -150,18 +152,30 @@ def main():
                     seen.append((i, d['dooranim_timer'], d['p_kind']))
         return seen
 
-    def to_group_page():
-        s = stub.goto_vs_menu()
-        check('reached the VS menu', s['scene'] == 1 and stub.menu()[0] == MENU_VS, str(stub.menu()))
-        for _ in range(8):
-            if stub.menu()[1] == 0:
-                break
-            stub.press(KEY_UP)
-        n = log_text().count('group: the Solo/Group page is up')
-        stub.press(KEY_A)
-        wait_text(log_text, 'group: the Solo/Group page is up', 'the Solo/Group page opens', 60, n + 1)
+    def to_group_page(lists=None):
+        stub.until_frames(30)
+        end = time.monotonic() + 120
+        while time.monotonic() < end and stub.state()['scene'] not in (1, SCENE_CHOOSE):
+            time.sleep(0.5)
+        if lists is not None and stub.state()['scene'] == SCENE_CHOOSE:
+            wait_text(log_text, 'group: Group, looking for games',
+                      'back from the lobby: on "Choose a game." with the Group list open again', 60, lists + 1)
+            return
+        if stub.menu()[0] == 11:
+            check('back from the lobby: on the Solo / Group submenu, Group hovered', stub.menu() == (11, 1),
+                  str(stub.menu()))
+        else:
+            s = stub.goto_vs_menu()
+            check('reached the VS menu', s['scene'] == 1 and stub.menu()[0] == MENU_VS, str(stub.menu()))
+            for _ in range(8):
+                if stub.menu()[1] == 0:
+                    break
+                stub.press(KEY_UP)
+            n = log_text().count('group: the Solo/Group page is up')
+            stub.press(KEY_A)
+            wait_text(log_text, 'group: the Solo/Group page is up', 'the Solo/Group page opens', 60, n + 1)
         n = log_text().count('group: Group, looking for games')
-        touch(238, 104)                  # GROUP
+        stub.choose()                  # GROUP
         wait_text(log_text, 'group: Group, looking for games', 'Group opens the Host / Join page', 60, n + 1)
 
     def join(what):
@@ -254,7 +268,8 @@ def main():
         sends = [l for l in log_text()[hc_mark:].splitlines() if f'GROUPCSS send door {CPU_PORT}' in l]
         check('the handicap mode changes send no CPU door from the joiner', not sends, '; '.join(sends)[:300])
 
-        # Back leaves; the host makes this console's door a CPU; a rejoin keeps that CPU.
+        # Back leaves (to "Choose a game.", the list open); the host makes this console's door a CPU; a rejoin keeps it.
+        lists = log_text().count('group: Group, looking for games')
         stub.press(KEY_B, 2, 4)
         stub.poke('mp_test_keys', KEY_B)
         start, end = stub.frames(), time.monotonic() + 120
@@ -266,7 +281,7 @@ def main():
         while time.monotonic() < end and lobby()['present'] >> me & 1:
             time.sleep(1)
         host(f'door {me} 1 5 5 1 0')   # what leaving does to a Human door, done by hand: this door was closed
-        to_group_page()
+        to_group_page(lists)
         mark = len(log_text())
         join('rejoined the PC host\'s lobby')
         lob = lobby()
@@ -282,7 +297,34 @@ def main():
                   f'port {me2}, CSS {doors[me2] if me2 >= 0 else None}, lobby {lob}')
         check('the rejoin sends no door of its own', f'GROUPCSS send door {me2}' not in log_text()[mark:],
               '; '.join(l for l in log_text()[mark:].splitlines() if 'send door' in l)[:300])
+        # The host goes away: back on "Choose a game." (the VS menu without the menu art) a dialog says why, the Group
+        # list open under it at once (with the submenu); OK closes the dialog.
+        mark = len(log_text())
+        n = log_text().count('group: Group, looking for games')
         host('quit')
+        ok = wait_text(lambda: log_text()[mark:], 'group: dialog "The host', 'the host leaving: a dialog says why', 120)
+        stub.until_frames(40)
+        capture('07-host-left-dialog')
+        top = 'group: menu art filled' in log_text()
+        s = stub.state()
+        check('the notice is over ' + ('"Choose a game."' if top else 'the VS menu'),
+              s['scene'] == SCENE_CHOOSE if top else stub.menu() == (MENU_VS, 0), f'{s}, menu {stub.menu()}')
+        note = [l for l in log_text()[mark:].splitlines() if 'group: dialog "' in l]
+        check('the notice has one button (OK)', bool(note) and note[0].endswith('[OK]'), str(note[:1]))
+        if top:
+            wait_text(log_text, 'group: Group, looking for games', 'the Group list is open under the notice', 60, n + 1)
+        else:
+            check('the Host / Join page waits for the notice', log_text().count('group: Group, looking for games') == n)
+        if ok:
+            stub.press(KEY_A, 2, 30)
+            if not top:
+                wait_text(log_text, 'group: Group, looking for games', 'OK: the Host / Join page opens again', 60, n + 1)
+            stub.until_frames(40)
+            capture('08-after-ok')
+            s = stub.state()
+            check('OK: still on ' + ('"Choose a game.", the list open' if top else 'the VS menu'),
+                  (s['scene'] == SCENE_CHOOSE and log_text().count('group: Group, looking for games') == n + 1) if top
+                  else stub.menu() == (MENU_VS, 0), f'{s}, menu {stub.menu()}')
     finally:
         if pc_proc is not None and pc_proc.poll() is None:
             time.sleep(2)

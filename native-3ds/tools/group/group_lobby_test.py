@@ -175,7 +175,7 @@ def main():
         stub.press(KEY_A)                # Melee: the Solo/Group page
         wait_log('group: the Solo/Group page is up', 'the Solo/Group page opens', 60)
         stub.until_frames(10)
-        touch(238, 104)                  # GROUP
+        stub.choose()                  # GROUP
         wait_log('group: Group, looking for games', 'Group opens the Host / Join page', 60)
         touch(118, 50)                   # HOST
         s = wait(lambda s: s['scene'] == 8, 'host enters the lobby CSS', 120)

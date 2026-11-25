@@ -55,7 +55,9 @@ static int mp_css_doors_now;     /* the doors this console is using (a slider, a
 static int mp_css_doors_sent;    /* ... as last told to the host */
 static int mp_css_naming = -1;   /* the door whose name entry this console opened, until the CSS is back */
 static int mp_css_ruling;        /* this console opened the rules menu, until the CSS is back */
-static int mp_css_why_sent;      /* the busy reason last sent (LOBBY_BUSY_*: 1 slider, 2 name tags, 3 rules, 4 name entry) */
+static int mp_css_why_sent;      /* the busy reason last sent (LOBBY_BUSY_*: 1 slider, 2 name tags, 3 rules, 4 name entry,
+                                 * 6 a dialog) */
+static HSD_PadStatus mp_css_no_pad;   /* what the CSS reads while a top-screen dialog is up: nothing pressed */
 #define MP_CSS_DOOR 15     /* a door as the lobby holds it: kind, fighter, costume, team, level, chosen, tag[8], handicap */
 static u8 mp_css_last_view[4][MP_CSS_DOOR], mp_css_last_view_ok[4];
 static u8 mp_css_applied[4][MP_CSS_DOOR], mp_css_applied_ok;
@@ -172,6 +174,9 @@ HSD_PadStatus* mp_css_pad(int port)
     if (!mp_css_group()) {
         return &HSD_PadCopyStatus[port];
     }
+    if (mp_group_dialog_up()) {
+        return &mp_css_no_pad;   /* the dialog reads pad 0 itself; the CSS sees no buttons and the stick at rest */
+    }
     my = mp_css_my();
     if (port == my) {
         return &HSD_PadCopyStatus[0];
@@ -239,9 +244,13 @@ u32 mp_css_trigger(int hand, f32 x, f32 y, u32 trigger)
 }
 
 /* READY waits while another console is busy (a name tag list, name entry, the rules page, a slider in hand; vanilla
- * waits for this console's own tag list), and never shows while watching a match: Start does nothing there. */
+ * waits for this console's own tag list), and never shows while watching a match or under a dialog ("End the
+ * session?"): Start does nothing there. */
 int mp_css_hide_ready(void)
 {
+    if (mp_css_group() && mp_group_dialog_up()) {
+        return 1;
+    }
     return mp_css_group() && mp_lob_ok && ((mp_lob.busy & 0xF & ~(1u << mp_css_my())) != 0 || mp_lob.watching);
 }
 
@@ -289,6 +298,10 @@ static void mp_css_busy_frame(void)
         /* 3 rules or 4 name entry, as seen when asked for; kept while it is up (byte 5) */
         why = mp_css_naming >= 0 ? 4 : mp_css_ruling ? 3 : mp_css_busy_now ? 1 : 0;
     }
+    if (mp_group_dialog_up()) {
+        mp_css_busy_now = 1;   /* "End the session?" is up: busy like the rules page (READY waits, Start is refused) */
+        why = 6;
+    }
     if (mp_css_naming >= 0) {
         doors |= 1 << mp_css_naming;                  /* the door is in use while its name entry lasts */
     }
@@ -310,7 +323,7 @@ static void mp_css_busy_frame(void)
     }
     if (resend) {
         idle_resend = 0;
-        OSReport("GROUPCSS busy %d why %d doors %x (1 slider, 2 name tag list, 3 rules, 4 name entry; doors in use)\n",
+        OSReport("GROUPCSS busy %d why %d doors %x (1 slider, 2 name tag list, 3 rules, 4 name entry, 6 dialog; doors in use)\n",
                  mp_css_busy_now, why, doors);
         mp_platform_group_lobby_busy(why | doors << 4);
         mp_css_doors_sent = doors;
@@ -936,6 +949,8 @@ void mp_css_group_reset(void)
     mp_lob_ok = mp_css_group() && mp_platform_group_lobby_get(&mp_lob);
     mp_css_go = 0;
     mp_css_leave_asked = 0;
+    mp_group_dialog_scene();
+    memset(&mp_css_no_pad, 0, sizeof mp_css_no_pad);
     mp_css_seen_css = 0;
     mp_css_start_wait = 0;
     mp_css_doors_now = 0;
@@ -950,6 +965,12 @@ int mp_css_back_intercept(void)
         return 0;
     }
     mp_css_leave_asked = 1;
+    if (!mp_group_dialog_up() &&
+        !mp_group_dialog_open("End the session?", "Yes", "No", 1))   /* No highlighted first */
+    {
+        OSReport("GROUPCSS no dialog for \"End the session?\": staying\n");
+        mp_platform_group_confirm_answer(0);   /* no box: the safe answer is to keep the session */
+    }
     return 1;
 }
 
@@ -987,7 +1008,8 @@ void mp_css_group_frame(void)
         mp_css_text_frame();
     }
     if (mnCharSel_804D6CF6 == 0 && mp_platform_group_lost()) {
-        mnCharSel_804D6CF6 = 2;   /* the session ended: back out (the VS menu reopens the Host / Join page) */
+        mp_group_dialog_close();
+        mnCharSel_804D6CF6 = 2;   /* the session ended: back out (to "Choose a game.", which says why) */
         return;
     }
     /* The join / leave toast stays on the bottom screen (the strip); mp_css_toast_frame is the top-screen version, which
@@ -1001,7 +1023,12 @@ void mp_css_group_frame(void)
         mp_css_door_text_gone();
     }
     if (mp_css_leave_asked && mnCharSel_804D6CF6 == 0) {
-        int a = mp_platform_group_confirm_state();
+        int a, d = mp_group_dialog_poll();
+        if (d > 0) {
+            OSReport("GROUPCSS \"End the session?\": %s\n", d == 1 ? "Yes" : "No");
+            mp_platform_group_confirm_answer(d == 1);
+        }
+        a = mp_platform_group_confirm_state();
         if (a == 1) {
             mp_css_leave_asked = 0;
             mnCharSel_804D6CF6 = 2;   /* the answer was yes: leave for real (confirm_leave now says 1) */

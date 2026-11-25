@@ -176,7 +176,7 @@ def main():
         if args.burst:
             (sd / 'burst').mkdir(exist_ok=True)
             stub.poke('mp_test_burst', args.burst)
-        touch(238, 104)                         # GROUP
+        stub.choose()                         # GROUP
         ok = wait_log(r'group: 5 games listed', 1, 120)
         check('the five PC hosts are listed', ok)
         # the list's order (the order the hosts were found in) and which carried a Mii, as the game logged it

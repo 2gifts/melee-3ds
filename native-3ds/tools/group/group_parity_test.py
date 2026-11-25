@@ -11,7 +11,7 @@ Fox.
            are back on the character select.
   Start 2  Turns: now port 2 (B) picks, and A's stage select follows; then B vanishes: the pick passes to port 1 (A),
            whose stage select takes it ("port 1 picks the stage now") and goes back to the character select with B.
-  leaving  A leaves the lobby (Back, "End it"): its save has earned a fighter, so "A new challenger approaches" starts
+  leaving  A leaves the lobby (Back, "Yes"): its save has earned a fighter, so "A new challenger approaches" starts
            (the GM_CHALLENGER_APPROACH mode) instead of the menus.
 
     docker/emu-test.sh run tools/group/group_parity_test.py [--show]
@@ -30,7 +30,7 @@ sys.path.insert(0, str(HERE.parent / 'slippi'))
 sys.path.insert(0, str(HERE.parent))
 import emu  # noqa: E402
 from group_menu_test import CPAD_RIGHT, CPAD_UP, KEY_A, KEY_B, KEY_START, KEY_UP, MENU_VS, to_main_menu  # noqa: E402
-from group_results_test import CPAD_DOWN, CPAD_LEFT, FOX_TILE, RULES, Console, DIALOG_YES  # noqa: E402
+from group_results_test import CPAD_DOWN, CPAD_LEFT, FOX_TILE, RULES, Console, end_session_if_asked  # noqa: E402
 
 LINK_PORT = 44170
 FIGHTERS, FIGHTERS_LEN = 0x1868 + 0x6C4, 0x1760 - 0x6C4   # gmm_x0.thing (at 0x1868 in this build, not the 0x1898 types.h says) + 0x6C4: every fighter's VS Records
@@ -112,7 +112,7 @@ def main():
         c.stub.press(KEY_A)
         wait_log(c, 'group: the Solo/Group page is up', f'{c.name}: the Solo/Group page opens', 60, n + 1)
         n = c.log().count('group: Group, looking for games')
-        c.touch(238, 104)
+        c.stub.choose()
         wait_log(c, 'group: Group, looking for games', f'{c.name}: Group opens the Host / Join page', 60, n + 1)
 
     def token(c, door):
@@ -257,7 +257,7 @@ def main():
         a.stub.until_frames(60)
         a.stub.poke('mp_test_keys', 0)
         a.stub.until_frames(30)
-        a.touch(*DIALOG_YES)                                 # "End the session?" -> END IT (if asked)
+        end_session_if_asked(a)                              # "End the session?" -> Yes (if asked)
         wait_log(a, 'Group: a new challenger approaches', 'A leaves: "A new challenger approaches" (its earned fighter)', 120)
         a.stub.until_frames(240)
         a.capture('07-challenger')

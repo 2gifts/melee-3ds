@@ -116,7 +116,7 @@ def main():
         c.stub.press(KEY_A)
         wait_log(c, 'group: the Solo/Group page is up', f'{c.name}: the Solo/Group page opens', 60, n + 1)
         n = c.log().count('group: Group, looking for games')
-        c.touch(238, 104)                # GROUP
+        c.stub.choose()                # GROUP
         wait_log(c, 'group: Group, looking for games', f'{c.name}: Group opens the Host / Join page', 60, n + 1)
 
     def join(c, what):

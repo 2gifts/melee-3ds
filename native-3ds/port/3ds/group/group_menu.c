@@ -40,6 +40,7 @@ int group_menu(void)
 
 const GroupView *group_view(void) { return &view; }
 int group_waiting(void) { return view.page != GROUP_PAGE_NONE; }
+int group_listing(void) { return view.page == GROUP_PAGE_LIST; }
 int group_active(void) { return session; }
 
 int group_returning(void)
@@ -187,7 +188,7 @@ int group_poll(int back)
         set_error("");
         sp_log("group: Group, looking for games");
         if (open_session(0) == 0) {
-            if (lost_note[0]) { set_error(lost_note); lost_note[0] = 0; }
+            if (lost_note[0]) { set_error(lost_note); lost_note[0] = 0; }   /* only if the engine did not show it */
             view.page = GROUP_PAGE_LIST;
             view.count = 0;
             view.list_page = 0;
@@ -302,6 +303,14 @@ int group_lost(void)
     const char *why = group_net_error();   /* the specific reason: the host left, stopped responding, ... */
     snprintf(lost_note, sizeof(lost_note), "%s", why[0] ? why : st == 5 ? "The session ended" : "The connection was lost");
     sp_log("group: %s", lost_note);
+    return 1;
+}
+
+int group_lost_note(char *out, int len)
+{
+    if (!lost_note[0]) return 0;
+    snprintf(out, (size_t)len, "%s", lost_note);
+    lost_note[0] = 0;
     return 1;
 }
 

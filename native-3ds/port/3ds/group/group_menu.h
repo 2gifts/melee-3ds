@@ -30,24 +30,27 @@ typedef struct {
 int group_enabled(void);
 /* Engine (through the bridge, group_bridge.h). */
 int group_open(void);                        /* Melee was chosen: 1 = the Solo/Group page is up (wait), 0 = vanilla */
-int group_menu(void);                        /* 1: choose on the top-screen submenu (group.ini top_menu=1; needs its artwork) */
+int group_menu(void);                        /* 1: choose on the top-screen submenu (group.ini top_menu, on by default; the
+                                              * engine also needs the menu art, else the bottom-screen page) */
 int group_pick(int group);                   /* the top-screen menu's choice: 0 Solo, 1 Group */
 int group_waiting(void);                     /* 1 while the page is up */
+int group_listing(void);                     /* 1 while the Group list (Host / Join) is up */
 int group_poll(int back);                    /* once per frame while waiting; back = B pressed. 0 waiting, 1 Solo, 2 Group lobby, -1 cancelled */
 int group_active(void);                      /* 1 while a group session opened from the menu is up (the CSS scene is the lobby) */
 void group_leave(void);                      /* backed out of the lobby CSS: close the session */
 int group_returning(void);                   /* 1 once after leaving: the menu shows the VS menu (reads and clears) */
-/* Back on the lobby CSS: 1 = leave now. A host with other consoles here is asked first ("End the session?", drawn on the
- * bottom screen): 0 while the dialog is up, and the answer comes from group_confirm_state. */
+/* Back on the lobby CSS: 1 = leave now. A host with other consoles here is asked first ("End the session?", a dialog
+ * on the top screen, group_dialog.c): 0 while it is up, and the answer comes from group_confirm_state. */
 int group_confirm_leave(void);
 int group_confirm_state(void);               /* 0 waiting, 1 yes (then confirm_leave returns 1), 2 no */
 int group_lost(void);                        /* 1 once the session ended under us (the host left, or the link failed) */
+int group_lost_note(char *out, int len);     /* VS menu: 1 once, with why it ended (the engine shows it in a dialog) */
 int group_fresh(void);                       /* 1 once on the VS menu after a lobby: clear its "entering a menu" state */
 int group_reopen(void);                      /* 1 once, on the VS menu after that: open the Host/Join page again */
 int group_toast_port(void);                  /* the port of the console the toast is about (its colour) */
 int group_toast(char *out, int len);         /* the join/leave toast's text; returns the ms it has left, 0 when none */
-int group_dialog(void);                      /* 1 while the dialog is up */
-void group_dialog_answer(int yes);           /* touch */
+int group_dialog(void);                      /* 1 while "End the session?" is up */
+void group_dialog_answer(int yes);           /* its answer (the engine's dialog) */
 
 /* While grouped (the lobby CSS, the stage select, the match): who is connected, for the bottom-screen strip. The strip
  * and the toasts are only used from the bottom screen's thread. */

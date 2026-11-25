@@ -102,7 +102,7 @@ The touch-screen controls guide does not pause a match.
 
 Play Versus with up to **four New 3DS consoles in the same room**, each player on their own console. No internet, account or router is needed: the consoles talk over the 3DS's local wireless.
 
-Choose **VS Mode → Melee**, tap **Group** on the bottom screen, then **HOST GAME** on one console. The others tap the host's game in the **Available Games** list. The character select screen is the shared lobby: everyone picks a fighter, anyone can add CPUs, and the host sets the rules. If a player drops out during a match, their fighter becomes a CPU.
+Choose **VS Mode → Melee → Group**, then tap **HOST GAME** on one console's bottom screen. The others tap the host's game in the **Available Games** list. The character select screen is the shared lobby: everyone picks a fighter, anyone can add CPUs, and the host sets the rules. If a player drops out during a match, their fighter becomes a CPU.
 
 Both builds can play together, and every console needs wireless communication turned on. HOME is unavailable while you are in a group. Read the **[group play guide](native-3ds/docs/GROUP_PLAY.md)** for hosting, joining, the lobby, and troubleshooting.
 

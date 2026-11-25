@@ -80,16 +80,19 @@ typedef struct MpGroupLobby {
 
 /* Melee -> Solo / Group (the VS menu) and the session around the lobby (port/3ds/group/group_menu.c). */
 int mp_platform_group_open(void);          /* Melee chosen: 1 = the Solo/Group page is up (wait), 0 = vanilla */
-int mp_platform_group_menu(void);          /* 1: the top-screen submenu is on (group.ini top_menu=1) */
+int mp_platform_group_menu(void);          /* 1: the top-screen submenu is wanted (group.ini top_menu, on by default) */
 int mp_platform_group_pick(int group);     /* the top-screen menu's choice: 0 Solo, 1 Group */
 int mp_platform_group_waiting(void);       /* 1 while that page is up */
+int mp_platform_group_listing(void);       /* 1 while the Group list (Host / Join) is up */
 int mp_platform_group_poll(int back);      /* each frame while waiting: 0 wait, 1 Solo, 2 lobby, -1 cancelled */
 int mp_platform_group_active(void);        /* 1 while a group session is open */
 void mp_platform_group_leave(void);        /* backed out of the lobby CSS */
 int mp_platform_group_returning(void);     /* 1 once after leaving: show the VS menu */
 int mp_platform_group_confirm_leave(void); /* Back on the lobby CSS: 1 = leave now, 0 = "End the session?" is up */
 int mp_platform_group_confirm_state(void); /* while it is: 0 waiting, 1 yes, 2 no */
+void mp_platform_group_confirm_answer(int yes);   /* the top-screen "End the session?" was answered */
 int mp_platform_group_lost(void);          /* 1 once the session ended under us (the host left or the link failed) */
+int mp_platform_group_lost_note(char* out, int len);   /* VS menu: 1 with why the session ended, to show (read and clear) */
 int mp_platform_group_fresh(void);         /* VS menu, once after a lobby: 1 = reset its entering-a-menu state */
 int mp_platform_group_reopen(void);        /* VS menu, once after that: 1 = the Host/Join page is open again */
 void mp_platform_group_notice(int kind);   /* a full bottom-screen notice while the engine blocks: 1 stage chosen, loading */

@@ -1,11 +1,14 @@
 """Melee -> Solo / Group in Azahar drives the real VS menu of the development build.
 
-Boots with group.ini menu=1 and the loopback link (udp=1), then: main menu -> VS -> Melee (the Solo/Group page),
-Back (B), Melee again -> Group (the Group page), Host (the lobby CSS in the HANYU scene, with the connected-players strip),
-B out of the CSS (back on the VS menu, the session closed), and finally Melee -> Solo (the vanilla CSS).
+Boots with group.ini menu=1 and the loopback link (udp=1), then: main menu -> VS -> Melee (the top-screen Solo / Group
+submenu, menu kind 11, its art filled from the menu's own letters: "group: menu art filled"), Back (B), Melee again ->
+Group (the Group page), Host (the lobby CSS in the HANYU scene, with the connected-players strip), B out of the CSS (back
+on the submenu with Group hovered, the session closed), then Solo (the vanilla CSS) and B out of it (back on the submenu
+with Solo hovered).
+--bottom-page (group.ini top_menu=0): the same through the bottom-screen touch page instead of the submenu.
 Every step saves both screens as PNGs and the log lines are checked.
-Wireless off (bottom-screen page only): the first Group press runs with test_wireless_off=1 in group.ini and must show
-"Please enable wireless and try again" and stay on Solo / Group; the key is then removed and Group opens the list.
+Wireless off: the first Group press runs with test_wireless_off=1 in group.ini and must show "Please enable wireless and
+try again" and stay on Solo / Group; the key is then removed and Group opens the list.
 HOME and sleep are off from the Group list on ("group: HOME and sleep off"), a refused HOME press (poked through the
 GDB stub) shows the bottom-screen notice for 2 s, and they are on again once the lobby is left; Solo never turns them off.
 The name: the first Group press also has test_screen_name_fail=1 (the Mii name fails: the system name is
@@ -31,6 +34,7 @@ import emu  # noqa: E402
 from gdb_probe import packet, receive  # noqa: E402
 
 PORT = 24862
+SCENE_CHOOSE = 36   # the tournament setup scene: "Choose a game." (group_lobby_screen.py)
 KEY_A, KEY_B, KEY_START, KEY_DOWN = 1, 2, 8, 0x80
 KEY_UP = 0x40
 CPAD_UP, CPAD_RIGHT = 1 << 30, 1 << 28
@@ -141,6 +145,22 @@ class Stub:
         self.poke('mp_test_keys', 0)
         self.until_frames(release)
 
+    def choose(self, group=True):
+        """Solo or Group, once Melee was pressed: on the top-screen submenu (menu kind 11) with Up / Down and A; without
+        it (group.ini top_menu=0, or no menu art) by a touch on the bottom-screen page. Menus ignore presses during
+        their cooldown, so Up / Down is pressed until the row moves."""
+        self.until_frames(30)
+        if self.menu()[0] != 11:
+            self.poke('mp_test_bottom_touch', (238 if group else 82) | (104 << 16))
+            self.until_frames(10)
+            return
+        want = 1 if group else 0
+        for _ in range(10):
+            if self.menu()[1] == want:
+                break
+            self.press(KEY_DOWN if want else KEY_UP, 1, 30)
+        self.press(KEY_A, 2, 10)
+
     def menu(self):
         """The main menus' state (MenuFlow mn_804A04F0, big-endian engine data): (menu kind, hovered row)."""
         b = self.peek('mn_804A04F0', 4)
@@ -186,8 +206,9 @@ def main():
     ap.add_argument('--elf', default=os.environ.get('MELEE_ELF') or str(emu.ROOT / 'build/game-opt/melee.elf'))
     ap.add_argument('--seconds', type=float, default=900)
     ap.add_argument('--show', action='store_true')
-    ap.add_argument('--top-menu', action='store_true', help='the top-screen Solo/Group submenu (group.ini top_menu=1; its labels are still Slippi\'s Ranked / Unranked) instead of the bottom-screen touch page')
+    ap.add_argument('--bottom-page', action='store_true', help='the bottom-screen Solo / Group touch page (group.ini top_menu=0) instead of the top-screen submenu')
     args = ap.parse_args()
+    args.top_menu = not args.bottom_page
     out = Path(os.environ.get('MELEE_TEST_OUT') or emu.ROOT / 'build/emu-test') / 'group-menu'
     shutil.rmtree(out, ignore_errors=True)
     out.mkdir(parents=True)
@@ -195,8 +216,8 @@ def main():
     sd = emu.sd(home)
     (sd / 'slippi').mkdir(parents=True, exist_ok=True)
     (sd / 'slippi' / 'config.ini').write_text('prefetch=0\ndelay=2\n')
-    ini = 'menu=1\nudp=1\nport=44100\ndelay=2\n' + ('top_menu=1\n' if args.top_menu else '')
-    (sd / 'slippi' / 'group.ini').write_text(ini + ('' if args.top_menu else 'test_wireless_off=1\ntest_screen_name_fail=1\n'))
+    ini = 'menu=1\nudp=1\nport=44100\ndelay=2\n' + ('' if args.top_menu else 'top_menu=0\n')
+    (sd / 'slippi' / 'group.ini').write_text(ini + 'test_wireless_off=1\ntest_screen_name_fail=1\n')
     (sd / 'no-scripted-input').write_text('')   # no smoke-build scripted presses
     (sd / 'game.log').unlink(missing_ok=True)
     stub = Stub(emu.elf_symbols(args.elf))
@@ -272,25 +293,45 @@ def main():
         check('reached the VS menu', s['scene'] == 1 and stub.menu()[0] == MENU_VS, str(s))
         stub.until_frames(30)
         capture('vs-menu')
+        check('the menu art was filled when the menus loaded', 'group: menu art filled' in log_text())
         if args.top_menu:
-            # Melee opens the top-screen Solo/Group menu (menu kind 11).
+            # Melee opens the top-screen Solo/Group menu (menu kind 11), Solo hovered.
             stub.press(KEY_A)
             stub.until_frames(40)
             s = stub.state()
-            check('Melee opens the Solo/Group menu (kind 11)', stub.menu()[0] == 11, str(stub.menu()))
+            check('Melee opens the Solo/Group menu (kind 11, Solo hovered)', stub.menu() == (11, 0), str(stub.menu()))
             capture('solo-group')
             stub.press(KEY_B)
             stub.until_frames(40)
-            check('B returns to the VS menu', stub.menu()[0] == MENU_VS, str(stub.menu()))
+            check('B returns to the VS menu, Melee hovered', stub.menu() == (MENU_VS, 0), str(stub.menu()))
             capture('after-back')
-            # Again, down to Group, A: the Group list on the bottom screen.
+            # Again, down to Group, A: with wireless "off" (test_wireless_off=1) it stays on the submenu.
             stub.press(KEY_A)
             stub.until_frames(40)
-            stub.press(KEY_DOWN, 1, 30)
+            for _ in range(10):   # pressed until the row moves (the menu ignores presses during its cooldown)
+                if stub.menu()[1] == 1:
+                    break
+                stub.press(KEY_DOWN, 1, 30)
+            check('Down hovers Group', stub.menu() == (11, 1), str(stub.menu()))
             capture('group-hovered')
             stub.press(KEY_A)
-            wait_log('group: Group, looking for games')
+            wait_log('group: Please enable wireless and try again', 1, 20)   # the line can reach game.log later
+            stub.until_frames(20)
+            capture('wireless-off')
+            expect_log('Group with wireless off shows "Please enable wireless and try again"',
+                       'group: Please enable wireless and try again')
+            check('wireless off: still on the submenu, Group hovered', stub.menu() == (11, 1), str(stub.menu()))
+            check('wireless off: HOME and sleep stay on', 'HOME and sleep off' not in log_text())
+            check('the Mii name failing (test_screen_name_fail), the system name is used', 'group: name from system "' in log_text(),
+                  str([l for l in log_text().splitlines() if 'name from' in l]))
+            (sd / 'slippi' / 'group.ini').write_text(ini + 'test_screen_name=MiiName\n')
+            stub.press(KEY_A)   # Group again: the retry opens the list on the bottom screen
+            wait_log('group: Group, looking for games', 2)
+            ok = wait_log('group: HOME and sleep off (wireless session)', 1, 60)
+            wait(lambda s: s['scene'] == SCENE_CHOOSE, 'Group opens "Choose a game." (the tournament setup scene)', 120)
+            stub.until_frames(60)
             capture('group-list')
+            check('the retry opens the list; HOME and sleep off while browsing', ok)
             expect_log('Group opens the list', 'group: Group, looking for games')
         else:
             # Melee asks Solo or Group on the bottom screen (touch); the top screen stays on the VS menu.
@@ -333,9 +374,8 @@ def main():
         time.sleep(3)
         f1 = stub.frames()
         check('the engine keeps running on the lobby CSS', f1 > f0, f'engine_frames {f0} -> {f1}')
-        if not args.top_menu:
-            check('the Mii name wins when there is one (test_screen_name=MiiName)', 'group: name from Mii "MiiName"' in log_text())
-        if not args.top_menu:
+        check('the Mii name wins when there is one (test_screen_name=MiiName)', 'group: name from Mii "MiiName"' in log_text())
+        if True:
             # A refused HOME press (as libctru reports it): the notice for 2 s over the strip
             stub.poke('group_test_home_reject', 1)
             ok = wait_log('group: HOME pressed during wireless play', 1, 60)
@@ -347,37 +387,60 @@ def main():
             capture('home-notice-gone')
             check('HOME and sleep stayed off through Host (one off, no on yet)',
                   log_text().count('HOME and sleep off') == 1 and 'HOME and sleep on' not in log_text())
-        # B backs out of the CSS to the VS menu: vanilla wants B released once, then held for 30 engine frames.
-        stub.press(KEY_B, 2, 4)
-        stub.poke('mp_test_keys', KEY_B)
-        start, deadline = stub.frames(), time.monotonic() + 240
-        # Let go as soon as the CSS is leaving (its pending scene byte is 2): B still held on the VS menu would go back
-        # one more level, to the main menu.
-        while time.monotonic() < deadline and stub.peek('mnCharSel_804D6CF6', 1)[0] != 2 and stub.frames() - start < 120:
-            time.sleep(0.05)
-        stub.poke('mp_test_keys', 0)
-        s = wait(lambda s: s['scene'] == 1, 'back to the menus', 120)
+        def back_from_css(scene=1):
+            # B backs out of the CSS: vanilla wants B released once, then held for 30 engine frames.
+            stub.press(KEY_B, 2, 4)
+            stub.poke('mp_test_keys', KEY_B)
+            start, deadline = stub.frames(), time.monotonic() + 240
+            # Let go as soon as the CSS is leaving (its pending scene byte is 2): B still held on the menu would go
+            # back one more level.
+            while time.monotonic() < deadline and stub.peek('mnCharSel_804D6CF6', 1)[0] != 2 and stub.frames() - start < 120:
+                time.sleep(0.05)
+            stub.poke('mp_test_keys', 0)
+            wait(lambda s: s['scene'] == scene, 'back to the menus' if scene == 1 else 'back to "Choose a game."', 120)
+            stub.until_frames(60)
+
+        lists = log_text().count('group: Group, looking for games')
+        back_from_css(SCENE_CHOOSE if args.top_menu else 1)
         expect_log('Back from the CSS closes the session', 'group: left the lobby')
-        stub.until_frames(60)
         capture('back-on-vs-menu')
         kind, hovered = stub.menu()
-        check('back on the VS menu with Melee hovered', kind == MENU_VS and hovered == 0, f'menu kind {kind}, hovered {hovered}')
-        if not args.top_menu:
-            check('HOME and sleep are on again after leaving the lobby', wait_log('group: HOME and sleep on', 1, 30))
-        # Melee -> Solo: the vanilla CSS (not the HANYU scene).
-        stub.press(KEY_A)
         if args.top_menu:
-            stub.until_frames(40)
-            stub.press(KEY_A)   # Solo is hovered first
+            check('back on "Choose a game." with the Group list open again',
+                  wait_log('group: Group, looking for games', lists + 1, 30))
+            stub.press(KEY_B)   # "Choose a game." -> the submenu
+            wait(lambda s: s['scene'] == 1, 'B on "Choose a game.": back to the menus', 120)
+            stub.until_frames(60)
+            capture('back-on-submenu')
+            kind, hovered = stub.menu()
+            check('B on "Choose a game.": on the Solo / Group submenu with Group hovered', (kind, hovered) == (11, 1),
+                  f'menu kind {kind}, hovered {hovered}')
         else:
+            check('back on the VS menu with Melee hovered', kind == MENU_VS and hovered == 0,
+                  f'menu kind {kind}, hovered {hovered}')
+        check('HOME and sleep are on again after leaving the lobby', wait_log('group: HOME and sleep on', 1, 30))
+        # Solo: the vanilla CSS (not the HANYU scene).
+        if args.top_menu:
+            for _ in range(6):   # up to Solo (the menu's cooldown may drop a press)
+                if stub.menu() == (11, 0):
+                    break
+                stub.press(KEY_UP)
+                stub.until_frames(10)
+            check('Up hovers Solo', stub.menu() == (11, 0), str(stub.menu()))
+            stub.press(KEY_A)
+        else:
+            stub.press(KEY_A)   # Melee
             wait_log('group: the Solo/Group page is up', 3)
             touch(82, 104)      # SOLO
         s = wait(lambda s: s['scene'] == 8, 'Solo enters the CSS', 120)
         check('Solo is the vanilla VS CSS (mode != 8)', s['mode'] != 8, str(s))
         stub.until_frames(60)
         capture('solo-css')
-        if not args.top_menu:
-            check('Solo leaves HOME and sleep on', log_text().count('HOME and sleep off') == 1)
+        check('Solo leaves HOME and sleep on', log_text().count('HOME and sleep off') == 1)
+        if args.top_menu:
+            back_from_css()
+            capture('back-from-solo')
+            check('Back from Solo\'s CSS: on the submenu with Solo hovered', stub.menu() == (11, 0), str(stub.menu()))
     finally:
         emu.stop(proc)
         time.sleep(1)

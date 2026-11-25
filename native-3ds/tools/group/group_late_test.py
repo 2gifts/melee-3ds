@@ -111,7 +111,7 @@ def main():
         check('Melee is hovered on the VS menu', stub.menu() == (MENU_VS, 0), str(stub.menu()))
         stub.press(KEY_A)                # Melee: the Solo/Group page
         wait_text(log_text, 'group: the Solo/Group page is up', 'the Solo/Group page opens', 60)
-        touch(238, 104)                  # GROUP
+        stub.choose()                  # GROUP
         wait_text(log_text, 'group: Group, looking for games', 'Group opens the Host / Join page', 60)
         # Now the PC host opens its lobby and starts a match against a CPU at once.
         pc_log = open(out / 'pc.log', 'w')

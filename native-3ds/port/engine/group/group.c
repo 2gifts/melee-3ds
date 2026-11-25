@@ -29,6 +29,9 @@
 #include <sysdolphin/baselib/gobj.h>
 #include <sysdolphin/baselib/controller.h>
 
+int mp_group_top_menu(void);          /* group_menu.py: the top-screen Solo / Group submenu is there */
+extern int mp_group_lobby_screen;     /* group_lobby_screen.py: the "Choose a game." screen */
+
 void mp_platform_log(const char* text);
 void mp_platform_idle(void);
 
@@ -113,11 +116,11 @@ static u8 last_ckind, last_color, last_tag;
  * matches played, Mewtwo by VS play time, Marth by every starter played) and runs "A new challenger approaches". A group
  * cannot stop for one console's fight, so it is run when this console leaves the lobby (Back, or the session ended),
  * from the last group match it played, as the GM_CHALLENGER_APPROACH mode, which returns to the menus. */
-static void challenger_on_leave(void)
+static int challenger_on_leave(GameModeKind after)
 {
     u8 ck;
     if (!last_played) {
-        return;
+        return 0;
     }
     last_played = 0;
     ck = gm_80172DD4(gmMainLib_8015ED98()->x0);
@@ -128,11 +131,12 @@ static void challenger_on_leave(void)
         ck = gm_80172E74();
     }
     if (ck == ChKind_None) {
-        return;
+        return 0;
     }
     logf_("Group: a new challenger approaches (fighter %d), on leaving the lobby\n", ck, 0);
-    gm_InitChallengerData(last_ckind, last_color, 0, last_tag, ck, GM_MENU);
+    gm_InitChallengerData(last_ckind, last_color, 0, last_tag, ck, after);
     gm_ChangeGameModeAfterCurrentScene(GM_CHALLENGER_APPROACH);
+    return 1;
 }
 
 /* The stars over the doors are the host's (the lobby): every console draws them from its local array. */
@@ -178,10 +182,20 @@ void mp_group_css_exit(GameModeState* state, int sss_state)
     int leaving = css->pending_scene_change == 2;
     gmVsMelee_ExitCss(state, gmVsMelee_GetVsData());   /* a Back sends the game to the menus */
     if (leaving) {
+        /* Out of the lobby (Back, or the session ended): the "Choose a game." screen with the Group list again (a
+         * notice first if the session ended under this console), or the menus without the top-screen submenu. */
+        int choose = mp_group_top_menu();
         session_seen = 0;
         gmVsMelee_ResetKOCounts();   /* the next lobby, or Solo, starts with none */
         mp_platform_group_leave();
-        challenger_on_leave();       /* the session is closed: this console is alone again */
+        if (choose) {
+            mp_group_lobby_screen = 1;
+            (void) mp_platform_group_returning();   /* not the menus' business this time */
+        }
+        /* the session is closed: this console is alone again (a challenger fight first, then that screen) */
+        if (!challenger_on_leave(choose ? GM_TOURNAMENT : GM_MENU) && choose) {
+            gm_ChangeGameModeAfterCurrentScene(GM_TOURNAMENT);
+        }
     } else {
         gm_SetNextGameModeStateId(sss_state);
     }

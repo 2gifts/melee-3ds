@@ -181,7 +181,7 @@ def run_case(case, args, out, results):
             stub.press(KEY_UP)
         stub.press(KEY_A)
         wait_text(log_text, 'group: the Solo/Group page is up', 'the Solo/Group page opens', 60)
-        touch(238, 104)                  # GROUP
+        stub.choose()                  # GROUP
         wait_text(log_text, 'group: Group, looking for games', 'Group opens the Host / Join page', 60)
         pc_log = open(pc_log_path, 'w')
         pc_proc = subprocess.Popen([str(TOOLS / 'group_client'), '--dir', str(pc)], stdout=pc_log, stderr=subprocess.STDOUT)

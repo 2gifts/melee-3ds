@@ -115,7 +115,7 @@ void group_config_load(group_config *c)
     char *t = sp_read_file(path, NULL);
     const char *s = t ? t : "";
     c->menu = group_ini_int(s, "menu", GROUP_MENU_DEFAULT);
-    c->top_menu = group_ini_int(s, "top_menu", 0);
+    c->top_menu = group_ini_int(s, "top_menu", 1);
     c->delay = group_ini_int(s, "delay", 2);
     if (c->delay < 1) c->delay = 1;
     if (c->delay > 15) c->delay = 15;

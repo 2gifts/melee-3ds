@@ -8,8 +8,9 @@ ready, and both screens end together once both are. Back on the character select
 the auto handicap (winner one step down, last place one up) on both, and each console's save holding only its own
 door's value. B leaves and rejoins: the star is still there. A second match (A and the CPU B's door became) is quit
 from the pause menu: its results go through the cancelled-match skip, and nothing changes. Then Back on the host,
-answered "Stay" many times (the "End the session?" dialog), and finally "End it": the character select keeps working
-and the session ends cleanly; out of the session the stars are gone.
+answered "No" many times (the top-screen "End the session?" dialog, with B or with A on No; while it is up the host
+is busy, "ANSWERING A PROMPT" on B's strip, and its stick does not move the cursor), and finally "Yes" (Left, A): the
+character select keeps working and the session ends cleanly; out of the session the stars are gone.
 Names: the consoles are named Anna and Beeb (group.ini name=); under the merged results' windows both
 screens show those names instead of "FOX"; on match 2's results (B's door a CPU) A's window keeps Anna and B's window
 its fighter's name. tools/group/group_names_test.py covers drops, leaving and late joiners.
@@ -42,7 +43,29 @@ FOX_TILE = (-24.4, -17.4, 6.0, 13.0)   # left, right, bottom, top in CSS units (
 LINK_PORT = 44160
 RULES = 0x1850                          # gmm_x0.x1850: the VS rules (GameRules)
 NAMETAG_HC = 0x588                      # gmm_x0.modes.nametags[4]: the handicap of a port with no name tag
-DIALOG_YES, DIALOG_NO = (89, 137), (231, 137)   # "End the session?": END IT / STAY (bottom_draw.c GD_*)
+KEY_LEFT = 0x20
+
+
+def dialog_up(c):
+    """1 while "End the session?" is up (group_menu.c's flag; the box itself is the engine's, group_dialog.c)."""
+    return int.from_bytes(c.stub.peek('dialog', 4), 'little')
+
+
+def answer_dialog(c, end_it, with_a=False):
+    """Answer the top-screen "End the session?" with the buttons, as a player: Left then A ends the session; B (or A,
+    since No is highlighted first) stays."""
+    if end_it:
+        c.stub.press(KEY_LEFT, 2, 10)
+        c.stub.press(KEY_A, 2, 20)
+    else:
+        c.stub.press(KEY_A if with_a else KEY_B, 2, 20)
+
+
+def end_session_if_asked(c):
+    """After Back on the host's character select: "Yes" if the dialog asked."""
+    c.stub.until_frames(15)
+    if dialog_up(c):
+        answer_dialog(c, True)
 
 
 class PortStub(Stub):
@@ -253,7 +276,7 @@ def main():
         c.stub.press(KEY_A)
         wait_log(c, 'group: the Solo/Group page is up', f'{c.name}: the Solo/Group page opens', 60, n + 1)
         n = c.log().count('group: Group, looking for games')
-        c.touch(238, 104)                # GROUP
+        c.stub.choose()                # GROUP
         wait_log(c, 'group: Group, looking for games', f'{c.name}: Group opens the Host / Join page', 60, n + 1)
 
     def join(c, what):
@@ -493,11 +516,11 @@ def main():
         check('a cancelled match changes no save', saves_after == saves_before, f'{saves_before} -> {saves_after}')
         check('both consoles still show the same stars', a.stars() == b.stars(), f'A {a.stars()}, B {b.stars()}')
 
-        # ---- Back on the host, answered "Stay", many times; then "End it" ----
+        # ---- Back on the host, answered "No", many times; then "Yes" ----
         panics = a.log().count('PANIC')
 
         def dialog():
-            return int.from_bytes(a.stub.peek('dialog', 4), 'little')   # group_menu.c: "End the session?" is up
+            return dialog_up(a)
 
         def ask_to_leave():
             """Back held until the dialog is up (a tap only lifts the token); True once it is."""
@@ -508,17 +531,35 @@ def main():
             a.stub.poke('mp_test_keys', 0)
             a.stub.until_frames(10)
             return bool(dialog())
+        def strip_b(port):
+            return b.stub.peek('mp_group_strip_text', 96)[24 * port:24 * port + 24].split(b'\0')[0].decode(errors='replace')
         stays = 0
         for i in range(args.back_presses):
             if not ask_to_leave():
                 break
-            a.touch(*DIALOG_NO)
+            if i == 0:
+                a.stub.until_frames(30)
+                a.capture('05-dialog')
+                wait_log(a, 'group: dialog "End the session?" [Yes / No]', 'the dialog is on A\'s top screen', 60, 1, False)
+                end = time.monotonic() + 20
+                while time.monotonic() < end and strip_b(0) != 'ANSWERING A PROMPT':
+                    time.sleep(0.25)
+                check('while it is up A is busy: B\'s strip reads "ANSWERING A PROMPT"', strip_b(0) == 'ANSWERING A PROMPT',
+                      repr(strip_b(0)))
+                # pad input does not reach the CSS under the dialog: A's cursor stays put
+                x0 = a.css.cursor(0)[1:]
+                a.stub.poke('mp_test_keys', CPAD_RIGHT)
+                a.stub.until_frames(20)
+                a.stub.poke('mp_test_keys', 0)
+                x1 = a.css.cursor(0)[1:]
+                check('the stick does not move the cursor under the dialog', x0 == x1, f'{x0} -> {x1}')
+            answer_dialog(a, False, with_a=bool(i % 2))   # B, or A on No (highlighted first)
             a.stub.until_frames(20)
             if a.scene() != 8 or dialog():
                 break
             stays += 1
         a.capture('05-after-stays')
-        check(f'Back answered "Stay" {args.back_presses} times: A stays on a working character select',
+        check(f'Back answered "No" {args.back_presses} times: A stays on a working character select',
               stays == args.back_presses and a.scene() == 8 and a.log().count('PANIC') == panics and a.proc.poll() is None,
               f'{stays} stays, scene {a.scene()}')
         take_ok = a.css.doors()[0]['p_kind'] == 0
@@ -527,8 +568,8 @@ def main():
         # HOME and sleep were off on the host from Host on, through both matches and their results
         check('A: HOME and sleep off through the matches and results (one off, no on)',
               a.log().count('group: HOME and sleep off') == 1 and 'group: HOME and sleep on' not in a.log())
-        a.touch(*DIALOG_YES)
-        wait_scene(a, 1, '"End it": A is back on the menus', 120, False)
+        answer_dialog(a, True)
+        wait_scene(a, 1, '"Yes": A is back on the menus', 120, False)
         wait_log(a, 'group: HOME and sleep on', 'A: HOME and sleep on again once the session ends', 60)
         check('ending the session does not crash A', a.proc.poll() is None and a.log().count('PANIC') == panics)
         wait_scene(b, 1, 'B goes back to the menus as the session ends', 120, False)

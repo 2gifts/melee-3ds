@@ -76,4 +76,24 @@ int mp_group_menu_pad(int port);
 int mp_group_tag_off(int slot);
 char* mp_group_tag_text(int slot);
 
+/* The top-screen Solo / Group submenu's art (menu_art_hook.c): filled into the menu's tables each time mnmain.c loads
+ * MnMaAll (its MenMainCursor_Top and MenMainPanel_Top material animations), and only when they are vanilla's.
+ * mp_group_menu_art_ok: 1 when this load has it (the Melee row then opens the top-screen submenu). */
+struct HSD_MatAnimJoint;
+void mp_group_menu_art(struct HSD_MatAnimJoint* labels, struct HSD_MatAnimJoint* tabs);
+int mp_group_menu_art_ok(void);
+
+/* Top-screen dialogs (group_dialog.c): Melee's message box (the memory card notices') with free text, on the lobby's
+ * character select and the VS menu. `message` may hold up to two lines ('\n'); `right` NULL for one button.
+ * selected: the button highlighted first (0 left, 1 right). poll: -1 none open, 0 waiting, else the button chosen
+ * (1 left, 2 right; B chooses the last one), and the box is gone. While one is up the scene must ignore pad 0.
+ * mp_group_dialog_scene: a scene that shows dialogs began (its archive and camera are new). */
+void mp_group_dialog_scene(void);
+int mp_group_dialog_open(const char* message, const char* left, const char* right, int selected);
+int mp_group_dialog_poll(void);
+int mp_group_dialog_up(void);
+void mp_group_dialog_close(void);
+
+void mp_group_dialog_test_frame(void);   /* tests: mp_test_dialog opens one of the game's dialogs */
+
 #endif

@@ -653,7 +653,8 @@ static const GroupRows group_rows={65,49,48,48,16,24,27,156};
  * for that menu are missing (the fallback, on the VS menu). */
 static int group_page(const MPBottomState* s){
     int page=group_view()->page;
-    return s->scene==1&&(page==GROUP_PAGE_LIST||(page==GROUP_PAGE_ASK&&s->menu!=11));
+    /* the menus, and the "Choose a game." screen (the tournament setup scene, tools/group_edits/group_lobby_screen.py) */
+    return (s->scene==1&&(page==GROUP_PAGE_LIST||(page==GROUP_PAGE_ASK&&s->menu!=11)))||(s->scene==36&&page==GROUP_PAGE_LIST);
 }
 static void group_error(const GroupView* v,int y){
     if(v->error[0])fit(14,y,v->error,12,292,slippi_red);
@@ -808,13 +809,6 @@ static void group_list_page(const GroupView* v){
 static void group_bars(int x,int y,int level,uint16_t on){
     for(int b=0;b<3;++b){int h=4+b*3;rect(x+b*5,y+10-h,4,h,b<level?on:line_color);}
 }
-enum{GD_YES_X=34,GD_NO_X=176,GD_Y=120,GD_W=110,GD_H=34};
-static void group_dialog_page(void){
-    rect(14,70,292,110,card_color);rect(14,70,292,3,gold);
-    center(160,84,"END THE SESSION?",20,ink);
-    center(160,106,"EVERYONE IS DISCONNECTED",11,muted);
-    pill(GD_YES_X,GD_Y,GD_W,GD_H,"END IT",14,1);pill(GD_NO_X,GD_Y,GD_W,GD_H,"STAY",14,0);
-}
 /* A console that joined during a match: the match as the host reports it, live, until it ends (then the lobby). */
 char mp_group_watch_name[4][32];   /* tests: the name each row of the match overview showed ("" for no character) */
 static void group_watch_page(const GroupStrip* g){
@@ -861,7 +855,7 @@ static void group_watch_page(const GroupStrip* g){
 }
 static void group_strip_page(const GroupStrip* g,unsigned scene){
     char b[64];
-    if(g->watching){group_watch_page(g);if(group_dialog())group_dialog_page();return;}
+    if(g->watching){group_watch_page(g);return;}
     header("GROUP",g->phase==LOBBY_MATCH?"IN MATCH":g->phase==LOBBY_RESULTS?"RESULTS":scene==9?"STAGE SELECT":"CHARACTER SELECT");
     for(int i=0;i<LOBBY_SLOTS;++i){
         int y=36+i*38;const lobby_slot* d=&g->port[i].door;
@@ -873,9 +867,10 @@ static void group_strip_page(const GroupStrip* g,unsigned scene){
         }else text(20,y+3,"-",15,muted);
         /* what the port is doing: why it is busy (on the character select), else its state; the fighter itself is the
          * badge (without the icons, its name as before) */
-        static const char*const why_text[6]={"","","CHOOSING A NAME TAG","SETTING THE RULES","ENTERING A NAME","VIEWING A PRIZE"};
+        static const char*const why_text[7]={"","","CHOOSING A NAME TAG","SETTING THE RULES","ENTERING A NAME","VIEWING A PRIZE",
+                                              "ANSWERING A PROMPT"};
         int why=g->port[i].busy_why,css=g->phase==LOBBY_CSS;
-        if(css&&g->port[i].present&&why>=2&&why<=5)snprintf(b,sizeof(b),"%s",why_text[why]);
+        if(css&&g->port[i].present&&why>=2&&why<=6)snprintf(b,sizeof(b),"%s",why_text[why]);
         else if(g->picker==i)snprintf(b,sizeof(b),"%s","PICKS THE STAGE");   /* only that console has a cursor */
         else if(d->kind==LOBBY_EMPTY)snprintf(b,sizeof(b),"%s",g->port[i].present?"CLOSED":"OPEN");
         else if(stocks_ready)snprintf(b,sizeof(b),"%s",g->phase==LOBBY_MATCH||g->phase==LOBBY_RESULTS?(d->kind==LOBBY_CPU?"CPU":"PLAYING"):d->kind==LOBBY_CPU?"CPU":d->chosen==1?"CHOSEN":"CHOOSING");
@@ -890,7 +885,6 @@ static void group_strip_page(const GroupStrip* g,unsigned scene){
     /* Only the host sets the rules (its CSS Rules banner and Teams switch do nothing on the other consoles); the line
      * says no more than the rules: no "host" wording on the CSS's bottom screen (owner, 2026-11-25) */
     if(g->toast[0])center(160,192,g->toast,13,slippi_done);else center(160,192,b,12,gold);
-    if(group_dialog())group_dialog_page();
 }
 /* A touch on the Solo/Group pages; 1 if used. */
 static unsigned group_touch(unsigned x,unsigned y){
@@ -915,11 +909,6 @@ static unsigned group_touch(unsigned x,unsigned y){
 unsigned mp_bottom_online_touch(unsigned x,unsigned y){
     const SlippiUiView* v=slippi_ui_view();
     if(y>=214)return 0;
-    if(group_dialog()){
-        if(inside(x,y,GD_YES_X,GD_Y,GD_W,GD_H))group_dialog_answer(1);
-        else if(inside(x,y,GD_NO_X,GD_Y,GD_W,GD_H))group_dialog_answer(0);
-        return 1;
-    }
     if(group_view()->page!=GROUP_PAGE_NONE)return group_touch(x,y);
     if(v->page!=SLIPPI_PAGE_CODE&&v->page!=SLIPPI_PAGE_CHAT&&inside(x,y,SSS_FROZEN_X,SSS_FROZEN_Y,SSS_FROZEN_W,SSS_FROZEN_H)&&!slippi_online_css_drawn){slippi_ui_alt(1);return 1;}
     if(v->page==SLIPPI_PAGE_CODE){
@@ -951,7 +940,7 @@ unsigned mp_bottom_online_touch(unsigned x,unsigned y){
     if(v->phase==SLIPPI_PHASE_CONNECTED&&inside(x,y,SL_SIDE_X,SL_ACTION_Y,SL_SIDE_W,SL_ACTION_H)){slippi_ui_cancel();return 1;}
     return 1;
 }
-unsigned mp_bottom_online_active(const MPBottomState* s){return group_dialog()||group_page(s)||slippi_online_page(s)||(s->scene==9&&s->mode==8);}
+unsigned mp_bottom_online_active(const MPBottomState* s){return group_page(s)||slippi_online_page(s)||(s->scene==9&&s->mode==8);}
 void mp_bottom_draw(uint16_t* pixels,const MPBottomState* s,unsigned fps,unsigned show_fps,unsigned expanded,unsigned rate,unsigned guide){
     canvas=pixels;background();
     int battle=s->scene==2||s->scene==3||s->scene==4||s->scene==44;

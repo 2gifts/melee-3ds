@@ -13,8 +13,8 @@ then reports the door in use as it would for a real hold. Checked:
   4. the other way round: the host marks door 3 in use (its busy command with a door mask), and the joiner's own click
      on door 3's Human / CPU / closed switch does nothing; once the host lets go, the same click switches it.
 Busy reasons: the strip says why a console is busy (mp_group_strip_text, each row's status as drawn): the joiner's own row
-reads "CHOOSING A NAME TAG" while its list is open; the host's row "CHOOSING A NAME TAG", "SETTING THE RULES" and
-"ENTERING A NAME" as the PC host sends those reasons. And this console's name comes from its Mii (no name= in its
+reads "CHOOSING A NAME TAG" while its list is open; the host's row "CHOOSING A NAME TAG", "SETTING THE RULES",
+"ENTERING A NAME" and "ANSWERING A PROMPT" as the PC host sends those reasons. And this console's name comes from its Mii (no name= in its
 group.ini): Azahar's FRD answers with the emulated console's user name.
 Stale whole-door edits (the compare-and-set) are covered by lobby_unit (group_test.py runs it).
 
@@ -197,7 +197,7 @@ def main():
         stub.press(KEY_A)
         wait_text(log_text, 'group: the Solo/Group page is up', 'the Solo/Group page opens', 60, n + 1)
         n = log_text().count('group: Group, looking for games')
-        touch(238, 104)
+        stub.choose()
         wait_text(log_text, 'group: Group, looking for games', 'Group opens the Host / Join page', 60, n + 1)
 
     try:
@@ -303,7 +303,8 @@ def main():
         check('once the host lets go, the same click switches the door (CPU -> closed)',
               after == CLOSED and lob['doors'][CPU_DOOR][0] == 2, f'p_kind {after}, lobby {lob["doors"][CPU_DOOR]}')
         # 5. the host's busy reasons on the joiner's strip (bits 0..3 of the busy command)
-        for code, words in ((2, 'CHOOSING A NAME TAG'), (3, 'SETTING THE RULES'), (4, 'ENTERING A NAME')):
+        for code, words in ((2, 'CHOOSING A NAME TAG'), (3, 'SETTING THE RULES'), (4, 'ENTERING A NAME'),
+                            (6, 'ANSWERING A PROMPT')):
             host(f'busy {code}')
             end = time.monotonic() + 20
             while time.monotonic() < end and strip_text(0) != words:
@@ -312,10 +313,11 @@ def main():
         capture('07-host-entering-a-name')
         host('busy 0')
         end = time.monotonic() + 20
-        while time.monotonic() < end and strip_text(0) in ('CHOOSING A NAME TAG', 'SETTING THE RULES', 'ENTERING A NAME'):
+        while time.monotonic() < end and strip_text(0) in ('CHOOSING A NAME TAG', 'SETTING THE RULES', 'ENTERING A NAME',
+                                                            'ANSWERING A PROMPT'):
             time.sleep(0.25)
         check('the host done: its row shows its state again', strip_text(0) not in ('CHOOSING A NAME TAG', 'SETTING THE RULES',
-              'ENTERING A NAME'), repr(strip_text(0)))
+              'ENTERING A NAME', 'ANSWERING A PROMPT'), repr(strip_text(0)))
         # no name= here, so the Mii name (Azahar: the emulated user name)
         named = [l for l in log_text().splitlines() if 'group: name from ' in l]
         check('this console\'s name comes from its Mii', bool(named) and 'name from Mii' in named[0], str(named[:1]))

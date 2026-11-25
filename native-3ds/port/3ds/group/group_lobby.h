@@ -20,7 +20,8 @@ enum { LOBBY_HUMAN = 0, LOBBY_CPU = 1, LOBBY_EMPTY = 2 };
 /* Why a console is busy (its LCMD_BUSY code; the strip says what it is doing) */
 enum { LOBBY_BUSY_NONE = 0, LOBBY_BUSY_SLIDER = 1, LOBBY_BUSY_TAGS = 2, LOBBY_BUSY_RULES = 3, LOBBY_BUSY_NAMING = 4,
        LOBBY_BUSY_PRIZE = 5,       /* the prize screen after a match (a notice or trophy this console's save earned) */
-       LOBBY_BUSY_MAX = LOBBY_BUSY_PRIZE };
+       LOBBY_BUSY_DIALOG = 6,      /* a top-screen dialog ("End the session?") */
+       LOBBY_BUSY_MAX = LOBBY_BUSY_DIALOG };
 enum { LOBBY_CSS = 0, LOBBY_STAGE = 1, LOBBY_MATCH = 2, LOBBY_RESULTS = 3 };
 
 typedef struct {

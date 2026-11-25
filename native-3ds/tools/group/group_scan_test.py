@@ -96,7 +96,7 @@ def main():
         wait_log('group: the Solo/Group page is up')
         stub.until_frames(10)
         for round_ in (1, 2):
-            touch(238, 104)   # GROUP
+            stub.choose()   # GROUP
             ok = wait_log('group: Group, looking for games', round_, 60)
             check(f'round {round_}: Group opens the list on UDS', ok and 'uds: init ok' in log_text())
             start = stub.frames()

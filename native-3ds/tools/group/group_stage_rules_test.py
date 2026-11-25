@@ -12,7 +12,7 @@ with name tag id 5, as if chosen on the character select). A hosts a 1 minute ti
            none on B.
   Loser    Stage Selection Loser: A lost match 1, so port 1 (A) picks; B's pad does nothing on the stage select.
   leaving  Both saves at 99 VS matches; match 2 (B walks off); both reach their prize screens; A goes back to the
-           character select and leaves the lobby (Back, "End it") while B is still on its prize screen. B's prize screen
+           character select and leaves the lobby (Back, "Yes") while B is still on its prize screen. B's prize screen
            ends normally, its character select sees the session gone and leaves, and B's earned challenger starts.
 
     docker/emu-test.sh run tools/group/group_stage_rules_test.py [--show]
@@ -32,7 +32,7 @@ sys.path.insert(0, str(HERE.parent / 'slippi'))
 sys.path.insert(0, str(HERE.parent))
 import emu  # noqa: E402
 from group_menu_test import CPAD_RIGHT, CPAD_UP, KEY_A, KEY_B, KEY_START, KEY_UP, to_main_menu  # noqa: E402
-from group_results_test import CPAD_DOWN, CPAD_LEFT, FOX_TILE, RULES, Console, DIALOG_YES  # noqa: E402
+from group_results_test import CPAD_DOWN, CPAD_LEFT, FOX_TILE, RULES, Console, end_session_if_asked  # noqa: E402
 
 LINK_PORT = 44180
 THING = 0x1868                     # gmm_x0.thing (struct gmm_x1868; types.h says 0x1898, the build has 0x1868): unk_8.x0 and unk_28.x0 are the VS match counters
@@ -113,7 +113,7 @@ def main():
         c.stub.press(KEY_A)
         wait_log(c, 'group: the Solo/Group page is up', f'{c.name}: the Solo/Group page opens', 60, n + 1)
         n = c.log().count('group: Group, looking for games')
-        c.touch(238, 104)
+        c.stub.choose()
         wait_log(c, 'group: Group, looking for games', f'{c.name}: Group opens the Host / Join page', 60, n + 1)
 
     def token(c, door):
@@ -315,7 +315,7 @@ def main():
         a.stub.until_frames(60)
         a.stub.poke('mp_test_keys', 0)
         a.stub.until_frames(30)
-        a.touch(*DIALOG_YES)
+        end_session_if_asked(a)
         wait_log(a, 'group: left the lobby', 'A (the host) leaves the lobby', 120)
         b.stub.until_frames(240)
         b.capture('01-prize-host-gone')

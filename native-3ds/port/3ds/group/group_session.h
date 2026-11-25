@@ -8,7 +8,8 @@
  *
  * Settings come from group.ini in the data folder (sp_data_dir), all optional:
  *   menu=1         Melee on the VS menu asks Solo / Group (0: vanilla VS). Default 1; 0 in development builds
- *   top_menu=1     ... on the top-screen submenu instead of the bottom-screen page (placeholder art)
+ *   top_menu=1     ... on the top-screen submenu (default; its art is built from the menu's own letters, and without
+ *                  vanilla's English menu archive the bottom-screen page is used); 0: the bottom-screen page
  *   delay=2        input delay of group matches, 1..15 frames
  *   timeout_ms=2000  silence after which a console has dropped
  *   udp=1, port=N  development builds and PC tools: the loopback link instead of UDS (base port N)
