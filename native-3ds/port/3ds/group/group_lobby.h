@@ -71,6 +71,9 @@ typedef struct {
     uint8_t busy;                  /* bit n: the console on port n is busy (its name tag list, name entry, the host's
                                     * rules menu or a held slider); READY is hidden everywhere and Start is refused
                                     * while any bit is set */
+    uint8_t in_use;                /* bit n: door n is in use on some console (a slider held, its name tag list open,
+                                    * its console in name entry or holding something): as on one GameCube, nobody else
+                                    * may switch it between Human, CPU and closed meanwhile */
     lobby_slot slot[LOBBY_SLOTS];
     lobby_status status;           /* the running match (host: lobby_host_set_status), at the end of the blob */
     /* The results screen after a match (phase RESULTS), the same on every console that played: vanilla's results end
@@ -89,11 +92,15 @@ int lobby_decode(lobby_state *s, const uint8_t *in, int len);           /* 0 ok,
 
 /* A console's commands to the host. Each returns its length. */
 enum { LCMD_DOOR = 1, LCMD_START = 2, LCMD_STAGE = 3, LCMD_BACK = 4, LCMD_BUSY = 5, LCMD_RESULTS = 6 };
-int lobby_cmd_door(uint8_t *out, int slot, const lobby_slot *s);       /* set door `slot` (any console may edit any door) */
+/* Set door `slot` (any console may edit any door). base: the door's kind as the sender last saw it, plus 1 (0: not
+ * known). An edit that keeps that kind while the door's kind has changed since (another console switched it) is
+ * dropped: it was made from an older view and would undo that switch. */
+int lobby_cmd_door(uint8_t *out, int slot, const lobby_slot *s, int base);
 int lobby_cmd_start(uint8_t *out);                                      /* Start from the CSS: go to the stage select */
 int lobby_cmd_stage(uint8_t *out, int stage, int alt_stage);            /* a stage pick */
 int lobby_cmd_back(uint8_t *out);                                       /* B at the stage select: back to the CSS */
-int lobby_cmd_busy(uint8_t *out, int busy);                             /* the sender is busy (or no longer) */
+/* The sender is busy (or no longer), and which doors it is using (bit n: door n; see lobby_state.in_use). */
+int lobby_cmd_busy(uint8_t *out, int busy, int doors);
 int lobby_cmd_results(uint8_t *out, int ready, int advance);            /* results screen: the sender's ready, and how far a
                                                                          * press moved it on (0: no change) */
 
@@ -103,8 +110,11 @@ typedef struct {
     unsigned present;              /* consoles the host last synced with */
     unsigned joined_in_match;      /* arrived during a match: their door is set when it ends */
     unsigned left_in_match;
+    unsigned left_played;          /* ports whose console played the running match (or the results up) and left it: a
+                                    * console that takes such a port meanwhile did not play, and the port counts as ready */
     uint8_t last_tag[LOBBY_SLOTS][LOBBY_TAG_BYTES];   /* each port's last Human tag (a change clears its stars) */
     uint8_t last_tag_ok[LOBBY_SLOTS];
+    uint8_t in_use_by[LOBBY_SLOTS];   /* the doors each port's console is using; st.in_use is their OR */
 } lobby_host;
 
 enum { LOBBY_CHANGED = 1, LOBBY_STAGE_REACHED = 2, LOBBY_START_MATCH = 4 };
@@ -119,11 +129,16 @@ int lobby_host_sync(lobby_host *h, unsigned present);
  * A door edit for a Human door that another console sits on changes only what any player may change there (Human,
  * CPU or closed, and the team); its fighter, costume and tag belong to the console on that port. */
 int lobby_host_command(lobby_host *h, int from, const uint8_t *cmd, int len);
-int lobby_host_set_door(lobby_host *h, int slot, const lobby_slot *s);       /* the host's own console edits */
+int lobby_host_set_door(lobby_host *h, int slot, const lobby_slot *s);       /* a door as it is to be, no checks */
+/* Console `from`'s edit of door `slot` (the host's own console's too): refused while another console uses that door
+ * and the edit switches it between Human, CPU and closed, and dropped when made from an older view (base, see
+ * lobby_cmd_door). Then as lobby_host_set_door. */
+int lobby_host_edit_door(lobby_host *h, int from, int slot, const lobby_slot *s, int base);
 int lobby_host_start(lobby_host *h, int from);                               /* the host's own Start press */
 int lobby_host_pick_stage(lobby_host *h, int stage, int alt_stage);          /* the host's own stage pick */
 int lobby_host_set_rules(lobby_host *h, const lobby_rules *r);      /* the host changed the rules */
 int lobby_host_set_busy(lobby_host *h, int port, int busy);                  /* a console's busy bit (its own only) */
+int lobby_host_set_in_use(lobby_host *h, int port, int doors);               /* the doors a console is using */
 /* Phase MATCH; call after lw_host_start. `again`: a follow-up game (sudden death) with the consoles of the last one. */
 void lobby_host_match_began(lobby_host *h, int again);
 int lobby_host_set_status(lobby_host *h, const lobby_status *st);            /* the running match's status; LOBBY_CHANGED if it differs */

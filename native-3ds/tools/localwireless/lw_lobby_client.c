@@ -3,9 +3,11 @@
  * at different times, makes some leave or vanish, and compares what they print.
  *
  *   lw_lobby_client --host --port N [--games G] [--again] [--start-at MS] [--frames F] [--run-ms MS] [--drop PCT]
- *   lw_lobby_client --join --port N [--want-tag T] [--join-at MS] [--leave-at MS] [--crash-at MS] [--drop PCT]
+ *   lw_lobby_client --join --port N [--want-tag T [--want-games N]] [--join-at MS] [--leave-at MS] [--crash-at MS] [--drop PCT]
  *   either with [--menu V@MS ...] [--menu-log]
- * A joiner browses and joins the first game listed (with --want-tag, the first whose beacon starts with T).
+ * A joiner browses and joins the first game listed (with --want-tag, the first whose beacon starts with T). With
+ * --want-games N it waits until N games are listed before joining the wanted one (at most 3 s after first seeing it), so
+ * a test can check that it saw them all.
  *
  * The host sets a lobby blob (a counter and a pattern of it) every 100 ms, starts game 1 at --start-at and each next game
  * 500 ms after the previous one is over, then freezes the blob (counter 0xFFFFFFFF) at --run-ms and waits for the others.
@@ -79,7 +81,8 @@ int main(int argc, char **argv)
     c.use_udp = 1;
     c.port = 47030;
     int games = 1, frames = 200, delay = 2, bad = 0;   /* clients take the frame count from the start blob */
-    int want_tag = -1, beacon_tag = -1, again = 0;   /* again: games after the first with lw_host_start_again */
+    int want_tag = -1, want_games = 0, beacon_tag = -1, again = 0;
+    unsigned want_cap_ms = 3000, want_seen_at = 0;   /* again: games after the first with lw_host_start_again */
     unsigned start_at = 3000, run_ms = 12000, join_at = 0, leave_at = 0, crash_at = 0;
     int menu_n = 0, menu_val[8], menu_log = 0, menu_seen[LW_MAX_PLAYERS];
     unsigned menu_at[8], menu_tx_at_begin = 0;
@@ -89,6 +92,7 @@ int main(int argc, char **argv)
         if (!strcmp(argv[i], "--host")) c.host = 1;
         else if (!strcmp(argv[i], "--join")) c.host = 0;
         else if (i + 1 < argc && !strcmp(argv[i], "--want-tag")) want_tag = atoi(argv[++i]);
+        else if (i + 1 < argc && !strcmp(argv[i], "--want-games")) want_games = atoi(argv[++i]);
         else if (i + 1 < argc && !strcmp(argv[i], "--beacon-tag")) beacon_tag = atoi(argv[++i]);
         else if (i + 1 < argc && !strcmp(argv[i], "--port")) c.port = atoi(argv[++i]);
         else if (i + 1 < argc && !strcmp(argv[i], "--drop")) c.test_drop_pct = atoi(argv[++i]);
@@ -140,6 +144,8 @@ int main(int argc, char **argv)
                     lw_net net;
                     if (lw_scan_get(k, &net) != 0) continue;
                     if (want_tag < 0 || (net.len >= 2 && net.data[0] == (uint8_t)want_tag)) {
+                        if (!want_seen_at) want_seen_at = t ? t : 1;
+                        if (n < want_games && t < want_seen_at + want_cap_ms) break;   /* wait for the others to be listed */
                         printf("SCAN: %d games; joining #%d \"%s\" tag %d, %d of %d consoles, beacon check %d\n", n, k, net.host, net.data[0], net.players, net.max, net.data[1]);
                         if (want_tag >= 0 && net.data[1] != (uint8_t)(net.data[0] * 3 + 1)) { printf("FAIL: beacon torn\n"); return 1; }
                         if (lw_join(net.key) != 0) printf("join failed: %s\n", lw_error());

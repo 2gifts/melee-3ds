@@ -4,9 +4,12 @@
 #include <string.h>
 #include "group_menu.h"
 #include "slippi_plat.h"   /* the port's platform layer: log, time */
+#ifdef __3DS__
+#include <3ds.h>           /* aptSetHomeAllowed, aptSetSleepAllowed, aptCheckHomePressRejected */
+#endif
 
 static int lost, reopen;            /* the session ended under us; reopen the Host/Join page on the VS menu */
-static char lost_note[64];
+static char lost_note[96];         /* the size of GroupView.error */
 static int fresh_menu;              /* we just came back from a lobby: the VS menu must take input again */
 
 enum { REQ_NONE, REQ_SOLO, REQ_GROUP, REQ_HOST, REQ_JOIN, REQ_BACK };
@@ -260,7 +263,8 @@ int group_lost(void)
     st = group_net_status();
     if (st != 4 && st != 5) return 0;
     lost = reopen = 1;
-    snprintf(lost_note, sizeof(lost_note), "%s", st == 5 ? "The session ended" : "The connection was lost");
+    const char *why = group_net_error();   /* the specific reason: the host left, stopped responding, ... */
+    snprintf(lost_note, sizeof(lost_note), "%s", why[0] ? why : st == 5 ? "The session ended" : "The connection was lost");
     sp_log("group: %s", lost_note);
     return 1;
 }
@@ -370,10 +374,53 @@ unsigned group_serial(void)
     unsigned h = view.serial * 2654435761u;
     const unsigned char *b = (const unsigned char *)&s;
     size_t i;
+    h += (unsigned)group_home_note() * 0x9E3779B9u;   /* redraw when the HOME notice comes and goes */
     if (!group_strip(&s)) return h;
     for (i = 0; i < sizeof(s); i++) h = h * 31 + b[i];
     return h;
 }
+
+/* ---- HOME and sleep during a wireless session (Phase 5) ----
+ * Pressing HOME suspends the game, and lockstep waits for that console: after 2 s the host makes it a CPU, or ends the
+ * session if it is the host. Closing the lid sleeps the console with the same result. So while a session is open
+ * (browsing the games nearby, the lobby, the stage select, a match, its results, watching one), HOME is refused and the
+ * console does not sleep (as Smash 3DS does in local play); a refused HOME press shows a notice on the bottom screen.
+ * libctru's APT handler runs on its own thread, so this holds even while the engine blocks in a lockstep wait. The
+ * power button still works. */
+static int policy;                       /* 1: HOME and sleep are off (a wireless session); 0 at boot, so Solo never logs */
+static uint64_t home_note_until;
+volatile unsigned group_test_home_reject;   /* tests: a rejected HOME press, written through the GDB stub */
+
+int group_in_wireless(void)
+{
+    int st = group_net_status();
+    return session && (st == 1 || st == 3);   /* searching or connected; not failed (4) or ended (5) */
+}
+
+void group_system_frame(void)
+{
+    int on = group_in_wireless();
+    if (on != policy) {
+        policy = on;
+#ifdef __3DS__
+        aptSetHomeAllowed(!on);
+        aptSetSleepAllowed(!on);
+#endif
+        sp_log("group: HOME and sleep %s", on ? "off (wireless session)" : "on");
+    }
+    int rejected = group_test_home_reject != 0;
+#ifdef __3DS__
+    if (on && aptCheckHomePressRejected()) rejected = 1;
+#endif
+    if (rejected) {
+        group_test_home_reject = 0;
+        home_note_until = sp_time_us() + 2000000ull;
+        ++view.serial;
+        sp_log("group: HOME pressed during wireless play");
+    }
+}
+
+int group_home_note(void) { return home_note_until && sp_time_us() < home_note_until; }
 
 void group_note_touch(unsigned x, unsigned y)
 {

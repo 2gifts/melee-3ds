@@ -177,6 +177,11 @@ int lw_open(const lw_config *cfg, char *err, int errlen)
     lw_close();
     memset(&S, 0, sizeof(S));
     S.cfg = *cfg;
+    if (cfg->test_wireless_off) {
+        lw_platform_log("lw: wireless is off (test_wireless_off)");
+        snprintf(err, (size_t)errlen, "%s", LW_TEXT_WIRELESS_OFF);
+        return -1;
+    }
     if (S.cfg.input_size < 1 || S.cfg.input_size > LW_MAX_INPUT) { snprintf(err, (size_t)errlen, "bad input size"); return -1; }
 #ifdef LW_NO_UDP
     if (cfg->use_udp) { snprintf(err, (size_t)errlen, "the loopback link is not in this build"); return -1; }

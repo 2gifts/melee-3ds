@@ -4,6 +4,7 @@
  * join the one picked. One data frame carries one session packet on data channel 1. The 3DS system name is the player
  * name; other consoles' names are read from the node info. Node ids are whatever UDS assigns (1..16); the session maps
  * them to ports. Elsewhere this file only provides failing stubs. */
+#include "localwireless.h"   /* LW_TEXT_WIRELESS_OFF */
 #include "lw_link.h"
 #include "lw_platform.h"
 #include <stdio.h>
@@ -54,7 +55,12 @@ int lw_uds_open(int host, int port, int max_nodes, const char *name, char *err, 
     lw_uds_close();
     scan_n = 0;
     Result r = udsInit(SHAREDMEM, NULL);
-    if (R_FAILED(r)) { fmt_err(err, errlen, "Wireless is unavailable", r); return -1; }
+    if (R_FAILED(r)) {
+        /* Most often wireless communication is switched off. The code stays in the log, not on the screen. */
+        lw_platform_log("lw: udsInit failed (0x%08lX)", (unsigned long)r);
+        snprintf(err, (size_t)errlen, "%s", LW_TEXT_WIRELESS_OFF);
+        return -1;
+    }
     up = 1;
     local_name[0] = 0;
     udsNodeInfo me;

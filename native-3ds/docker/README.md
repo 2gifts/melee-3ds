@@ -71,14 +71,21 @@ docker/emu-test.sh group --players 3 --games 2 --results-hold 3:2000     # nobod
 docker/emu-test.sh group --players 3 --games 2 --results-linger 2:2500   # Start waits for a console still on its results
 docker/emu-test.sh group --players 4 --games 2 --results-leave 3[:vanish] # a console leaves on the results screen
 docker/emu-test.sh group --players 3 --games 2 --stale-view 2    # a joiner's results start on a view from before the match
+docker/emu-test.sh group --lost host-left        # (or host-vanish) the joiner's Host/Join page shows why the session ended
+docker/emu-test.sh group --last-leaves           # the last joiner leaves: the host's session is not lost
+docker/emu-test.sh group --wireless-off          # "Please enable wireless and try again", and a retry fails the same way
+docker/emu-test.sh group --players 3 --games 2 --frames 900 --rejoin 3:200   # a console drops mid-match and comes back during it
+docker/emu-test.sh group --players 3 --games 2 --results-rejoin 2            # a console leaves on the results and comes back
+docker/emu-test.sh group --cycles 3              # port 2 changes hands after every game; nobody inherits a door
 docker/emu-test.sh run tools/localwireless/lw_lobby_test.py     # the localwireless module alone (incl. menu input)
 docker/emu-test.sh run tools/group/group_quad_test.py --players 3 --end-frame 600 --kill 3:60 --timeout-ms 20000   # engine, Azahar
-docker/emu-test.sh run tools/group/group_menu_test.py            # Melee -> Solo / Group in Azahar
+docker/emu-test.sh run tools/group/group_menu_test.py            # Melee -> Solo / Group in Azahar; wireless off; HOME and sleep off in a session
 docker/emu-test.sh run tools/group/group_lobby_test.py           # Azahar hosts, a PC console joins: doors, Rules, Start, stage, match
 docker/emu-test.sh run tools/group/group_join_test.py            # a PC console hosts, Azahar joins: doors, CPU level, READY, handicap, rejoin
 docker/emu-test.sh run tools/group/group_late_test.py            # Azahar joins during a match: the read-only CSS, then the lobby
 docker/emu-test.sh run tools/group/group_cstick_test.py          # the CSS / stage select camera follows every console's C-stick; door plates
 docker/emu-test.sh run tools/group/group_results_test.py         # two emulated consoles: sudden death, the results screen, stars, auto handicap, Back
+docker/emu-test.sh run tools/group/group_door_test.py            # a door in use on one console cannot be switched from another
 docker/emu-test.sh run tools/group/group_names_test.py           # three emulated consoles and a PC one: the consoles' names under the results windows
 ```
 

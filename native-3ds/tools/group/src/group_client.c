@@ -18,12 +18,19 @@
  *   test_results_linger_ms=N  stay on the results screen (busy) N ms after the lobby is back in the character select,
  *                       as a console whose screen ends later; a host tries Start meanwhile, which must be refused
  *   test_results_leave=1|2    leave on the first results screen without pressing ready: 1 a goodbye, 2 vanish
+ *   test_after_lost=1   joiner (via_menu): after its games, wait for the session to end under it (group_lost), reopen
+ *                       the Host/Join page as the VS menu does, and log the note it shows ("group-test: lost note: ...")
+ *   test_vanish_ms=N    host: vanish without a goodbye N ms after its last game
+ *   test_expect_error=1 via_menu: the Group page is expected to fail with "Please enable wireless and try again"
+ *                       (test_wireless_off=1): log it, try Group once more, and pass if it fails the same way
+ *   test_wait_each=1    host: before every game (not only the first), wait for test_players consoles
  *   test_stale_view=1   joiner: in game 1, keep the lobby view from before the host's Start until 1.5 s after the
  *                       match ends (as if every snapshot in between was lost), so the results screen starts on a
  *                       character select view from before the match, which must not count as the results' end
  *   test_control=1      host: take this console's door, then do what DIR/control.txt says, one line at a time as the
  *                       test appends them (see control()), logging "group-test: control N done: LINE" for each:
- *                       door PORT KIND FIGHTER LEVEL CHOSEN HANDICAP, rules HANDICAP MODE TIME STOCKS, busy 0|1,
+ *                       door PORT KIND FIGHTER LEVEL CHOSEN HANDICAP, rules HANDICAP MODE TIME STOCKS, busy B (bit 0
+ *                       busy, bits 4..7 the doors this console uses, as group_lobby_busy takes them),
  *                       stick X Y (this console's C-stick, -127..127, held until changed), start (Start on the CSS),
  *                       back (B on the stage select), sticks (log every port's C-stick as read here), dump, quit
  * A host publishes made-up match status (timer, stocks, damage) during its games, as a real host's bottom screen does.
@@ -46,6 +53,7 @@
 static struct {
     int host, via_menu, players, games, frames, character, crash_frame, delay, late, full, linger_ms, control;
     int results_hold_ms, results_linger_ms, results_leave, stale_view;
+    int after_lost, vanish_ms, expect_error, wait_each;
 } T;
 
 /* A clock every console on this machine shares (CLOCK_MONOTONIC), so a test can order events across their logs. */
@@ -76,6 +84,7 @@ static int wait_for(int (*cond)(void), int timeout_ms)
     uint64_t end = sp_time_us() + (uint64_t)timeout_ms * 1000;
     while (sp_time_us() < end) {
         group_net_poll();
+        group_system_frame();                  /* HOME and sleep, as the game's frame does */
         int st = group_net_status();
         if (st != last) { sp_log("group-test: status %s", status_name(st)); last = st; }
         if (st == 4 || st == 5) return 0;
@@ -120,7 +129,18 @@ static int via_menu(void)
         int r = group_poll(0);
         if (r == 2) return 0;
         if (r != 0) { sp_log("group-test: FAIL the group menu returned %d", r); return -1; }
-        if (v->error[0]) { sp_log("group-test: FAIL group menu: %s", v->error); return -1; }
+        if (v->error[0]) {
+            sp_log("group-test: menu error: %s", v->error);
+            if (!T.expect_error) { sp_log("group-test: FAIL group menu: %s", v->error); return -1; }
+            if (strcmp(v->error, LW_TEXT_WIRELESS_OFF) || v->page != GROUP_PAGE_ASK || group_active()) {
+                sp_log("group-test: FAIL an unexpected error or page (page %d, session %d)", v->page, group_active());
+                return -1;
+            }
+            if (T.expect_error++ >= 2) return 1;   /* failed twice the same way: as expected */
+            group_pick_group();                   /* Group again: a retry, as a player would after fixing it */
+            group_poll(0);
+            continue;
+        }
         sp_sleep_us(5000);
     }
     sp_log("group-test: FAIL the group menu timed out");
@@ -190,8 +210,8 @@ static void dump_lobby(void)
                  v.slot[i].chosen, v.slot[i].handicap);
         strncat(doors, one, sizeof(doors) - strlen(doors) - 1);
     }
-    sp_log("group-test: lobby present %x busy %x phase %u handicap %u doors%s", group_present(), v.busy, v.phase,
-           v.rules.handicap, doors);
+    sp_log("group-test: lobby present %x busy %x phase %u handicap %u in_use %x doors%s", group_present(), v.busy, v.phase,
+           v.rules.handicap, v.in_use, doors);
 }
 
 /* A host driven by the test, a line at a time from DIR/control.txt (the test appends; each line is done once):
@@ -364,6 +384,7 @@ static int lobby_dance(int me, int game)
             group_lobby_set_door(T.players, &c);
         }
     }
+    if (T.host && game > 1 && T.wait_each && !wait_for(all_here, 60000)) { sp_log("group-test: FAIL the consoles for game %d never arrived", game); return 0; }
     if (T.host) {
         lobby_state v;
         if (game > 1 && group_lobby_view(&v) && v.busy) {
@@ -492,9 +513,19 @@ int main(int argc, char **argv)
     T.results_linger_ms = group_ini_int(s, "test_results_linger_ms", 0);
     T.results_leave = group_ini_int(s, "test_results_leave", 0);
     T.stale_view = group_ini_int(s, "test_stale_view", 0);
+    T.after_lost = group_ini_int(s, "test_after_lost", 0);
+    T.vanish_ms = group_ini_int(s, "test_vanish_ms", 0);
+    T.expect_error = group_ini_int(s, "test_expect_error", 0);
+    T.wait_each = group_ini_int(s, "test_wait_each", 0);
     free(ini);
 
     sp_log("group-test: starting as %s (data dir %s)", T.host ? "host" : "joiner", dir);
+    if (T.via_menu && T.expect_error) {
+        int r = via_menu();
+        sp_log("group-test: %s", r == 1 ? "PASS (wireless off, refused twice)" : "FAIL");
+        group_session_stop();
+        return r == 1 ? 0 : 1;
+    }
     if (T.via_menu ? via_menu() != 0 : group_session_start(T.host, 0) != 0) {
         sp_log("group-test: FAIL start: %s", group_net_error());
         group_session_stop();
@@ -513,6 +544,16 @@ int main(int argc, char **argv)
     }
     int me = group_net_local_index();
     sp_log("group-test: in the lobby on port %d", me + 1);
+    if (!T.host && !T.late) {
+        /* the doors as the host has them when this console arrives (a console coming back must see the host's door
+         * for its port, not one left over from an earlier visit) */
+        /* (one that arrives on another's results screen takes its door once the character select is back: the host
+         * takes no door edits before then, and a person would pick again there) */
+        static lobby_state first;
+        uint64_t end = sp_time_us() + 30000000ull;
+        while (sp_time_us() < end && !(group_lobby_view(&first) && first.phase == LOBBY_CSS)) { group_net_poll(); sp_sleep_us(5000); }
+        dump_lobby();
+    }
     int failed = 0;
     if (T.control) {
         failed = control(dir, me);
@@ -532,9 +573,34 @@ int main(int argc, char **argv)
     }
     /* the others may still be on their results screens: closing the lobby now would end their session there */
     if (T.host && !failed && !wait_for(nobody_busy, 20000)) sp_log("group-test: consoles still busy at the end");
+    if (T.host && T.vanish_ms) {
+        for (uint64_t end = sp_time_us() + (uint64_t)T.vanish_ms * 1000; sp_time_us() < end;) { group_net_poll(); sp_sleep_us(5000); }
+        sp_log("group-test: vanishing after the last game at %llu", now_ms());
+#ifndef _WIN32
+        _exit(0);
+#endif
+    }
     for (uint64_t end = sp_time_us() + (uint64_t)T.linger_ms * 1000; sp_time_us() < end;) {
         group_net_poll();
+        if (group_lost()) {   /* only a session opened from the menu reports this */
+            sp_log("group-test: FAIL the session was lost while lingering: %s", group_net_error());
+            failed = 1;
+            break;
+        }
         sp_sleep_us(5000);
+    }
+    if (T.after_lost && !failed) {
+        uint64_t end = sp_time_us() + 30000000ull;
+        while (sp_time_us() < end && !group_lost()) { group_net_poll(); group_system_frame(); sp_sleep_us(5000); }
+        if (!group_lost()) { sp_log("group-test: FAIL the session was never lost"); failed = 1; }
+        else {
+            group_leave();          /* as the engine does when the lost session takes it back to the VS menu */
+            group_system_frame();   /* a frame on the VS menu before the page reopens */
+            group_reopen();
+            group_poll(0);
+            sp_log("group-test: lost note: %s", group_view()->error);
+            sp_log("group-test: page after the loss: %d", group_view()->page);
+        }
     }
     sp_log("group-test: %s", failed ? "FAIL" : "PASS");
     group_session_stop();

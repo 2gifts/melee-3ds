@@ -799,5 +799,7 @@ void mp_bottom_draw(uint16_t* pixels,const MPBottomState* s,unsigned fps,unsigne
         fit(19,139,s->profile?"UNLOCK FIGHTERS AND STAGES AS YOU PLAY":"EVERY FIGHTER AND STAGE IS UNLOCKED",12,282,ink);
         fit(19,161,"YOUR PROGRESS SAVES TO THE SD CARD",11,282,muted);
     }else menu_page(s);
+    /* A refused HOME press during wireless play (group_menu.c): drawn last, over any page. */
+    if(group_home_note()){rect(0,188,320,24,RGB(10,18,29));center(160,195,"HOME IS UNAVAILABLE DURING WIRELESS PLAY",10,gold);}
     footer(fps,show_fps,expanded,rate,guide);
 }

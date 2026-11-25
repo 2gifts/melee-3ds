@@ -41,6 +41,8 @@ static struct {
     int view_valid;
     unsigned view_version;
     int view_since_end;            /* a lobby snapshot arrived after this console's match ended (the host's own: always) */
+    int late;                      /* this console arrived during a match it is not in: it watches until the lobby reopens
+                                    * (also through the results, even on the port of a player who dropped out of it) */
     int view_held;                 /* tests: a joiner keeps its lobby view as it is (group_test_hold_view) */
     int match_pending;            /* host: the stage was picked; start the game once the module is free */
     int sudden_pending;           /* host: the last match was tied; start its sudden death once the module is free */
@@ -105,6 +107,7 @@ void group_config_load(group_config *c)
     c->net_thread = group_ini_int(s, "net_thread", 1);
     c->net_thread_core = group_ini_int(s, "net_thread_core", -2);
     c->auto_players = group_ini_int(s, "auto_players", 2);
+    c->test_wireless_off = group_ini_int(s, "test_wireless_off", 0);
     group_ini_str(s, "name", c->name, sizeof(c->name));
     free(t);
 }
@@ -163,12 +166,22 @@ static void host_apply(int flags)
     if (flags & LOBBY_CHANGED) lobby_publish();
 }
 
-static void set_door(int port, const lobby_slot *l)
+/* base: the door's kind as this console last had it, plus 1 (0 not known), see lobby_cmd_door */
+static void set_door_base(int port, const lobby_slot *l, int base)
 {
-    if (G.host) { host_apply(lobby_host_set_door(&G.host_lobby, port, l)); return; }
+    if (G.host) {
+        int from = G.my_port < 0 ? 0 : G.my_port;
+        int r = lobby_host_edit_door(&G.host_lobby, from, port, l, base);
+        if (!r && l->kind != G.host_lobby.st.slot[port].kind)
+            sp_log("group: door %d kind change refused (in use on another console, or an older view)", port + 1);
+        host_apply(r);
+        return;
+    }
     uint8_t c[LW_MAX_COMMAND];
-    lw_send_command(c, lobby_cmd_door(c, port, l));
+    lw_send_command(c, lobby_cmd_door(c, port, l, base));
 }
+
+static void set_door(int port, const lobby_slot *l) { set_door_base(port, l, 0); }
 
 /* An automatic session's host starts by itself once auto_players consoles are here and every door is ready. */
 static void auto_host(void)
@@ -193,7 +206,14 @@ static void lobby_service(void)
         int flags = lobby_host_sync(&G.host_lobby, lw_present());
         uint8_t cmd[LW_MAX_COMMAND];
         int from, n;
-        while ((n = lw_poll_command(&from, cmd, sizeof(cmd))) > 0) flags |= lobby_host_command(&G.host_lobby, from, cmd, n);
+        while ((n = lw_poll_command(&from, cmd, sizeof(cmd))) > 0) {
+            int r = lobby_host_command(&G.host_lobby, from, cmd, n);
+            if (!r && n >= 17 && cmd[0] == LCMD_DOOR && cmd[1] < LOBBY_SLOTS && cmd[2] != G.host_lobby.st.slot[cmd[1]].kind &&
+                G.host_lobby.st.phase == LOBBY_CSS)
+                sp_log("group: door %d kind change from port %d refused (in use on another console, or an older view)",
+                       cmd[1] + 1, from + 1);
+            flags |= r;
+        }
         host_apply(flags);
         if (G.automatic) auto_host();
         if (G.sudden_pending) {
@@ -291,6 +311,7 @@ int group_session_start(int host, int automatic)
 #endif
     c.port = G.cfg.port;
     c.test_drop_pct = G.cfg.drop_pct;
+    c.test_wireless_off = G.cfg.test_wireless_off;
     memcpy(c.name, G.cfg.name, sizeof(c.name));
     if (host) lobby_host_init(&G.host_lobby, 1);
     sp_log("group: %s (delay %d)", host ? "hosting a game" : "looking for games", G.cfg.delay);
@@ -397,7 +418,11 @@ unsigned group_present(void) { sp_lock(); unsigned p = G.open ? lw_present() : 0
 static int watching_locked(void)
 {
     if (!G.open || G.status != ST_CONNECTED) return 0;
-    if (lw_match_running() && !lw_in_match()) return 1;
+    if (lw_match_running() && !lw_in_match()) { G.late = 1; return 1; }
+    if (G.late) {
+        if (!G.view_valid || G.view.phase != LOBBY_CSS) return 1;   /* the match is over, its results not yet */
+        G.late = 0;
+    }
     return G.view_valid && G.view.phase == LOBBY_RESULTS && G.my_port >= 0 && !(G.view.played >> G.my_port & 1);
 }
 
@@ -446,6 +471,7 @@ int group_lobby_get(MpGroupLobby *out)
     out->host = (unsigned char)G.host;
     out->present = (unsigned char)lw_present();
     out->busy = v->busy;
+    out->in_use = v->in_use;
     out->watching = (unsigned char)watching_locked();
     out->played = v->played; out->ready = v->ready; out->advance = v->advance;
     out->since_end = (unsigned char)(G.host || G.view_since_end);
@@ -479,7 +505,7 @@ void group_lobby_set_door(int port, const MpGroupDoor *d)
     memcpy(l.tag, d->tag, LOBBY_TAG_BYTES);
     l.handicap = d->handicap;
     sp_lock();
-    if (G.open && G.status == ST_CONNECTED) set_door(port, &l);
+    if (G.open && G.status == ST_CONNECTED) set_door_base(port, &l, d->spare);   /* spare: the base kind + 1 */
     sp_unlock();
 }
 
@@ -518,7 +544,7 @@ void group_lobby_back(void)
 void group_lobby_busy(int busy)
 {
     uint8_t c[LW_MAX_COMMAND];
-    int n = lobby_cmd_busy(c, busy);
+    int n = lobby_cmd_busy(c, busy & 1, (busy >> 4) & 0xF);   /* bit 0: busy; bits 4..7: the doors in use */
     sp_lock();
     if (G.open && G.status == ST_CONNECTED) {
         if (G.host) host_apply(lobby_host_command(&G.host_lobby, G.my_port < 0 ? 0 : G.my_port, c, n));
@@ -723,7 +749,7 @@ int group_net_send_inputs(int frame, int delay, int finalized_frame, unsigned ch
         /* backstop, past the host's own drop timeout */
         if (sp_time_us() - G.stall_since_us > 5000000ull + (uint64_t)G.cfg.timeout_ms * 1000ull) {
             sp_log("group: no inputs from the host for too long (frame %d)", frame);
-            fail(ST_DISCONNECTED, "No inputs from the host");
+            fail(ST_DISCONNECTED, "The host stopped responding");   /* the same cause as the module's message */
             G.stall_frames = 0;
             sp_unlock();
             return 3;

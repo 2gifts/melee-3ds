@@ -21,6 +21,10 @@ untouched. What it does to the VS character select (mncharsel.c):
   * The stars over the doors are the lobby's (the host counts them after each match, clears a port's when its name tag
     changes, keeps them when a console leaves and comes back), so every console shows the same, late joiners included.
   * The Human/CPU/closed click ends on Human only where a console is present (a CPU elsewhere), as on a GameCube.
+  * A door in use on another console (its slider held, its name tag list open, its name entry, its token in hand: the
+    lobby's in_use, sent with the busy bit) cannot be switched between Human, CPU and closed here, as on one GameCube;
+    the host refuses it too. Each door edit carries the door's kind before it, so the host drops an edit made from an
+    older view instead of undoing another console's switch.
   * A joiner shows the host's rules: every rules read in mncharsel.c goes through mp_css_game_rules() (the banner, the
     handicap mode), and each door's handicap is the value of the console that owns it (mp_css_auto_hc, the lobby).
 The stage select (mnstagesel.c) forwards the first pick and Back to the lobby and leaves when the host does.
@@ -47,6 +51,9 @@ static int mp_css_start_wait;
 static int mp_css_leave_asked;   /* Back is waiting for the host's answer to "End the session?" */
 static int mp_css_busy_now;      /* this console is busy: name tags, name entry, rules, a slider (the lobby's busy bit) */
 static int mp_css_busy_wait;
+static int mp_css_doors_now;     /* the doors this console is using (a slider, a name tag list, name entry, a held token) */
+static int mp_css_doors_sent;    /* ... as last told to the host */
+static int mp_css_naming = -1;   /* the door whose name entry this console opened, until the CSS is back */
 #define MP_CSS_DOOR 15     /* a door as the lobby holds it: kind, fighter, costume, team, level, chosen, tag[8], handicap */
 static u8 mp_css_last_view[4][MP_CSS_DOOR], mp_css_last_view_ok[4];
 static u8 mp_css_applied[4][MP_CSS_DOOR], mp_css_applied_ok;
@@ -230,30 +237,62 @@ int mp_css_hide_ready(void)
  * shut and no slider held. The lobby's copy of the bit is checked every frame, so a lost command is sent again. */
 static void mp_css_busy_frame(void)
 {
-    int my = mp_css_my(), i;
+    static int idle_resend;
+    int my = mp_css_my(), i, doors = 0, resend = 0;
     if (mnCharSel_804D6CF6 == 0) {
         mp_css_busy_now = 0;
+        mp_css_naming = -1;
         for (i = 0; i < 4; i++) {
             if (mnCharSel_803F0E8C[i].data != NULL && mnCharSel_803F0E8C[i].data->state != 0) {
                 mp_css_busy_now = 1;
+                doors |= 1 << i;
             }
             /* only this console's cursor acts here, so a held slider is ours whichever door it belongs to */
             if (mnCharSel_803F0DFC.doors[i].is_hold_cpu_slider || mnCharSel_803F0DFC.doors[i].is_hold_handicap_slider) {
                 mp_css_busy_now = 1;
+                doors |= 1 << i;
             }
+        }
+        /* this console's cursor holds something (vanilla's mnCharSel_804A0BC0[door]->x5 == 1 on the toggle) */
+        if (mnCharSel_804A0BC0[my] != NULL && mnCharSel_804A0BC0[my]->x5 == 1) {
+            doors |= 1 << my;
         }
     } else if (mnCharSel_804D6CF6 == 3 || mnCharSel_804D6CF6 == 4) {
         mp_css_busy_now = 1;
+        if (mnCharSel_804D6CF6 == 4) {
+            mp_css_naming = mnCharSel_804D6CF9 & 3;   /* name entry for this door's tag */
+        }
     }
+    if (mp_css_naming >= 0) {
+        doors |= 1 << mp_css_naming;                  /* the door is in use while its name entry lasts */
+    }
+    mp_css_doors_now = doors;
     if (mp_css_busy_wait > 0) {
         mp_css_busy_wait--;
         return;
     }
-    if ((int) ((mp_lob.busy >> my) & 1) != mp_css_busy_now) {
-        OSReport("GROUPCSS busy %d (name tag list / slider / name entry / rules)\n", mp_css_busy_now);
-        mp_platform_group_lobby_busy(mp_css_busy_now);
+    /* resend when the lobby lacks our busy bit or one of our doors; a lost release of our own door (the only one a held
+     * token marks without the busy bit) is sent again now and then */
+    resend = (int) ((mp_lob.busy >> my) & 1) != mp_css_busy_now || doors != mp_css_doors_sent ||
+             (doors & ~mp_lob.in_use & 0xF) != 0;
+    if (!resend && !mp_css_busy_now && doors == 0 && ((mp_lob.in_use >> my) & 1) && ++idle_resend >= 60) {
+        resend = 1;
+    }
+    if (resend) {
+        idle_resend = 0;
+        OSReport("GROUPCSS busy %d doors %x (name tag list / slider / name entry / rules / held token)\n", mp_css_busy_now,
+                 doors);
+        mp_platform_group_lobby_busy(mp_css_busy_now | doors << 4);
+        mp_css_doors_sent = doors;
         mp_css_busy_wait = 15;
     }
+}
+
+/* Door d is in another console's hands (the lobby's in_use, and not ours): as on one GameCube, its Human / CPU / closed
+ * switch does nothing here (the toggle's condition in mnCharSel_CursorThink). */
+int mp_css_door_in_use(int d)
+{
+    return mp_css_group() && mp_lob_ok && d >= 0 && d < 4 && ((mp_lob.in_use >> d) & 1) && !((mp_css_doors_now >> d) & 1);
 }
 
 /* A fighter this save has not unlocked can be picked on another console. Every fighter has a fixed tile here (a "?" one,
@@ -359,6 +398,8 @@ static void mp_css_send_door(int d, const u8* o)
     memset(&door, 0, sizeof door);
     memcpy(&door, o, 14);
     door.handicap = o[14];
+    /* the door's kind before this edit (as last sent or applied), so the host can drop an edit made from an older view */
+    door.spare = mp_css_applied_ok ? mp_css_applied[d][0] + 1 : 0;
     mp_platform_group_lobby_set_door(d, &door);
 }
 
@@ -880,6 +921,8 @@ void mp_css_group_reset(void)
     mp_css_leave_asked = 0;
     mp_css_seen_css = 0;
     mp_css_start_wait = 0;
+    mp_css_doors_now = 0;
+    mp_css_doors_sent = 0;
 }
 
 /* Start was pressed with every door filled: ask the host (it answers with the stage select for everyone). */
@@ -1065,6 +1108,7 @@ FIXES = {
          '    f32 stick_x = loadStickValue(&HSD_PadCopyStatus[(u8) port].stickX);\n'
          '    f32 stick_y = (f32) HSD_PadCopyStatus[(u8) port].stickY;\n',
          'HSD_PadStatus* mp_css_pad(int port);\nint mp_css_remote(int door);\nint mp_css_unplugged(int door);\n'
+         'int mp_css_door_in_use(int d);\n'
          'int mp_css_can_edit_rules(void);\nint mp_css_hide_ready(void);\nu32 mp_css_trigger(int hand, f32 x, f32 y, u32 trigger);\nint mp_css_start_intercept(void);\nint mp_css_back_intercept(void);\nint mp_css_hovering(int door);\nvoid mp_css_group_frame(void);\n'
          'void mp_css_group_reset(void);\n'
          'static inline void getStickDelta(int port, f32* dx, f32* dy)\n{\n'
@@ -1123,6 +1167,13 @@ FIXES = {
          '    case 2:\n        if (mp_css_back_intercept()) {\n            mnCharSel_804D6CF6 = 0;\n            break;\n        }\n'
          '        gm_801A4B60();\n        sfxBack();\n        break;\n', 1),
         # READY also waits while another console is busy (the lobby's busy bits) or while this one watches a match.
+        # A door in use on another console (its slider, name tag list, name entry or held token) cannot be switched
+        # between Human, CPU and closed here, as on one GameCube (the lobby's in_use).
+        ('                                    mnCharSel_804A0BD0[door]->x5 == 0 &&\n'
+         '                                    mnCharSel_804A0BC0[door]->x5 != 1)\n',
+         '                                    mnCharSel_804A0BD0[door]->x5 == 0 &&\n'
+         '                                    mnCharSel_804A0BC0[door]->x5 != 1 &&\n'
+         '                                    !mp_css_door_in_use(door))\n', 1),
         ('                if (mnCharSel_804A0BC0[i]->x5 == 1 || tag[i].data->state != 0)\n',
          '                if (mnCharSel_804A0BC0[i]->x5 == 1 || tag[i].data->state != 0 || mp_css_hide_ready())\n', 1),
         ('                if (mnCharSel_803F0DFC.doors[i].sel_icon >= 0x19) {\n                    goto hide;\n',

@@ -156,10 +156,10 @@ def main():
         check(what, False, f'last state {s}')
         raise SystemExit(1)
 
-    def wait_log(text, what, timeout=120):
+    def wait_log(text, what, timeout=120, since=0):
         end = time.monotonic() + timeout
         while time.monotonic() < end:
-            if text in log_text():
+            if text in log_text()[since:]:
                 check(what, True)
                 return True
             time.sleep(2)
@@ -217,19 +217,22 @@ def main():
         on_rules = lambda x, y: -15.0 < x < 13.0 and y > 23.0   # noqa: E731 (mncharsel.c: the Rules button's area)
         if not steer_cursor(on_rules, (0.0, 26.0)):
             print('the cursor did not reach the Rules button; at', css.cursor(0), flush=True)
+        # (the busy line also goes out when only the doors this console uses change, Phase 5: count from here)
+        busy_mark = len(log_text())
         for _ in range(4):
             stub.press(KEY_A, 2, 20)
-            if stub.peek('mnCharSel_804D6CF6', 1)[0] in (3, 5) or stub.state()['scene'] != 8 or 'GROUPCSS busy 1' in log_text():
+            if stub.peek('mnCharSel_804D6CF6', 1)[0] in (3, 5) or stub.state()['scene'] != 8 or 'GROUPCSS busy 1' in log_text()[busy_mark:]:
                 break
-        wait_log('GROUPCSS busy 1', 'opening the Rules menu sets this console busy', 60)
+        wait_log('GROUPCSS busy 1', 'opening the Rules menu sets this console busy', 60, busy_mark)
         wait_pc('group-test: busy now 1', 'the PC console sees the host busy while its Rules menu is up')
         stub.until_frames(60)
         capture('03b-rules-menu')
+        busy_mark = len(log_text())
         for _ in range(10):              # B back to the CSS
-            if 'GROUPCSS busy 0' in log_text():
+            if 'GROUPCSS busy 0' in log_text()[busy_mark:]:
                 break
             stub.press(KEY_B, 2, 40)
-        wait_log('GROUPCSS busy 0', 'back from the Rules menu this console is not busy', 120)
+        wait_log('GROUPCSS busy 0', 'back from the Rules menu this console is not busy', 120, busy_mark)
         wait_pc('group-test: busy now 0', 'the PC console sees the host free again')
         s = wait(lambda s: s['scene'] == 8 and stub.peek('mnCharSel_804D6CF6', 1)[0] == 0, 'back on the lobby CSS after the Rules menu', 120)
         stub.until_frames(60)

@@ -24,7 +24,7 @@ typedef struct MpGroupDoor {
     unsigned char handicap;        /* 1..9 under the host's handicap mode (0: off or not known yet); set by the console
                                     * that owns the door: a Human door's own console, a CPU's slider, the host for a CPU's
                                     * auto handicap */
-    unsigned char spare;
+    unsigned char spare;           /* sent: the door's kind before this edit, plus 1 (0: not known); see lobby_cmd_door */
 } MpGroupDoor;
 
 /* The host's rules, as its console sets them (the host sends them; other consoles' are ignored). */
@@ -68,6 +68,8 @@ typedef struct MpGroupLobby {
     unsigned char stars[4];        /* the stars over each door (KOs per port, as vanilla's VS mode counts them; the host keeps them) */
     unsigned char since_end;       /* 1: this view arrived after this console's match ended (the host's: always), so a
                                     * phase 0 in it means the results are over, not a view from before the match */
+    unsigned char in_use;          /* bit n: door n is in use on some console (a slider, its name tag list, name entry, a
+                                    * held token): only that console may switch it between Human, CPU and closed */
 } MpGroupLobby;
 
 /* Melee -> Solo / Group (the VS menu) and the session around the lobby (port/3ds/group/group_menu.c). */
@@ -96,7 +98,9 @@ void mp_platform_group_lobby_set_door(int port, const MpGroupDoor *door);
 void mp_platform_group_lobby_start(void);
 void mp_platform_group_lobby_stage(int stage, int alt_stage);
 void mp_platform_group_lobby_back(void);
-void mp_platform_group_lobby_busy(int busy);        /* this console is busy (1: a name tag list, name entry, the rules menu or a held slider) or not */
+/* This console is busy (bit 0: a name tag list, name entry, the rules menu or a held slider) or not; bits 4..7: the
+ * doors it is using (bit 4 + n: door n), see MpGroupLobby.in_use. */
+void mp_platform_group_lobby_busy(int busy);
 void mp_platform_group_lobby_rules(const MpGroupRules *rules);
 /* The C-stick that turns the character and stage selects' camera: this console's (x, y: -127..127, the stick times
  * 127) goes to every console; out[2n], out[2n+1] is port n's newest (this console's own included), 0 when that port has

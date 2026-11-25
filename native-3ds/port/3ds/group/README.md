@@ -21,6 +21,13 @@ Around it:
   steps and ends once every Human player is ready; a console that left counts as ready. Then the host counts the stars
   and reopens the lobby. Vanilla's own results exit is not run: it would record remote fighters in this console's save
   and can start a "new challenger" fight or a trophy depending on the save.
+- While a session is open (browsing, the lobby, a match, its results), HOME and sleep are off (`group_system_frame`,
+  called each frame from `port/3ds/game.c`); a refused HOME press shows "HOME IS UNAVAILABLE DURING WIRELESS PLAY" on
+  the bottom screen for 2 s. A lost session reopens the Host / Join page with its reason (the host left, stopped
+  responding, ...).
+- A door in use on one console (its slider, name tag list, name entry or held token) cannot be switched between Human,
+  CPU and closed from another (the busy command carries a door mask; the lobby's `in_use`), and each door edit carries
+  the kind it was made from, so the host drops edits from an older view.
 - From Slippi it reuses the lockstep frame driver (`port/engine/slippi/online.c`, through a few hooks), the online scene
   table (`online_mode.c`), the match block format and the port's platform layer (`slippi_plat.c`).
 
@@ -36,5 +43,5 @@ character select doors (the bottom-screen strip still shows both).
 
 `tools/group/`: `group_test.py` (PC consoles; runs `src/lobby_unit.c` first), `group_quad_test.py`, `group_menu_test.py`,
 `group_lobby_test.py` (the emulated console hosts), `group_join_test.py` (it joins a PC host the test drives) and
-`group_late_test.py` (it joins during a match), all in Azahar, reading the CSS from memory with `css_probe.py`;
+`group_late_test.py` (it joins during a match) and `group_door_test.py` (doors in use), all in Azahar, reading the CSS from memory with `css_probe.py`;
 `uds_smoke.py` (one emulated console on the real UDS link). See `docker/README.md`.

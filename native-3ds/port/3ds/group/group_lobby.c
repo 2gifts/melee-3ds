@@ -108,7 +108,7 @@ int lobby_encode(const lobby_state *s, uint8_t *out, int cap)
     }
     int n = need + put_status(&s->status, out + need, cap - need);
     if (n != need + STATUS_BYTES || cap - n < RESULTS_BYTES) return n;
-    out[n] = s->played & 0xF;
+    out[n] = (uint8_t)((s->played & 0xF) | (s->in_use & 0xF) << 4);   /* the high nibble: the doors in use */
     out[n + 1] = s->ready & 0xF;
     out[n + 2] = s->advance;
     memcpy(out + n + 3, s->stars, LOBBY_SLOTS);
@@ -164,6 +164,7 @@ int lobby_decode(lobby_state *s, const uint8_t *in, int len)
     const int results_at = doors_end + STATUS_BYTES;
     if (len >= results_at + RESULTS_BYTES) {
         s->played = in[results_at] & 0xF;
+        s->in_use = in[results_at] >> 4;
         s->ready = in[results_at + 1] & 0xF;
         s->advance = in[results_at + 2] > 2 ? 2 : in[results_at + 2];
         memcpy(s->stars, in + results_at + 3, LOBBY_SLOTS);
@@ -171,13 +172,14 @@ int lobby_decode(lobby_state *s, const uint8_t *in, int len)
     return 0;
 }
 
-int lobby_cmd_door(uint8_t *out, int slot, const lobby_slot *s)
+int lobby_cmd_door(uint8_t *out, int slot, const lobby_slot *s, int base)
 {
     out[0] = LCMD_DOOR; out[1] = (uint8_t)slot;
     out[2] = s->kind; out[3] = s->fighter; out[4] = s->color; out[5] = s->team; out[6] = s->level; out[7] = s->chosen;
     memcpy(out + 8, s->tag, LOBBY_TAG_BYTES);
     out[16] = s->handicap;
-    return 17;
+    out[17] = (uint8_t)(base < 0 || base > LOBBY_EMPTY + 1 ? 0 : base);
+    return 18;
 }
 int lobby_cmd_start(uint8_t *out) { out[0] = LCMD_START; return 1; }
 int lobby_cmd_stage(uint8_t *out, int stage, int alt_stage)
@@ -186,7 +188,11 @@ int lobby_cmd_stage(uint8_t *out, int stage, int alt_stage)
     return 4;
 }
 int lobby_cmd_back(uint8_t *out) { out[0] = LCMD_BACK; return 1; }
-int lobby_cmd_busy(uint8_t *out, int busy) { out[0] = LCMD_BUSY; out[1] = busy ? 1 : 0; return 2; }
+int lobby_cmd_busy(uint8_t *out, int busy, int doors)
+{
+    out[0] = LCMD_BUSY; out[1] = busy ? 1 : 0; out[2] = (uint8_t)(doors & 0xF);
+    return 3;
+}
 int lobby_cmd_results(uint8_t *out, int ready, int advance)
 {
     out[0] = LCMD_RESULTS; out[1] = ready ? 1 : 0; out[2] = (uint8_t)(advance < 0 ? 0 : advance > 2 ? 2 : advance);
@@ -248,9 +254,16 @@ int lobby_host_sync(lobby_host *h, unsigned present)
         unsigned bit = 1u << i;
         if (!(diff & bit)) continue;
         if (!(present & bit) && (h->st.busy & bit)) { h->st.busy &= ~bit; changed = 1; }   /* a stale bit would block Start */
+        if (!(present & bit) && h->in_use_by[i]) changed |= lobby_host_set_in_use(h, i, 0);  /* its doors are free again */
         if (h->st.phase == LOBBY_MATCH || h->st.phase == LOBBY_RESULTS) {   /* the game owns the doors until its results end */
-            if (present & bit) { h->joined_in_match |= bit; h->left_in_match &= ~bit; }
-            else { h->left_in_match |= bit; h->joined_in_match &= ~bit; }
+            /* a leave stays recorded when another console takes the port before the end: lobby_host_match_over
+             * applies the leave (the old console's Human door becomes a CPU) and then the arrival, so the newcomer
+             * never inherits the door of the console before it */
+            if (present & bit) h->joined_in_match |= bit;
+            else {
+                h->left_in_match |= bit; h->joined_in_match &= ~bit;
+                if (h->st.played & bit) h->left_played |= bit;   /* whoever comes to this port now did not play */
+            }
             if (h->st.phase == LOBBY_RESULTS && !(present & bit) && (h->st.played & bit) && !(h->st.ready & bit)) {
                 h->st.ready |= (uint8_t)bit;      /* as an unplugged controller on vanilla's results screen */
                 changed = 1;
@@ -328,6 +341,29 @@ int lobby_host_set_rules(lobby_host *h, const lobby_rules *r)
     return LOBBY_CHANGED;
 }
 
+int lobby_host_set_in_use(lobby_host *h, int port, int doors)
+{
+    if (port < 0 || port >= LOBBY_SLOTS) return 0;
+    h->in_use_by[port] = (uint8_t)(doors & 0xF);
+    uint8_t all = 0;
+    for (int i = 0; i < LOBBY_SLOTS; ++i) all |= h->in_use_by[i];
+    if (all == h->st.in_use) return 0;
+    h->st.in_use = all;
+    return LOBBY_CHANGED;
+}
+
+int lobby_host_edit_door(lobby_host *h, int from, int slot, const lobby_slot *s, int base)
+{
+    if (slot < 0 || slot >= LOBBY_SLOTS || from < 0 || from >= LOBBY_SLOTS) return 0;
+    const lobby_slot *cur = &h->st.slot[slot];
+    uint8_t kind = s->kind > LOBBY_EMPTY ? LOBBY_EMPTY : s->kind;
+    /* the sender did not switch the kind, but the door's kind is no longer the one it saw: an edit from an older view */
+    if (base && kind == base - 1 && cur->kind != base - 1) return 0;
+    /* in another console's hands (vanilla: a door whose slider, token or name tag list is in use cannot be toggled) */
+    if (((h->st.in_use & ~h->in_use_by[from]) >> slot & 1) && kind != cur->kind) return 0;
+    return lobby_host_set_door(h, slot, s);
+}
+
 int lobby_host_set_busy(lobby_host *h, int port, int busy)
 {
     if (port < 0 || port >= LOBBY_SLOTS) return 0;
@@ -348,6 +384,7 @@ int lobby_host_command(lobby_host *h, int from, const uint8_t *cmd, int len)
     switch (cmd[0]) {
         case LCMD_DOOR: {
             if (len < 17) return 0;
+            int base = len >= 18 ? cmd[17] : 0;    /* an older sender has no base: as before */
             lobby_slot s;
             memset(&s, 0, sizeof(s));
             s.kind = cmd[2]; s.fighter = cmd[3]; s.color = cmd[4]; s.team = cmd[5]; s.level = cmd[6]; s.chosen = cmd[7];
@@ -363,15 +400,15 @@ int lobby_host_command(lobby_host *h, int from, const uint8_t *cmd, int len)
                 memcpy(s.tag, cur->tag, LOBBY_TAG_BYTES);
                 s.handicap = cur->handicap;
             }
-            return lobby_host_set_door(h, slot, &s);
+            return lobby_host_edit_door(h, from, slot, &s, base);
         }
         case LCMD_START: return lobby_host_start(h, from);
         case LCMD_STAGE:
             if (len < 4) return 0;
             return lobby_host_pick_stage(h, (cmd[1] << 8) | cmd[2], cmd[3]);
-        case LCMD_BUSY:                            /* the sender's own bit only */
+        case LCMD_BUSY:                            /* the sender's own bit only, and the doors it is using */
             if (len < 2) return 0;
-            return lobby_host_set_busy(h, from, cmd[1]);
+            return lobby_host_set_busy(h, from, cmd[1]) | lobby_host_set_in_use(h, from, len >= 3 ? cmd[2] : 0);
         case LCMD_RESULTS:
             if (len < 3) return 0;
             return lobby_host_results(h, from, cmd[1], cmd[2]);
@@ -390,6 +427,7 @@ void lobby_host_match_began(lobby_host *h, int again)
     h->st.played = (uint8_t)((again ? h->st.played & h->present : h->present) & 0xF);
     h->st.ready = 0;
     h->st.advance = 0;
+    h->left_played = 0;
     memset(&h->st.status, 0, sizeof(h->st.status));
 }
 
@@ -410,6 +448,7 @@ int lobby_host_match_over(lobby_host *h)
     h->st.stage_picked = 0;
     h->st.mode = 0;
     h->st.played = h->st.ready = h->st.advance = 0;
+    h->left_played = 0;
     memset(&h->st.status, 0, sizeof(h->st.status));
     unsigned joined = h->joined_in_match, left = h->left_in_match;
     h->joined_in_match = h->left_in_match = 0;
@@ -427,7 +466,8 @@ int lobby_host_results_begin(lobby_host *h)
 {
     if (h->st.phase != LOBBY_MATCH) return 0;
     h->st.phase = LOBBY_RESULTS;
-    h->st.ready = (uint8_t)(h->st.played & ~h->present & 0xF);   /* a console that left during the match */
+    /* a console that left during the match, even if another has taken its port since */
+    h->st.ready = (uint8_t)(h->st.played & (~h->present | h->left_played) & 0xF);
     h->st.advance = 0;
     return LOBBY_CHANGED;
 }
@@ -435,6 +475,7 @@ int lobby_host_results_begin(lobby_host *h)
 int lobby_host_results(lobby_host *h, int from, int ready, int advance)
 {
     if (h->st.phase != LOBBY_RESULTS || from < 0 || from >= LOBBY_SLOTS || !(h->st.played & (1u << from))) return 0;
+    if (h->left_played & (1u << from)) return 0;   /* the console on that port now did not play this match */
     uint8_t bit = (uint8_t)(1u << from);
     uint8_t r = ready ? (uint8_t)(h->st.ready | bit) : (uint8_t)(h->st.ready & ~bit);
     uint8_t a = advance > 2 ? 2 : advance > h->st.advance ? (uint8_t)advance : h->st.advance;

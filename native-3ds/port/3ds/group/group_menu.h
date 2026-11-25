@@ -72,4 +72,10 @@ void group_join_row(int row);                /* a full game (4 consoles) is refu
 void group_back(void);
 void group_note_touch(unsigned x, unsigned y);   /* log where the bottom screen was tapped on a group page */
 
+/* HOME and sleep: off while a wireless session is open (browsing, the lobby, a match, its results), on otherwise.
+ * Call once per frame (the engine's frame and its lockstep waits); logs "group: HOME and sleep off/on" on a change. */
+void group_system_frame(void);
+int group_in_wireless(void);                 /* 1 while a session is open from the menu and not failed or ended */
+int group_home_note(void);                   /* 1 for 2 s after a refused HOME press: the bottom screen shows a notice */
+
 #endif

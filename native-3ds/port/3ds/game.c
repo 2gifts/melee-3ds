@@ -74,6 +74,7 @@ unsigned mp_native_frame_number(void){return engine_frames;}
  * (matchmaking, the next game, or a late remote pad), when no frame is drawn.
  * Keeps HOME, the power button and SELECT (quit) working, as frame_main does. */
 void mp_native_log(const char*);
+extern void group_system_frame(void);   /* group play: HOME and sleep off during a wireless session (group_menu.h) */
 void mp_native_slippi_wait_poll(void){
     hidScanInput();
     unsigned held=hidKeysHeld();
@@ -81,6 +82,7 @@ void mp_native_slippi_wait_poll(void){
         extern void mp_game_card_flush(void);mp_game_card_flush();
         mp_native_log("Slippi: quit while waiting for the opponent\n");
         exit_requested=1;longjmp(failure_return,1);}
+    group_system_frame();
 }
 void mp_native_log(const char*);
 #include "frame_rate.h"
@@ -243,6 +245,7 @@ void mp_native_frame_main(void)
         /* A save written in the last 0.3 s is still in memory (card.c). */
         extern void mp_game_card_flush(void);mp_game_card_flush();
         exit_requested=1;longjmp(failure_return,1);}
+    group_system_frame();
     mp_native_cpu_poll();
     if(display_toggle_pending){mp_native_expanded^=1;display_toggle_pending=0;}
     {   /* Holding the FPS button (bottom-left) for two seconds runs the GPU

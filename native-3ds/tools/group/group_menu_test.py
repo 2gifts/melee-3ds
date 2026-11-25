@@ -4,6 +4,10 @@ Boots with group.ini menu=1 and the loopback link (udp=1), then: main menu -> VS
 Back (B), Melee again -> Group (the Group page), Host (the lobby CSS in the HANYU scene, with the connected-players strip),
 B out of the CSS (back on the VS menu, the session closed), and finally Melee -> Solo (the vanilla CSS).
 Every step saves both screens as PNGs and the log lines are checked.
+Phase 5 (bottom-screen page only): the first Group press runs with test_wireless_off=1 in group.ini and must show
+"Please enable wireless and try again" and stay on Solo / Group; the key is then removed and Group opens the list.
+HOME and sleep are off from the Group list on ("group: HOME and sleep off"), a refused HOME press (poked through the
+GDB stub) shows the bottom-screen notice for 2 s, and they are on again once the lobby is left; Solo never turns them off.
 
     docker/emu-test.sh run tools/group/group_menu_test.py [--seconds 600]
 Results: $MELEE_TEST_OUT/group-menu/ (the PNGs, game.log)."""
@@ -189,7 +193,8 @@ def main():
     sd = emu.sd(home)
     (sd / 'slippi').mkdir(parents=True, exist_ok=True)
     (sd / 'slippi' / 'config.ini').write_text('prefetch=0\ndelay=2\n')
-    (sd / 'slippi' / 'group.ini').write_text('menu=1\nudp=1\nport=44100\ndelay=2\n' + ('top_menu=1\n' if args.top_menu else ''))
+    ini = 'menu=1\nudp=1\nport=44100\ndelay=2\n' + ('top_menu=1\n' if args.top_menu else '')
+    (sd / 'slippi' / 'group.ini').write_text(ini + ('' if args.top_menu else 'test_wireless_off=1\n'))
     (sd / 'no-scripted-input').write_text('')   # no smoke-build scripted presses
     (sd / 'game.log').unlink(missing_ok=True)
     stub = Stub(emu.elf_symbols(args.elf))
@@ -300,9 +305,19 @@ def main():
             stub.until_frames(20)
             stub.press(KEY_A)
             wait_log('group: the Solo/Group page is up', 2)
-            touch(238, 104)              # GROUP
-            wait_log('group: Group, looking for games')
+            touch(238, 104)              # GROUP, with wireless "off" (test_wireless_off=1)
+            ok = wait_log('group: Please enable wireless and try again', 1, 60)
+            stub.until_frames(20)
+            capture('wireless-off')
+            check('Group with wireless off shows "Please enable wireless and try again"', ok)
+            check('wireless off: HOME and sleep stay on', 'HOME and sleep off' not in log_text())
+            # wireless back on: group.ini is read again on each Group press
+            (sd / 'slippi' / 'group.ini').write_text(ini)
+            touch(238, 104)              # GROUP again: the retry
+            wait_log('group: Group, looking for games', 2)
+            ok = wait_log('group: HOME and sleep off (wireless session)', 1, 60)
             capture('group-list')
+            check('the retry opens the list; HOME and sleep off while browsing', ok)
             expect_log('Group opens the list', 'group: Group, looking for games')
         touch(118, 50)
         s = wait(lambda s: s['scene'] == 8, 'enter the lobby CSS', 120)
@@ -314,6 +329,18 @@ def main():
         time.sleep(3)
         f1 = stub.frames()
         check('the engine keeps running on the lobby CSS', f1 > f0, f'engine_frames {f0} -> {f1}')
+        if not args.top_menu:
+            # A refused HOME press (as libctru reports it): the notice for 2 s over the strip
+            stub.poke('group_test_home_reject', 1)
+            ok = wait_log('group: HOME pressed during wireless play', 1, 60)
+            stub.until_frames(10)
+            capture('home-notice')
+            check('a refused HOME press is logged and shows the notice (home-notice-bottom.png)', ok)
+            time.sleep(1)
+            stub.until_frames(150)   # more than 2 s of engine time
+            capture('home-notice-gone')
+            check('HOME and sleep stayed off through Host (one off, no on yet)',
+                  log_text().count('HOME and sleep off') == 1 and 'HOME and sleep on' not in log_text())
         # B backs out of the CSS to the VS menu: vanilla wants B released once, then held for 30 engine frames.
         stub.press(KEY_B, 2, 4)
         stub.poke('mp_test_keys', KEY_B)
@@ -329,6 +356,8 @@ def main():
         capture('back-on-vs-menu')
         kind, hovered = stub.menu()
         check('back on the VS menu with Melee hovered', kind == MENU_VS and hovered == 0, f'menu kind {kind}, hovered {hovered}')
+        if not args.top_menu:
+            check('HOME and sleep are on again after leaving the lobby', wait_log('group: HOME and sleep on', 1, 30))
         # Melee -> Solo: the vanilla CSS (not the HANYU scene).
         stub.press(KEY_A)
         if args.top_menu:
@@ -341,6 +370,8 @@ def main():
         check('Solo is the vanilla VS CSS (mode != 8)', s['mode'] != 8, str(s))
         stub.until_frames(60)
         capture('solo-css')
+        if not args.top_menu:
+            check('Solo leaves HOME and sleep on', log_text().count('HOME and sleep off') == 1)
     finally:
         emu.stop(proc)
         time.sleep(1)

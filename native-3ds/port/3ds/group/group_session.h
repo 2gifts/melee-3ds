@@ -15,7 +15,8 @@
  *   drop_pct=N     tests: lose N % of outgoing packets
  *   net_thread=1, net_thread_core=-2   the worker thread
  *   auto_players=2 automatic sessions (opponent=@host / @join in the engine's config, tests): the host starts a match by
- *                  itself once this many consoles are here and every one has picked */
+ *                  itself once this many consoles are here and every one has picked
+ *   test_wireless_off=1  tests: every session fails to open with "Please enable wireless and try again" */
 #ifndef GROUP_SESSION_H
 #define GROUP_SESSION_H
 #include "group_bridge.h"
@@ -28,6 +29,7 @@ typedef struct {
     int udp, port, drop_pct;
     int net_thread, net_thread_core;
     int auto_players;
+    int test_wireless_off;   /* tests: opening a session fails as if wireless communication were off */
     char name[12];        /* name=: this console's name on the loopback link (tests; UTF-8, up to 11 bytes) */
 } group_config;
 

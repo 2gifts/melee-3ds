@@ -38,6 +38,9 @@ enum { LW_IDLE = 0, LW_SEARCHING, LW_CONNECTED, LW_FAILED, LW_DISCONNECTED };
 enum { LW_STAT_PACKETS_SENT, LW_STAT_PACKETS_RECEIVED, LW_STAT_PACKETS_STALE, LW_STAT_GAPS, LW_STAT_ACKS_SENT,
        LW_STAT_ACKS_RECEIVED, LW_STAT_RESENDS, LW_STAT_DROPPED_TEST, LW_STAT_MENU_SENT, LW_STAT_COUNT };
 
+/* The text shown when the console's wireless communication is off (udsInit refuses). */
+#define LW_TEXT_WIRELESS_OFF "Please enable wireless and try again"
+
 typedef struct {
     int host;              /* 1: create the lobby; 0: browse for lobbies nearby and join one with lw_join */
     int input_size;        /* bytes per player input per frame, 1..LW_MAX_INPUT (the same on every console) */
@@ -45,6 +48,7 @@ typedef struct {
     int timeout_ms;        /* silence after which a console has dropped (0 = 2000) */
     int use_udp, port;     /* loopback UDP link instead of UDS (PC tools, development builds); port: the base port */
     int test_drop_pct;     /* tests: lose this % of outgoing packets */
+    int test_wireless_off; /* tests: lw_open fails as if wireless communication were off (LW_TEXT_WIRELESS_OFF) */
     char name[LW_NAME_MAX]; /* this console's name as the others see it (UTF-8); "": the link's own (the 3DS system
                             * name over UDS). Only the loopback link uses it so far; a Mii name would go here. */
 } lw_config;

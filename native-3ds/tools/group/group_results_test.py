@@ -524,10 +524,15 @@ def main():
         take_ok = a.css.doors()[0]['p_kind'] == 0
         check('A\'s door is still its own after the Back presses', take_ok, str(a.css.doors()[0]))
         check('Back asks "End the session?" once more', ask_to_leave())
+        # Phase 5: HOME and sleep were off on the host from Host on, through both matches and their results
+        check('A: HOME and sleep off through the matches and results (one off, no on)',
+              a.log().count('group: HOME and sleep off') == 1 and 'group: HOME and sleep on' not in a.log())
         a.touch(*DIALOG_YES)
         wait_scene(a, 1, '"End it": A is back on the menus', 120, False)
+        wait_log(a, 'group: HOME and sleep on', 'A: HOME and sleep on again once the session ends', 60)
         check('ending the session does not crash A', a.proc.poll() is None and a.log().count('PANIC') == panics)
         wait_scene(b, 1, 'B goes back to the menus as the session ends', 120, False)
+        wait_log(b, 'group: HOME and sleep on', 'B: HOME and sleep on again once the session ends', 60, 2)
         check('out of the session the stars are gone (A)', a.stars() == [0, 0, 0, 0], str(a.stars()))
     finally:
         for c in (a, b):

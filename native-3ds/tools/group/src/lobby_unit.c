@@ -14,10 +14,23 @@ static lobby_slot fighter(int kind, int ch, int color)
     return s;
 }
 
+static int door_base(lobby_host *h, int from, int slot, lobby_slot s, int base)
+{
+    uint8_t c[LOBBY_BLOB_MAX];
+    int n = lobby_cmd_door(c, slot, &s, base);
+    return lobby_host_command(h, from, c, n);
+}
+
+static int busy_cmd(lobby_host *h, int from, int busy, int doors)
+{
+    uint8_t c[8];
+    return lobby_host_command(h, from, c, lobby_cmd_busy(c, busy, doors));
+}
+
 static int door(lobby_host *h, int from, int slot, lobby_slot s)
 {
     uint8_t c[LOBBY_BLOB_MAX];
-    int n = lobby_cmd_door(c, slot, &s);
+    int n = lobby_cmd_door(c, slot, &s, 0);
     return lobby_host_command(h, from, c, n);
 }
 
@@ -54,7 +67,7 @@ int main(void)
         open.chosen = 0;
         CHECK(!door(&h, 1, 1, open) && h.st.slot[1].kind == LOBBY_EMPTY);
         CHECK(!door(&h, 1, 2, fighter(LOBBY_EMPTY, 0, 0)) && h.st.slot[2].kind == LOBBY_CPU);
-        CHECK(!lobby_host_command(&h, 1, cmd, lobby_cmd_busy(cmd, 1)) && h.st.busy == 0);
+        CHECK(!lobby_host_command(&h, 1, cmd, lobby_cmd_busy(cmd, 1, 0)) && h.st.busy == 0);
     }
 
     /* a console joins port 2 (index 1): joining opens no door; its CSS opens it with an edit, as a player would */
@@ -97,16 +110,16 @@ int main(void)
     /* Start: any console; then the first stage pick wins, a second one is ignored */
     CHECK(lobby_can_start(&h.st));
     /* a busy console (name tag list, name entry, rules menu, held slider): READY waits everywhere, so Start is refused until it is back */
-    CHECK(lobby_host_command(&h, 2, cmd, lobby_cmd_busy(cmd, 1)) & LOBBY_CHANGED);
+    CHECK(lobby_host_command(&h, 2, cmd, lobby_cmd_busy(cmd, 1, 0)) & LOBBY_CHANGED);
     CHECK(h.st.busy == 0x4 && !lobby_can_start(&h.st));
     CHECK(!lobby_host_command(&h, 1, (cmd[0] = LCMD_START, cmd), 1) && h.st.phase == LOBBY_CSS);
     CHECK(!lobby_host_command(&h, 2, cmd, 1));                                    /* too short */
     CHECK(lobby_encode(&h.st, blob, sizeof(blob)) > 0 && lobby_decode(&d, blob, LOBBY_BLOB_MAX) == 0 && d.busy == 0x4);
-    CHECK(lobby_host_command(&h, 2, cmd, lobby_cmd_busy(cmd, 0)) & LOBBY_CHANGED);
+    CHECK(lobby_host_command(&h, 2, cmd, lobby_cmd_busy(cmd, 0, 0)) & LOBBY_CHANGED);
     CHECK(h.st.busy == 0 && lobby_can_start(&h.st));
     /* only the sender's own bit; a console that leaves takes its bit with it */
-    CHECK(lobby_host_command(&h, 1, cmd, lobby_cmd_busy(cmd, 1)) && h.st.busy == 0x2);
-    CHECK(!lobby_host_command(&h, 7, cmd, lobby_cmd_busy(cmd, 1)) && h.st.busy == 0x2);
+    CHECK(lobby_host_command(&h, 1, cmd, lobby_cmd_busy(cmd, 1, 0)) && h.st.busy == 0x2);
+    CHECK(!lobby_host_command(&h, 7, cmd, lobby_cmd_busy(cmd, 1, 0)) && h.st.busy == 0x2);
     {
         lobby_host t = h;
         CHECK(lobby_host_sync(&t, 0x5) & LOBBY_CHANGED);
@@ -368,6 +381,81 @@ int main(void)
         CHECK(lobby_host_results(&r, 0, 1, 2) && r.st.ready == 0x1);
         CHECK(lobby_host_results_over(&r, NULL, NULL) && r.st.phase == LOBBY_CSS);
         CHECK(r.st.slot[1].kind == LOBBY_CPU && r.st.slot[2].kind == LOBBY_EMPTY && r.present == 0x5);
+
+        /* Phase 5: another console takes the port of a player who left during the match (a rejoin). It did not play:
+         * its port counts as ready on the results screen and its presses there are not the player's. */
+        lobby_host_init(&r, 0x3);
+        CHECK(lobby_host_set_door(&r, 0, &p0) && door(&r, 1, 1, p1));
+        lobby_host_match_began(&r, 0);
+        CHECK(r.st.played == 0x3);
+        CHECK(lobby_host_sync(&r, 0x1) == 0 && lobby_host_sync(&r, 0x3) == 0);           /* port 1 drops, a newcomer takes it */
+        CHECK(r.left_played == 0x2);
+        CHECK(lobby_host_results_begin(&r) && r.st.ready == 0x2);                         /* the player who left counts as ready */
+        CHECK(!lobby_host_results(&r, 1, 0, 2) && r.st.ready == 0x2);                    /* the newcomer cannot unready it */
+        CHECK(lobby_host_results(&r, 0, 1, 2) && r.st.ready == 0x3);
+        CHECK(lobby_host_results_over(&r, NULL, NULL) && r.left_played == 0);
+        /* and it does not inherit the door: the leave is applied (Human -> CPU) before its arrival */
+        CHECK(r.st.slot[1].kind == LOBBY_CPU && r.st.slot[1].tag[0] == 0 && r.present == 0x3);
+        /* the same during the results: a leave and a rejoin before they end */
+        CHECK(door(&r, 1, 1, p1) && r.st.slot[1].kind == LOBBY_HUMAN);
+        lobby_host_match_began(&r, 0);
+        CHECK(lobby_host_results_begin(&r) && r.st.ready == 0);
+        CHECK(lobby_host_sync(&r, 0x1) & LOBBY_CHANGED);                                  /* leaves on the results: ready */
+        CHECK(r.st.ready == 0x2 && lobby_host_sync(&r, 0x3) == 0);
+        CHECK(!lobby_host_results(&r, 1, 0, 2) && r.st.ready == 0x2);
+        CHECK(lobby_host_results(&r, 0, 1, 2) && lobby_host_results_over(&r, NULL, NULL));
+        CHECK(r.st.slot[1].kind == LOBBY_CPU);
+    }
+
+    /* Phase 5, step 4: doors in use and edits from an older view. Consoles on ports 0..2; door 2 is a CPU. */
+    {
+        lobby_host u;
+        lobby_state x;
+        uint8_t b[LOBBY_BLOB_MAX];
+        lobby_slot cpu = fighter(LOBBY_CPU, 0x02, 0), closed = fighter(LOBBY_EMPTY, 0, 0), lvl = cpu;
+        lvl.level = 8;
+        lobby_host_init(&u, 0x7);
+        CHECK(door(&u, 0, 0, fighter(LOBBY_HUMAN, 0x14, 0)) && door(&u, 1, 1, fighter(LOBBY_HUMAN, 0x02, 1)));
+        CHECK(door(&u, 0, 2, cpu) && u.st.slot[2].kind == LOBBY_CPU);
+        /* compare-and-set: a level edit made from a view where door 2 was a CPU, after another console closed it */
+        CHECK(door_base(&u, 0, 2, closed, LOBBY_CPU + 1) && u.st.slot[2].kind == LOBBY_EMPTY);
+        CHECK(!door_base(&u, 1, 2, lvl, LOBBY_CPU + 1) && u.st.slot[2].kind == LOBBY_EMPTY);   /* stale: dropped */
+        CHECK(door_base(&u, 1, 2, cpu, LOBBY_EMPTY + 1) && u.st.slot[2].kind == LOBBY_CPU);    /* a switch with a stale base: applied */
+        CHECK(door_base(&u, 0, 2, closed, LOBBY_HUMAN + 1) && u.st.slot[2].kind == LOBBY_EMPTY); /* (the sender switched it) */
+        CHECK(door_base(&u, 1, 2, lvl, 0) && u.st.slot[2].kind == LOBBY_CPU);                  /* base 0: as before */
+        CHECK(door_base(&u, 1, 2, lvl, LOBBY_CPU + 1) == 0);                                    /* current base, no change */
+        lvl.level = 9;
+        CHECK(door_base(&u, 1, 2, lvl, LOBBY_CPU + 1) && u.st.slot[2].level == 9);              /* current base, a change */
+        /* in use: console 1 holds door 2's level slider */
+        CHECK(busy_cmd(&u, 1, 1, 0x4) & LOBBY_CHANGED);
+        CHECK(u.st.in_use == 0x4 && u.st.busy == 0x2);
+        CHECK(!door_base(&u, 0, 2, closed, LOBBY_CPU + 1) && u.st.slot[2].kind == LOBBY_CPU);   /* another console: refused */
+        CHECK(!door_base(&u, 2, 2, closed, 0) && u.st.slot[2].kind == LOBBY_CPU);
+        CHECK(!lobby_host_edit_door(&u, 0, 2, &closed, 0) && u.st.slot[2].kind == LOBBY_CPU);  /* the host's own console too */
+        lvl.level = 4;
+        CHECK(door_base(&u, 1, 2, lvl, LOBBY_CPU + 1) && u.st.slot[2].level == 4);              /* its user drags on */
+        CHECK(door_base(&u, 2, 0, fighter(LOBBY_CPU, 0x14, 0), 0) && u.st.slot[0].kind == LOBBY_CPU);   /* other doors: free */
+        CHECK(door_base(&u, 1, 2, closed, LOBBY_CPU + 1) && u.st.slot[2].kind == LOBBY_EMPTY);   /* its user may switch it */
+        CHECK(door_base(&u, 1, 2, cpu, LOBBY_EMPTY + 1) && u.st.slot[2].kind == LOBBY_CPU);
+        /* the doors in use go to every console (the results byte's high nibble) */
+        int n = lobby_encode(&u.st, b, sizeof(b));
+        CHECK(n > 0 && n <= LOBBY_BLOB_MAX && lobby_decode(&x, b, n) == 0 && x.in_use == 0x4 && x.played == 0);
+        u.st.played = 0x5;
+        n = lobby_encode(&u.st, b, sizeof(b));
+        CHECK(lobby_decode(&x, b, n) == 0 && x.in_use == 0x4 && x.played == 0x5);
+        u.st.played = 0;
+        /* let go: free again */
+        CHECK(busy_cmd(&u, 1, 0, 0) & LOBBY_CHANGED);
+        CHECK(u.st.in_use == 0 && door_base(&u, 0, 2, closed, LOBBY_CPU + 1) && u.st.slot[2].kind == LOBBY_EMPTY);
+        /* two consoles' doors at once; the OR is published, and a console that leaves releases its own */
+        CHECK(busy_cmd(&u, 1, 1, 0x4) && busy_cmd(&u, 2, 1, 0x1) && u.st.in_use == 0x5);
+        CHECK(lobby_host_sync(&u, 0x5) & LOBBY_CHANGED);                                         /* console 1 leaves */
+        CHECK(u.st.in_use == 0x1 && u.in_use_by[1] == 0 && !(u.st.busy & 0x2));
+        CHECK(door_base(&u, 0, 2, cpu, LOBBY_EMPTY + 1) && u.st.slot[2].kind == LOBBY_CPU);
+        CHECK(!door_base(&u, 0, 0, closed, LOBBY_CPU + 1));                                      /* console 2 still uses door 0 */
+        /* an older console's two-byte busy command clears the doors it might have had */
+        uint8_t old[2] = {LCMD_BUSY, 1};
+        CHECK(lobby_host_command(&u, 2, old, 2) && u.st.in_use == 0);
     }
 
     printf("lobby_unit: ok\n");
