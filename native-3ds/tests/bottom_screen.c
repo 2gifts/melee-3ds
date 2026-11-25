@@ -24,7 +24,8 @@ static void group_pages(void){
     GroupView* v=&bottom_stub_view;
     extern unsigned char mp_group_row_head[GROUP_ROWS];
     const char* hosts[9]={"Alice","Zo\xC3\xAB",KANA10,"Anna","Bob","\xE3\x82\x86\xE3\x81\x86\xE3\x81\x8D","Carol","Dave","Eve"};
-    memset(v,0,sizeof *v);v->page=GROUP_PAGE_LIST;
+    memset(v,0,sizeof *v);v->page=GROUP_PAGE_LIST;v->my_has_mii=1;v->my_mii[0]=1;v->my_mii_crc=0x4242;   /* our own head on Host */
+    extern unsigned char mp_group_host_head;
     for(int i=0;i<9;++i){group_game* r=&v->row[i];snprintf(r->host,sizeof r->host,"%s",hosts[i]);r->players=1+i%4;r->max=4;r->key=(uint32_t)i;
         r->has_mii=i%2==0;r->mii_crc=(uint16_t)(0x1000+i);r->mii[0]=1;
         for(int p=0;p<4;++p){r->beacon.slot[p].kind=LOBBY_EMPTY;}
@@ -54,7 +55,11 @@ static void group_pages(void){
     mp_bottom_online_touch(240,45);assert(bottom_stub_turned==0);
     v->list_page=0;save("group-list-page-1",&s,0,0);
     snprintf(v->error,sizeof v->error,"That game is full (4 consoles)");save("group-list-error",&s,0,0);
+    assert(mp_group_host_head==1);
     v->error[0]=0;v->count=0;v->pages=1;v->list_page=0;save("group-list-empty",&s,0,0);
+    v->my_has_mii=0;save("group-list-no-mii",&s,0,0);assert(mp_group_host_head==0);   /* no Mii: "HOST GAME" alone */
+    v->my_has_mii=1;bottom_stub_mii_ready=0;save("group-list-own-pending",&s,0,0);assert(mp_group_host_head==0);   /* the place kept */
+    bottom_stub_mii_ready=1;
     /* the strip: a full lobby with a CPU, a closed door and an empty port; names in kana; busy reasons */
     v->page=GROUP_PAGE_NONE;
     GroupStrip* g=&bottom_stub_strip;memset(g,0,sizeof *g);bottom_stub_strip_on=1;g->active=1;g->me=1;g->phase=LOBBY_CSS;g->rules.stocks=4;
@@ -64,6 +69,7 @@ static void group_pages(void){
     g->port[3].door=door(1,13,1,1);
     s.scene=8;save("group-strip",&s,0,0);
     assert(!strcmp(mp_group_strip_text[1],"CHOOSING A NAME TAG")&&!strcmp(mp_group_strip_text[2],"CLOSED")&&!strcmp(mp_group_strip_text[3],"CPU"));
+    g->rules.stocks=1;save("group-strip-1-stock",&s,0,0);g->rules.stocks=4;   /* "1 STOCK", not "1 STOCKS" */
     g->port[1].busy_why=LOBBY_BUSY_NAMING;save("group-strip-naming",&s,0,0);assert(!strcmp(mp_group_strip_text[1],"ENTERING A NAME"));
     g->port[1].busy_why=LOBBY_BUSY_RULES;save("group-strip-rules",&s,0,0);assert(!strcmp(mp_group_strip_text[1],"SETTING THE RULES"));
     g->port[1].busy_why=LOBBY_BUSY_SLIDER;g->port[1].door=door(0,0,0,1);save("group-strip-slider",&s,0,0);assert(!strcmp(mp_group_strip_text[1],"CHOSEN"));

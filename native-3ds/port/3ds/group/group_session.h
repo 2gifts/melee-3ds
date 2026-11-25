@@ -58,6 +58,7 @@ void group_ini_str(const char *text, const char *key, char *out, int len);
 int group_session_start(int host, int automatic);
 void group_session_stop(void);
 int group_session_open(void);                  /* a session is open (the online bridge goes to it) */
+int group_my_mii(uint8_t *out);                /* this console's Mii (LOBBY_MII_BYTES), read as the session opened; 0 if none */
 int group_is_host(void);
 int group_my_port(void);
 

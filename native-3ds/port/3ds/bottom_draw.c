@@ -731,9 +731,8 @@ static void stock_badge(int x,int y,int d,const lobby_slot* door,const lobby_sta
 /* tests: what each row of the page drew as its head: 1 the host's Mii, 2 the emblem, 0 no row */
 unsigned char mp_group_row_head[GROUP_ROWS];
 /* The host's Mii head (mp_group_mii_icon: 64 x 64 RGBA, ready once rendered), box-filtered to d x d. 0 if not ready. */
-static int mii_head(const group_game* r,int x,int y,int d){
-    if(!r->has_mii)return 0;
-    const uint32_t* icon=mp_group_mii_icon(r->key,r->mii_crc,r->mii);
+static int mii_icon_draw(uint32_t key,uint16_t crc,const unsigned char* mii,int x,int y,int d){
+    const uint32_t* icon=mp_group_mii_icon(key,crc,mii);
     if(!icon)return 0;
     for(int yy=0;yy<d;++yy)for(int xx=0;xx<d;++xx){
         int x0=xx*64/d,x1=(xx+1)*64/d,y0=yy*64/d,y1=(yy+1)*64/d;unsigned rr=0,gg=0,bb=0,aa=0,n=0;
@@ -745,6 +744,23 @@ static int mii_head(const group_game* r,int x,int y,int d){
     }
     return 1;
 }
+static int mii_head(const group_game* r,int x,int y,int d){return r->has_mii&&mii_icon_draw(r->key,r->mii_crc,r->mii,x,y,d);}
+#define MY_MII_KEY 0xFFFFFFFFu     /* the icon cache's key for this console's own Mii (games' keys never reach it) */
+unsigned char mp_group_host_head;  /* tests: 1 when the Host button drew this console's Mii head */
+/* "HOST GAME" with this console's own Mii head at its left (owner, 2026-11-25); the text alone without one */
+static void host_button(const GroupView* v,int w){
+    /* the head (25 px in the 27 px button) and the text are centred together, 4 px apart (owner, 2026-11-25). A valid
+     * Mii (its CRC is checked as the list opens) keeps the head's place, so the text never moves: while it renders, and
+     * as a gap if its render fails (owner, 2026-11-25); the text centres alone only without a valid Mii. */
+    int on=!v->busy,x=GL_HOST_X,y=GL_HOST_Y,h=GL_HOST_H,d=h-2,gap=4;
+    rect(x,y,w,h,on?gold:card_color);
+    const char* s=v->busy?"PLEASE WAIT":"HOST GAME";
+    int tw=width(s,14),with_head=v->my_has_mii&&!v->busy;
+    int left=x+(w-(with_head?d+gap:0)-tw)/2;
+    mp_group_host_head=with_head&&mii_icon_draw(MY_MII_KEY,v->my_mii_crc,v->my_mii,left,y+1,d);
+    if(with_head)left+=d+gap;
+    text(left,y+(h-14)/2,s,14,on?dark:ink);
+}
 /* a page button: a triangle pointing left (dir -1) or right, gold when it can turn */
 static void page_button(int x,int y,int w,int h,int dir,int on){
     rect(x,y,w,h,on?gold:card_color);
@@ -755,7 +771,7 @@ static void group_list_page(const GroupView* v){
     /* an error takes the header's right side ("SEARCHING") */
     header("GROUP",v->error[0]?"":v->busy?"JOINING":"SEARCHING");
     if(v->error[0]){int h=12;while(h>8&&width(v->error,h)>205)--h;text(309-width(v->error,h),10,v->error,h,slippi_red);}
-    pill(GL_HOST_X,GL_HOST_Y,paged?GL_HOST_PAGED_W:GL_HOST_W,GL_HOST_H,v->busy?"PLEASE WAIT":"HOST A GAME",14,!v->busy);
+    host_button(v,paged?GL_HOST_PAGED_W:GL_HOST_W);
     if(paged){char b[16];
         page_button(GL_PREV_X,GL_HOST_Y,GL_PAGE_W,GL_HOST_H,-1,v->list_page>0);
         page_button(GL_NEXT_X,GL_HOST_Y,GL_PAGE_W,GL_HOST_H,1,v->list_page<v->pages-1);
@@ -869,7 +885,7 @@ static void group_strip_page(const GroupStrip* g,unsigned scene){
         if(stocks_ready)stock_badge(236,y+5,24,d,&g->status,g->phase,i,0,g->rules.teams);
         mp_group_strip_text_set(i,b);
     }
-    if(g->rules.time_mode)snprintf(b,sizeof(b),"TIME %d MIN",g->rules.minutes);else snprintf(b,sizeof(b),"%d STOCKS",g->rules.stocks);
+    if(g->rules.time_mode)snprintf(b,sizeof(b),"TIME %d MIN",g->rules.minutes);else snprintf(b,sizeof(b),"%d STOCK%s",g->rules.stocks,g->rules.stocks==1?"":"S");
     /* Only the host sets the rules: its CSS Rules banner and Teams switch do nothing on the other consoles. */
     if(g->me!=0){size_t n=strlen(b);snprintf(b+n,sizeof(b)-n,"%s"," - THE HOST'S RULES");}
     if(g->toast[0])center(160,192,g->toast,13,slippi_done);else center(160,192,b,12,gold);

@@ -5,8 +5,8 @@ untouched. What it does to the VS character select (mncharsel.c):
   * mp_css_pad(port): console n drives door n with its only pad (pad 0); the other ports read unplugged channels, so
     their cursors take the vanilla "no controller" branch and stay hidden (cursors are private).
   * mp_css_group_frame(), once per CSS frame: mirrors the host's lobby into the doors (portraits, costumes, Human/CPU,
-    teams, CPU levels, closed doors) and sends this console's door edits to the host; draws each console's name and
-    signal under its door (not in builds made with --no-door-names); sends the host's rules; leaves for the stage
+    teams, CPU levels, closed doors) and sends this console's door edits to the host; draws each console's name
+    under its door (not in builds made with --no-door-names); sends the host's rules; leaves for the stage
     select when the host says so.
   * A door another console sits on is that console's: vanilla's "no controller" branch never gives it a random fighter
     here, and this console never sends its fighter, costume or tag (only Human / CPU / closed and the team, which any
@@ -67,10 +67,9 @@ static MpGroupRules mp_css_rules_sent;
 static int mp_css_rules_sent_ok;
 static HSD_Text* mp_css_dtext[4];       /* the name under each door */
 static HSD_Text* mp_css_plate[4];       /* the dark plate behind it */
-static HSD_Text* mp_css_bar[4][3];      /* the three signal bars */
 static int mp_css_dname[4];
 static char mp_css_name_now[4][32];
-static int mp_css_col_now[4], mp_css_level_now[4];
+static int mp_css_col_now[4];
 
 static int mp_css_group(void) { return mp_group_mode(); }
 static int mp_css_my(void) { int i = mp_platform_slippi_net_local_index(); return i < 0 || i > 3 ? 0 : i; }
@@ -668,24 +667,19 @@ static void mp_css_rules_frame(void)
     }
 }
 
-/* ---- the name and signal bars under each door ----
- * A dark plate under the door's own name plate: the signal icon on the left, drawn as the bottom screen draws it
- * (bottom_draw.c group_bars: three bars of rising height, as many lit as the port's signal level, the rest grey), and
- * the console's 3DS name in the cursor colour to its right. The plate and the bars are SIS texts with no characters,
- * only their background box (bg_color). Sizes and offsets in CSS units, from the door's left edge and the door's name
- * joint (the vanilla name plate). */
+/* ---- the name under each door ----
+ * A dark plate under the door's own name plate with the console's name on it in the cursor colour, centred and, when
+ * too long, squeezed into the plate as the results screen's names are (group_results.py: SIS alignment 1, fitting,
+ * kerning). No signal bars (owner, 2026-11-25: the bottom screen's are enough). The plate is a SIS text with no
+ * characters, only its background box (bg_color). Sizes and offsets in CSS units, from the door's left edge and the
+ * door's name joint (the vanilla name plate). */
 #define MP_DOOR_PLATE_X 0.7f      /* from the door's left edge */
 #define MP_DOOR_PLATE_Y 6.4f      /* below the name joint: under the door, above the screen edge */
 #define MP_DOOR_PLATE_W 13.4f
 #define MP_DOOR_PLATE_H 2.4f
-#define MP_DOOR_BAR_X 0.6f        /* first bar, from the plate's left edge */
-#define MP_DOOR_BAR_W 0.5f
-#define MP_DOOR_BAR_STEP 0.8f     /* bar to bar */
-#define MP_DOOR_BAR_BOTTOM 0.4f   /* from the plate's bottom edge */
-#define MP_DOOR_NAME_X 3.4f       /* the name, from the plate's left edge */
-#define MP_DOOR_NAME_Y 0.45f      /* ... and from its top edge */
-#define MP_DOOR_NAME_SIZE 0.046f
-static const float mp_door_bar_h[3] = { 0.68f, 1.19f, 1.7f };   /* the bottom screen's 4 / 7 / 10 */
+#define MP_DOOR_NAME_PAD 0.4f     /* the name's box: the plate less this on each side */
+#define MP_DOOR_NAME_Y 0.34f      /* the name's top, from the plate's top: centred on its 2.4 (32 x size tall) */
+#define MP_DOOR_NAME_SIZE 0.054f  /* was 0.046 with the signal bars beside it */
 
 /* A box with no characters: only its background shows. */
 static HSD_Text* mp_css_box(float w, float h)
@@ -713,31 +707,26 @@ static void mp_css_box_color(HSD_Text* t, u8 r, u8 g, u8 b, u8 a)
 static int mp_css_door_text_make(int d)
 {
     HSD_Text* t;
-    int k;
-    /* drawn in the order made: the plate, then the bars and the name over it */
+    /* drawn in the order made: the plate, then the name over it */
     if ((mp_css_plate[d] = mp_css_box(MP_DOOR_PLATE_W, MP_DOOR_PLATE_H)) == NULL) {
         return 0;
     }
     mp_css_box_color(mp_css_plate[d], 25, 36, 51, 0xE0);   /* the bottom screen's card colour */
-    for (k = 0; k < 3; k++) {
-        if ((mp_css_bar[d][k] = mp_css_box(MP_DOOR_BAR_W, mp_door_bar_h[k])) == NULL) {
-            return 0;
-        }
-    }
     t = HSD_SisLib_803A6754(0, mp_css_ctx);
     if (t == NULL) {
         return 0;
     }
-    t->default_fitting = 1;
-    t->default_alignment = 0;
+    t->default_alignment = 1;   /* centred on pos_x, as the results screen's names */
+    t->default_fitting = 1;     /* squeezed into the box when too wide */
+    t->default_kerning = 1;
     t->font_size.x = MP_DOOR_NAME_SIZE;
     t->font_size.y = MP_DOOR_NAME_SIZE;
-    t->box_size_x = (MP_DOOR_PLATE_W - MP_DOOR_NAME_X - 0.4f) / MP_DOOR_NAME_SIZE;
+    t->box_size_x = (MP_DOOR_PLATE_W - 2 * MP_DOOR_NAME_PAD) / MP_DOOR_NAME_SIZE;
     t->box_size_y = 32.0f;
     mp_css_dname[d] = HSD_SisLib_803A6B98(t, 0.0f, 0.0f, "");
     mp_css_dtext[d] = t;
     mp_css_name_now[d][0] = 1;
-    mp_css_col_now[d] = mp_css_level_now[d] = -1;
+    mp_css_col_now[d] = -1;
     return 1;
 }
 
@@ -745,7 +734,6 @@ static void mp_css_door_text_gone(void)
 {
     memset(mp_css_dtext, 0, sizeof mp_css_dtext);
     memset(mp_css_plate, 0, sizeof mp_css_plate);
-    memset(mp_css_bar, 0, sizeof mp_css_bar);
 }
 
 static void mp_css_text_frame(void)
@@ -765,7 +753,7 @@ static void mp_css_text_frame(void)
         char raw[32], name[40];
         GXColor col;
         float px, py;
-        int k, level, here = mp_css_present(d);
+        int here = mp_css_present(d);
         CSSDoor* dr = &mnCharSel_803F0DFC.doors[d];
         if (mp_css_dtext[d] == NULL && !mp_css_door_text_make(d)) {
             mp_css_door_text_gone();   /* out of text objects: try again next frame */
@@ -781,28 +769,10 @@ static void mp_css_text_frame(void)
         mp_css_plate[d]->pos_y = py;
         mp_css_plate[d]->pos_z = pos.z;
         mp_css_plate[d]->hidden = !here;
-        mp_css_dtext[d]->pos_x = px + MP_DOOR_NAME_X;
+        mp_css_dtext[d]->pos_x = px + MP_DOOR_PLATE_W / 2;   /* the plate's centre (alignment 1) */
         mp_css_dtext[d]->pos_y = py + MP_DOOR_NAME_Y;
         mp_css_dtext[d]->pos_z = pos.z;
         mp_css_dtext[d]->hidden = !here;
-        level = here ? mp_lob.signal[d] : 0;   /* 0..3, as the bottom screen shows it (this console's own door too) */
-        for (k = 0; k < 3; k++) {
-            HSD_Text* b = mp_css_bar[d][k];
-            b->pos_x = px + MP_DOOR_BAR_X + k * MP_DOOR_BAR_STEP;
-            b->pos_y = py + MP_DOOR_PLATE_H - MP_DOOR_BAR_BOTTOM - mp_door_bar_h[k];
-            b->pos_z = pos.z;
-            b->hidden = !here;
-        }
-        if (mp_css_level_now[d] != level) {
-            mp_css_level_now[d] = level;
-            for (k = 0; k < 3; k++) {
-                if (k < level) {
-                    mp_css_box_color(mp_css_bar[d][k], 51, 255, 47, 0xFF);   /* lit: the bottom screen's green */
-                } else {
-                    mp_css_box_color(mp_css_bar[d][k], 56, 70, 88, 0xFF);   /* unlit: its line colour */
-                }
-            }
-        }
         raw[0] = 0;
         if (here) {
             mp_platform_group_player_name(d, raw, sizeof raw);   /* already cut to 10 characters (name_clean) */

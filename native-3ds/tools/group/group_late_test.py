@@ -143,7 +143,8 @@ def main():
         shown = [stub.peek('mp_group_watch_name', 128)[32 * i:32 * i + 32].split(b'\0')[0].decode('utf-8', 'replace') for i in range(4)]
         check('the overview never shows the late joiner\'s own name (known bug 2)', me >= 1 and mine and mine not in shown,
               f'port {me + 1}, name {mine!r}, rows {shown}')
-        check('a CPU\'s row says CPU; the host\'s row has a name', 'CPU' in shown and shown[0] not in ('', 'CPU'), str(shown))
+        check('the CPU on the late joiner\'s own port says CPU; the host\'s row has its name',
+              shown[me] == 'CPU' and shown[0] not in ('', 'CPU'), str(shown))
 
         def badge(port):
             return int.from_bytes(stub.peek('mp_group_badge_drawn', 8)[2 * port:2 * port + 2], 'little') - 1

@@ -222,16 +222,13 @@ static int my_mii(const group_config *c, uint8_t *out)
 #else
     else return 0;                                /* the PC tools have no Friends service */
 #endif
-    if (!lobby_mii_ok(out)) lobby_mii_seal(out);  /* bare MiiData: build its CRC, as CFL_MakeStoreData does */
-    if (!lobby_mii_ok(out)) { sp_log("group: no Mii (empty)"); return 0; }
+    /* a Mii whose CRC fails (or an empty one) counts as none: no head anywhere, the Host button just says HOST GAME
+     * (owner, 2026-11-25); it is not resealed */
+    if (!lobby_mii_ok(out)) { sp_log("group: no Mii (empty, or its CRC fails)"); return 0; }
     {
         char hex[2 * LOBBY_MII_BYTES + 1];
         for (int i = 0; i < LOBBY_MII_BYTES; ++i) snprintf(hex + 2 * i, 3, "%02x", out[i]);
         sp_log("group: Mii for the beacon %s", hex);
-    }
-    if (c->test_mii_corrupt) {
-        out[0x20] ^= 0x5A;                        /* after the CRC: browsers must turn it down */
-        sp_log("group: Mii corrupted for the test (test_mii_corrupt)");
     }
     return 1;
 }
@@ -246,7 +243,10 @@ static void lobby_publish(void)
     if (n <= 0) return;
     lw_host_set_lobby(b, n);
     uint8_t beacon[LOBBY_BEACON_MAX];
-    int bn = lobby_encode_beacon(&G.host_lobby.st, G.has_mii ? G.mii : NULL, beacon, sizeof(beacon));
+    uint8_t mii[LOBBY_MII_BYTES];
+    memcpy(mii, G.mii, sizeof(mii));
+    if (G.cfg.test_mii_corrupt) mii[0x20] ^= 0x5A;   /* tests: after the CRC, so browsers must turn it down */
+    int bn = lobby_encode_beacon(&G.host_lobby.st, G.has_mii ? mii : NULL, beacon, sizeof(beacon));
     if (bn > 0 && (bn != G.beacon_len || memcmp(beacon, G.beacon, (size_t)bn))) {   /* only when it changes */
         memcpy(G.beacon, beacon, (size_t)bn);
         G.beacon_len = bn;
@@ -452,10 +452,9 @@ int group_session_start(int host, int automatic)
     c.test_drop_pct = G.cfg.drop_pct;
     c.test_wireless_off = G.cfg.test_wireless_off;
     pick_name(&G.cfg, c.name, sizeof(c.name));
-    if (host) {
-        lobby_host_init(&G.host_lobby, 1);
-        G.has_mii = my_mii(&G.cfg, G.mii);
-    }
+    if (host) lobby_host_init(&G.host_lobby, 1);
+    G.has_mii = my_mii(&G.cfg, G.mii);            /* a host sends it; a console browsing shows it on its Host button */
+    if (G.has_mii && G.cfg.test_mii_corrupt) sp_log("group: Mii corrupted in the beacon for the test (test_mii_corrupt)");
     sp_log("group: %s (delay %d)", host ? "hosting a game" : "looking for games", G.cfg.delay);
     if (lw_open(&c, err, sizeof(err)) != 0) {
         fail(ST_FAILED, err[0] ? err : "Local wireless is unavailable");
@@ -492,6 +491,15 @@ void group_session_stop(void)
 }
 
 int group_session_open(void) { return G.open; }
+
+int group_my_mii(uint8_t *out)
+{
+    sp_lock();
+    int has = G.open && G.has_mii;
+    if (has) memcpy(out, G.mii, LOBBY_MII_BYTES);
+    sp_unlock();
+    return has;
+}
 int group_is_host(void) { return G.host; }
 int group_my_port(void) { return G.my_port < 0 ? 0 : G.my_port; }
 

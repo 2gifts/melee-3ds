@@ -191,6 +191,8 @@ int group_poll(int back)
             view.page = GROUP_PAGE_LIST;
             view.count = 0;
             view.list_page = 0;
+            view.my_has_mii = group_my_mii(view.my_mii);
+            view.my_mii_crc = view.my_has_mii ? (uint16_t)(view.my_mii[LOBBY_MII_BYTES - 2] << 8 | view.my_mii[LOBBY_MII_BYTES - 1]) : 0;
             fix_pages();
             ++view.serial;
         }

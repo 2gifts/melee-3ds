@@ -434,8 +434,11 @@ static int play_game(int me, int game)
             memset(&st, 0, sizeof(st));
             st.timer = 1;
             st.seconds = (uint16_t)(480 - frame / 60);
+            lobby_state lv;
+            int have_view = group_lobby_view(&lv);
             for (int i = 0; i < 4; ++i) {
-                st.port[i].kind = (uint8_t)(i < nplayers ? 0 : 3);
+                /* a CPU door plays as a CPU (the late joiner may sit on its port: its overview must say CPU there) */
+                st.port[i].kind = (uint8_t)(have_view && lv.slot[i].kind == LOBBY_CPU ? 1 : i < nplayers ? 0 : 3);
                 st.port[i].stocks = (uint8_t)(4 - frame / 200 % 4);
                 st.port[i].damage = (uint16_t)((frame + 37 * i) % 300);
                 st.port[i].fighter = (uint8_t)((T.character + i) % 26);

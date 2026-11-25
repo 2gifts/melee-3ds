@@ -18,6 +18,9 @@ typedef struct {
     group_game row[GROUP_KEEP];
     int list_page;             /* the page shown, 0-based: its first game is row[list_page * GROUP_ROWS] */
     int pages;                 /* pages in all (at least 1) */
+    int my_has_mii;            /* this console's own Mii, for its head on the Host button */
+    uint16_t my_mii_crc;
+    uint8_t my_mii[LOBBY_MII_BYTES];
     int busy;                  /* 1 while a Host or Join is under way */
     char error[96];
     unsigned serial;           /* changes whenever anything shown changes */

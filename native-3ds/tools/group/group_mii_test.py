@@ -8,7 +8,7 @@ the loopback link, started one after another so the list order is known:
     Hana    a Mii                                     -> a head
 
 The emulated console browses (Melee -> Group), three games a page. It must list all five over two pages,
-render heads only for the rows of the page shown (the game's renderer runs cfl-mii between its frames: "mii: icon ..."
+render heads only for the rows of the page shown and this console's own on the "HOST GAME" button (the game's renderer runs cfl-mii between its frames: "mii: icon ..."
 lines), draw the emblem for the other two, turn the page by touch and render the heads there, and unload cfl-mii once
 the list is left. Each row's head is read from mp_group_row_head (1 head, 2 emblem, 0 no row); screenshots of both
 screens at each step (list-*-bottom.png). With MELEE_CFL_RES (docker/emu-test.sh) the heads have real faces.
@@ -181,10 +181,12 @@ def main():
         capture('list-page-1')
         check(f'page 1 heads {want} (1 head, 2 emblem)', got[:rows] == want, str(got))
         n_icons = len(re.findall(r'mii: icon for game \S+ crc \S+ ok', log_text()))
-        check('page 1 rendered one icon per row with a Mii', n_icons == want.count(1), f'{n_icons} icons')
+        check('page 1 rendered one icon per row with a Mii, and this console\'s own for the Host button',
+              n_icons == want.count(1) + 1, f'{n_icons} icons')
+        check('the Host button shows this console\'s own Mii head (Azahar\'s built-in Mii)', stub.peek('mp_group_host_head', 1)[0] == 1)
         check('cfl-mii loaded on the renderer thread', 'mii: CFL_Initialize ok' in log_text())
         check('the corrupt Mii never reached the renderer (the browser turned it down)',
-              n_icons == want.count(1) and 'FAILED' not in ''.join(l for l in log_text().splitlines() if 'mii:' in l))
+              n_icons == want.count(1) + 1 and 'FAILED' not in ''.join(l for l in log_text().splitlines() if 'mii:' in l))
         # page 2 by touch (the > button beside "1/2")
         touch(242, 48)
         ok = wait_log(r'group: list page 2 of 2')
@@ -203,7 +205,7 @@ def main():
         check('the < button turns back; the cached heads draw again', ok and got[:rows] == want, str(got))
         capture('list-page-1-again')
         total = len(re.findall(r'mii: icon for game \S+ crc \S+ ok', log_text()))
-        check('heads are cached (no render for a page seen before)', total == want.count(1) + rest.count(1), f'{total} icons')
+        check('heads are cached (no render for a page seen before)', total == want.count(1) + rest.count(1) + 1, f'{total} icons')
         costs = [int(m) for m in re.findall(r'mii: icon for game .* all (\d+) ms', log_text())]
         check('each icon job is logged with its cost', len(costs) == total, f'all ms: {costs}')
         # leave the list: cfl-mii is let go after 2 s without a request

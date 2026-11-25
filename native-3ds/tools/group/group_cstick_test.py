@@ -6,9 +6,9 @@ A PC console (tools/group/src/group_client.c, test_control) hosts and holds its 
 neutral puts the camera at rest; another tilt turns it again, and back. The emulated console's own C-stick turns its
 camera too, and the PC console reads that stick. Then the PC presses Start: on the stage select, the same. The camera's
 eye position is read from memory (mp_test_camera_eye, set by the group camera each frame).
-Also the door plates: under each door with a console on its port, a plate with three signal bars and the console's
-name; none under the CPU's door or the empty one (read from memory: group_css.py's mp_css_plate / mp_css_bar /
-mp_css_dtext texts and their hidden flags).
+Also the door plates: under each door with a console on its port, a plate with the console's name, centred (no signal
+bars since 2026-11-25); none under the CPU's door or the empty one (read from memory: group_css.py's mp_css_plate /
+mp_css_dtext texts and their hidden flags; mp_css_bar must be gone).
 
     docker/emu-test.sh run tools/group/group_cstick_test.py [--show]
 Results: $MELEE_TEST_OUT/group-cstick/ (PNGs, game.log, the PC console's log)."""
@@ -121,16 +121,15 @@ def main():
         return stub._session(f)
 
     def plates():
-        """Per door: (plate shown, bars shown, name shown, the name's text)."""
+        """Per door: (plate shown, name shown, the name's text)."""
         hidden_at = 0x4D                   # HSD_Text.hidden
         plate = struct.unpack('>4I', stub.peek('mp_css_plate', 16))
-        bars = struct.unpack('>12I', stub.peek('mp_css_bar', 48))
         text = struct.unpack('>4I', stub.peek('mp_css_dtext', 16))
         names = stub.peek('mp_css_name_now', 128)
 
         def shown(ptr):
             return ptr != 0 and read(ptr + hidden_at, 1)[0] == 0
-        return [(shown(plate[d]), all(shown(b) for b in bars[3 * d:3 * d + 3]), shown(text[d]),
+        return [(shown(plate[d]), shown(text[d]),
                  names[32 * d:32 * d + 32].split(b'\0')[0]) for d in range(4)]
 
     def dist(p, q):
@@ -201,9 +200,10 @@ def main():
         me = 1
         doors = plates()
         print('door plates:', doors, flush=True)
-        check('a plate, bars and name under the doors with a console (the PC host\'s and this one)',
-              all(doors[d][0] and doors[d][1] and doors[d][2] and doors[d][3] for d in (0, me)), str(doors))
-        check('nothing under the CPU\'s door and the empty one', all(not any(doors[d][:3]) for d in (2, 3)), str(doors))
+        check('a plate and name under the doors with a console (the PC host\'s and this one)',
+              all(doors[d][0] and doors[d][1] and doors[d][2] for d in (0, me)), str(doors))
+        check('nothing under the CPU\'s door and the empty one', all(not any(doors[d][:2]) for d in (2, 3)), str(doors))
+        check('no signal bars under the doors (the bottom screen has them)', 'mp_css_bar' not in stub.sym)
         camera_follows('character select', me)
 
         # The stage select: the PC presses Start (its door and the CPU's are filled).
