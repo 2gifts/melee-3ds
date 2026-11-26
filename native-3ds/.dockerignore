@@ -1,0 +1,7 @@
+.toolchain
+build
+dist
+assets
+upstream
+references
+**/__pycache__

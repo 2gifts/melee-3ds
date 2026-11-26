@@ -74,6 +74,7 @@ unsigned mp_native_frame_number(void){return engine_frames;}
  * (matchmaking, the next game, or a late remote pad), when no frame is drawn.
  * Keeps HOME, the power button and SELECT (quit) working, as frame_main does. */
 void mp_native_log(const char*);
+extern void group_system_frame(void);   /* group play: HOME and sleep off during a wireless session (group_menu.h) */
 void mp_native_slippi_wait_poll(void){
     hidScanInput();
     unsigned held=hidKeysHeld();
@@ -81,11 +82,24 @@ void mp_native_slippi_wait_poll(void){
         extern void mp_game_card_flush(void);mp_game_card_flush();
         mp_native_log("Slippi: quit while waiting for the opponent\n");
         exit_requested=1;longjmp(failure_return,1);}
+    group_system_frame();
 }
 void mp_native_log(const char*);
 #include "frame_rate.h"
 static void flush_log(void);
 void mp_native_panic(const char*) __attribute__((noreturn));
+/* tests: the bottom screen as displayed (its framebuffer, which also holds anything printed to the libctru console
+ * there; mp_test_capture saves the compositor's own buffer), once a frame for mp_test_burst frames, to
+ * sdmc:/3ds/melee/burst/NNNN.rgb565 (the test makes the folder) */
+volatile unsigned mp_test_burst;
+static void burst_frame(void){
+    static u8*copy;static unsigned seq;if(!copy)copy=malloc(320*240*2);if(!copy)return;
+    u16 w,h;u8*fb=gfxGetFramebuffer(GFX_BOTTOM,GFX_LEFT,&w,&h);unsigned size=w*h*2;if(size>320*240*2)return;
+    GSPGPU_InvalidateDataCache(fb,size);
+    for(unsigned i=0;i<size;++i)copy[i]=((volatile u8*)fb)[i];
+    char path[64];snprintf(path,sizeof(path),"sdmc:/3ds/melee/burst/%04u.rgb565",seq++);
+    FILE*f=fopen(path,"wb");if(f){fwrite(copy,1,size,f);fclose(f);}
+}
 static void capture_frame(void){
     static u8*copy;if(!copy)copy=malloc(400*240*3);if(!copy)return;
     C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
@@ -191,6 +205,7 @@ void mp_native_frame_render(void)
 #ifdef MP_SMOKE_TEST
     /* The renderer is idle here: End has acknowledged every queued job. */
     if(mp_test_capture){capture_frame();mp_test_capture=0;}
+    if(mp_test_burst){burst_frame();--mp_test_burst;}
 #endif
     previous_tick=mp_native_ticks();mp_renderer_begin();
 }
@@ -243,6 +258,7 @@ void mp_native_frame_main(void)
         /* A save written in the last 0.3 s is still in memory (card.c). */
         extern void mp_game_card_flush(void);mp_game_card_flush();
         exit_requested=1;longjmp(failure_return,1);}
+    group_system_frame();
     mp_native_cpu_poll();
     if(display_toggle_pending){mp_native_expanded^=1;display_toggle_pending=0;}
     {   /* Holding the FPS button (bottom-left) for two seconds runs the GPU

@@ -9,5 +9,17 @@
   "picasso_repository": "https://github.com/devkitPro/picasso.git",
   "picasso_commit": "d522455ea59cd5cb9219c699b93eb7750039233c",
   "citro3d_repository": "https://github.com/devkitPro/citro3d.git",
-  "citro3d_commit": "9f21cf7b380ce6f9e01a0420f19f0763e5443ca7"
+  "citro3d_commit": "9f21cf7b380ce6f9e01a0420f19f0763e5443ca7",
+  "llvm_linux": {
+    "x86_64": {
+      "url": "https://github.com/mstorsjo/llvm-mingw/releases/download/20260908/llvm-mingw-20260908-ucrt-ubuntu-22.04-x86_64.tar.xz",
+      "sha256": "2258c745e3155870c80793f3e8c80b28fbde11b9ff73c4c78783635b3440b092",
+      "directory": "llvm-mingw-20260908-ucrt-ubuntu-22.04-x86_64"
+    },
+    "aarch64": {
+      "url": "https://github.com/mstorsjo/llvm-mingw/releases/download/20260908/llvm-mingw-20260908-ucrt-ubuntu-22.04-aarch64.tar.xz",
+      "sha256": "c907dd2302a292b663add18752a55ce9d544ca0fd19cf33c086ca242d5994ea6",
+      "directory": "llvm-mingw-20260908-ucrt-ubuntu-22.04-aarch64"
+    }
+  }
 }

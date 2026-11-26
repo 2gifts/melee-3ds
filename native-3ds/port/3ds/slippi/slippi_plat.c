@@ -1,4 +1,4 @@
-/* Platform layer (see slippi_plat.h): libctru on the 3DS, Win32 for the PC tools. */
+/* Platform layer (see slippi_plat.h): libctru on the 3DS, Win32 or POSIX for the PC tools. */
 #include "slippi_plat.h"
 #include <stdarg.h>
 #include <stdio.h>
@@ -362,5 +362,103 @@ const char *sp_data_dir(void) { return data_dir[0] ? data_dir : "."; }
 int sp_app_running(void) { return 1; }
 
 #else
-#error "slippi_plat.c: unsupported platform"
+/* ------------------------------------------------------------------ POSIX
+ * Linux and macOS, for the PC test tools (built in Docker; see
+ * docker/emu-test.sh). Mirrors the Windows branch. */
+#include <pthread.h>
+#include <time.h>
+
+static pthread_mutex_t state_lock, log_lock;
+static int locks_ready;
+static pthread_t worker;
+static int worker_started;
+
+uint64_t sp_time_us(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000000ull + (uint64_t)ts.tv_nsec / 1000ull;
+}
+
+void sp_sleep_us(uint32_t us)
+{
+    uint64_t end = sp_time_us() + us;
+    if (us >= 2000) {
+        uint32_t coarse = us - 1500;
+        struct timespec ts = { coarse / 1000000u, (long)(coarse % 1000000u) * 1000L };
+        nanosleep(&ts, NULL);
+    }
+    while (sp_time_us() < end) {
+        struct timespec ts = { 0, 50000 };
+        nanosleep(&ts, NULL);
+    }
+}
+
+void sp_lock_init(void)
+{
+    if (locks_ready) return;
+    pthread_mutexattr_t attr;
+    pthread_mutexattr_init(&attr);
+    pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE); /* like CRITICAL_SECTION */
+    pthread_mutex_init(&state_lock, &attr);
+    pthread_mutex_init(&log_lock, &attr);
+    pthread_mutexattr_destroy(&attr);
+    locks_ready = 1;
+}
+void sp_lock(void) { pthread_mutex_lock(&state_lock); }
+void sp_unlock(void) { pthread_mutex_unlock(&state_lock); }
+
+void sp_log_drain(void) {}
+
+void sp_log(const char *fmt, ...)
+{
+    char line[512];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(line, sizeof(line), fmt, ap);
+    va_end(ap);
+    if (locks_ready) pthread_mutex_lock(&log_lock);
+    if (log_sink) log_sink(line);
+    else {
+        static uint64_t t0;
+        uint64_t t = sp_time_us();
+        if (!t0) t0 = t;
+        fprintf(stdout, "[%8.3f] %s\n", (double)(t - t0) / 1e6, line);
+        fflush(stdout);
+    }
+    if (locks_ready) pthread_mutex_unlock(&log_lock);
+}
+
+static void (*thread_fn)(void *);
+static void *thread_entry(void *arg)
+{
+    thread_fn(arg);
+    return NULL;
+}
+
+int sp_thread_start(void (*fn)(void *), void *arg, int core)
+{
+    (void)core;
+    if (worker_started) return -1;
+    thread_fn = fn;
+    if (pthread_create(&worker, NULL, thread_entry, arg) != 0) return -1;
+    worker_started = 1;
+    return 0;
+}
+
+void sp_thread_join(void)
+{
+    if (!worker_started) return;
+    pthread_join(worker, NULL);
+    worker_started = 0;
+}
+
+int sp_on_thread(void) { return worker_started && pthread_equal(pthread_self(), worker); }
+
+int sp_net_init(void) { return 0; }
+void sp_net_exit(void) {}
+uint32_t sp_lan_ip_fallback(void) { return 0; }
+int sp_wifi_status(void) { return -1; }
+const char *sp_data_dir(void) { return data_dir[0] ? data_dir : "."; }
+int sp_app_running(void) { return 1; }
 #endif

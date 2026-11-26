@@ -90,8 +90,11 @@ def prepare():
         ROOT / "build/generated", UPSTREAM / "extern/dolphin/include")]
 
 
+EXE = ".exe" if os.name == "nt" else ""
+
+
 def local_clang():
-    found = sorted((ROOT / ".toolchain").glob("llvm-mingw-*/bin/clang.exe"))
+    found = sorted((ROOT / ".toolchain").glob("llvm-mingw-*/bin/clang" + EXE))
     return str(found[-1]) if found else shutil.which("clang") or shutil.which("cc")
 
 

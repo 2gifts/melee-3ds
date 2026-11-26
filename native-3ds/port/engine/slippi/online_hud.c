@@ -2,10 +2,12 @@
  * StartEngineLoop's status texts): each player's name above their damage
  * display, "Delay: Nf", and DISCONNECTED / DESYNC DETECTED. A SIS canvas on
  * a copy of the HUD's camera (IfAll's ScInfDmg scene), so it follows the
- * HUD and hides with it (pause). Positions, sizes and colours are Slippi's.
+ * HUD and hides with it and with the damage digits (pause). Positions, sizes and colours are Slippi's.
  */
 #include <string.h>
 #include <melee/if/ifall.h>
+#include <melee/if/ifstatus.h>
+#include <melee/if/types.h>
 #include <melee/lb/lbarchive.h>
 #include <melee/lb/lbspdisplay.h>
 #include <melee/pl/player.h>
@@ -15,6 +17,7 @@
 #include <sysdolphin/baselib/gobjgxlink.h>
 #include <sysdolphin/baselib/gobjobject.h>
 #include <sysdolphin/baselib/sislib.h>
+#include <group_engine.h>
 #include <slippi_engine.h>
 #include <slippi_net_bridge.h>
 
@@ -22,10 +25,15 @@ enum { TEXT_GXLINK = 12, TEXT_GXPRI = 80, COBJ_GXPRI = 8 };
 
 static HSD_Text* info_text;
 static int info_shown;
+static HSD_Text* name_text[4];   /* group play's names, to grey one whose console drops */
+static int name_idx[4];
 
+/* Vanilla's pause (ifAll_802F3394) hides the damage digits one by one and
+ * never sets the HUD-hidden flag, so the text also follows the digits' own
+ * flag. Slippi online can't pause, so it never needed this. */
 static void hud_camera_draw(HSD_GObj* gobj, int code)
 {
-    if (!ifAll_IsHUDHidden()) {
+    if (!ifAll_IsHUDHidden() && !ifStatus_GetHUDInfo()->players[0].flags.hide_all_digits) {
         HSD_GObj_803910D8(gobj, code);
     }
 }
@@ -44,6 +52,11 @@ static HSD_Text* new_text(int canvas, float scale, u8 align)
     return t;
 }
 
+/* Group play's names over the damage displays (owner, 2026-11-25: bigger than Slippi's, which were too small to read):
+ * one size, and a name wider than its box is squeezed into it, as the names on the results screen and under the CSS
+ * doors are (SIS fitting at a fixed size, no per-string scale). Width in the HUD's units; tests may poke both. */
+float mp_hud_name_size = 0.054f, mp_hud_name_width = 9.0f;
+
 /* After the HUD's per-player setup (ifStatus_802F665C), once per match. */
 void mp_slippi_hud_init(void)
 {
@@ -56,6 +69,7 @@ void mp_slippi_hud_init(void)
 
     info_text = NULL;
     info_shown = 0;
+    memset(name_text, 0, sizeof name_text);
     if (!mp_slippi_online_active()) {
         return;
     }
@@ -82,16 +96,18 @@ void mp_slippi_hud_init(void)
     }
 
     /* Names over the damage displays. */
-    for (i = 0; i < 2; i++) {
+    for (i = 0; i < 4; i++) {
         Vec3* hud;
+        int group;
         if (Player_GetPlayerSlotType(i) == Gm_PKind_NA) {
             continue;
         }
-        if (mp_platform_slippi_ui_text(30 + i, name, sizeof name) < 0 || name[0] == 0) {
+        group = mp_group_hud_name(i, name, sizeof name);   /* group play: the console's name on that port */
+        if (group == 0 || (group < 0 && (i >= 2 || mp_platform_slippi_ui_text(30 + i, name, sizeof name) < 0 || name[0] == 0))) {
             continue;
         }
         name[sizeof name - 1] = 0;
-        t = new_text(canvas, 0.06f, 1);
+        t = new_text(canvas, group > 0 ? mp_hud_name_size : 0.06f, 1);
         if (t == NULL) {
             continue;
         }
@@ -100,11 +116,26 @@ void mp_slippi_hud_init(void)
         t->x4C = 1;
         t->pos_x = hud->x + 0.8f;
         t->pos_y = 20.64f;
-        t->box_size_x = 150.0f;
+        t->box_size_x = group > 0 ? mp_hud_name_width / mp_hud_name_size : 150.0f;
         t->box_size_y = 150.0f;
         idx = HSD_SisLib_803A6B98(t, 0.0f, 0.0f, "%s", name);
-        HSD_SisLib_803A7548(t, idx, 0.54f, 0.54f);
+        if (group < 0) {
+            HSD_SisLib_803A7548(t, idx, 0.54f, 0.54f);   /* Slippi online: its names as they were */
+        } else {
+            name_text[i] = t;
+            name_idx[i] = idx;
+        }
     }
+}
+
+/* Group play: a console that drops mid-match keeps its name over the damage, in grey (a CPU plays on for it). */
+void mp_slippi_hud_name_dropped(int port)
+{
+    static const GXColor grey = { 0x80, 0x80, 0x80, 0xFF };
+    if (port < 0 || port > 3 || name_text[port] == NULL) {
+        return;
+    }
+    HSD_SisLib_803A74F0(name_text[port], name_idx[port], (GXColor*) &grey);
 }
 
 /* StartEngineLoop: 1 = DISCONNECTED (red), 2 = DESYNC DETECTED (amber). */

@@ -3,6 +3,8 @@ import argparse
 import hashlib
 import io
 import json
+import os
+import subprocess
 import zipfile
 from pathlib import Path
 
@@ -35,6 +37,40 @@ WHEELS = [
     ('https://files.pythonhosted.org/packages/20/12/38679034af332785aac8774540895e234f4d07f7545804097de4b666afd8/'
      'packaging-25.0-py3-none-any.whl', '29572ef2b1f17581046b3a2227d5c611fb25ec70ca1ba8554b24b0e69331a484'),
 ]
+
+
+# Non-Windows hosts (the Docker builder) have no prebuilt binaries to download,
+# so these two tools are compiled from the same pinned releases.
+MAKEROM_SOURCE = ('https://github.com/3DSGuy/Project_CTR.git', 'e8f5f529c54ff9b22a2491a480ffa69206bf7b19')  # makerom-v0.19.0
+BANNERTOOL_SOURCE = ('https://github.com/Epicpkmn11/bannertool.git', 'e21f280f0336b6e9dfa5a8a76684c9cea2bd0d3b')  # v1.2.2
+SOURCE_BUILT = ('makerom', 'bannertool')
+
+
+def build_native_tools():
+    from bootstrap import checkout
+    out = ROOT/'.toolchain/bin'
+    out.mkdir(parents=True, exist_ok=True)
+    jobs = str(os.cpu_count() or 2)
+    if not (out/'makerom').exists():
+        source = ROOT/'references/Project_CTR'
+        checkout(*MAKEROM_SOURCE, source)
+        subprocess.run(['make', '-j'+jobs, 'deps'], cwd=source/'makerom', check=True)
+        subprocess.run(['make', '-j'+jobs, 'program'], cwd=source/'makerom', check=True)
+        (source/'makerom/bin/makerom').replace(out/'makerom')
+    if not (out/'bannertool').exists():
+        # Self-contained apart from its bundled stb libraries; its Makefile
+        # only adds a Windows flag and a version number.
+        source = ROOT/'references/bannertool'
+        checkout(*BANNERTOOL_SOURCE, source)
+        src = source/'source'
+        build = ROOT/'build/bannertool'
+        build.mkdir(parents=True, exist_ok=True)
+        for name in ('stb_image', 'stb_vorbis'):
+            subprocess.run(['gcc', '-O2', '-w', '-c', src/'pc'/(name+'.c'), '-o', build/(name+'.o')], check=True)
+        subprocess.run(['g++', '-O2', '-std=gnu++17', '-w', '-DVERSION_MAJOR=1', '-DVERSION_MINOR=2', '-DVERSION_MICRO=2',
+                        *[src/f for f in ('main.cpp', 'cmd.cpp', 'pc/wav.cpp', '3ds/cbmd.cpp', '3ds/lz11.cpp', '3ds/cwav.cpp')],
+                        build/'stb_image.o', build/'stb_vorbis.o', '-o', out/'bannertool'], check=True)
+    print('Verified makerom and bannertool (built from pinned source)')
 
 
 def fetch(url, digest, archive):
@@ -100,6 +136,10 @@ def main():
     # source archive is also not guaranteed to keep the pinned checksum, so
     # the easy builder fetches them separately and falls back to 2D.
     tools = [t for t in TOOLS if (t[0] == 'pycgfx') == args.diorama_only or not (args.cia_only or args.diorama_only)]
+    if os.name != 'nt':
+        if not args.diorama_only:
+            build_native_tools()
+        tools = [t for t in tools if t[0] not in SOURCE_BUILT]
     for tool in tools:
         acquire(*tool)
     if not args.skip_python and not args.cia_only:

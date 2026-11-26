@@ -26,7 +26,7 @@ from launcher_icon import COLOURS, disc_icon
 
 RATE = 32000
 SECONDS = 2.95
-BANNERTOOL = ROOT/'.toolchain/home-menu/bannertool/windows-x86_64/bannertool.exe'
+from hosttools import BANNERTOOL
 
 
 def logo_images():

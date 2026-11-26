@@ -115,6 +115,8 @@ AccessControlInfo:
    - ptm:sysm
    - soc:U
    - ac:u
+   - nwm::UDS
+   - frd:u
 SystemControlInfo:
   SaveDataSize: 0KB
   RemasterVersion: 0
@@ -134,4 +136,5 @@ SystemControlInfo:
     ptm: 0x0004013000002202
     ac: 0x0004013000002402
     socket: 0x0004013000002e02
+    friends: 0x0004013000003202
     spi: 0x0004013000002302

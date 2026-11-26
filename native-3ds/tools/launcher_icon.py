@@ -106,7 +106,7 @@ def disc_icon(profile, size=48):
 
 
 def make_smdh(out, profile):
-    bannertool = ROOT / '.toolchain/home-menu/bannertool/windows-x86_64/bannertool.exe'
+    from hosttools import BANNERTOOL as bannertool
     try:
         banner = banner_image()
     except ImportError:

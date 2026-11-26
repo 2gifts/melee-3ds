@@ -1,5 +1,5 @@
-/* Platform layer for the Slippi network client: 3DS (libctru) and Windows
- * (the PC test tools). Everything else in this folder is platform-neutral. */
+/* Platform layer for the Slippi network client: 3DS (libctru) and Windows or
+ * POSIX (the PC test tools). Everything else in this folder is platform-neutral. */
 #ifndef SLIPPI_PLAT_H
 #define SLIPPI_PLAT_H
 #include <stddef.h>

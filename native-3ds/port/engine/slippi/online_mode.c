@@ -17,16 +17,19 @@
 #include <melee/gm/gm_1B03.h>
 #include <melee/gm/gmvsmelee.h>
 #include <melee/gm/types.h>
+#include <melee/if/if_2FD9.h>
 #include <melee/lb/lbaudio_ax.h>
 #include <melee/lb/lbarchive.h>
 #include <melee/lb/lbdvd.h>
 #include <melee/lb/types.h>
 #include <melee/mn/types.h>
 #include <sysdolphin/baselib/sislib.h>
+#include <group_bridge.h>
+#include <group_engine.h>
 #include <slippi_engine.h>
 #include <slippi_net_bridge.h>
 
-enum { ST_CSS, ST_SSS, ST_VS, ST_SPLASH };
+enum { ST_CSS, ST_SSS, ST_VS, ST_SPLASH, ST_SUDDEN, ST_RESULTS, ST_PRIZE };
 
 static CSSData online_css;
 static s8 saved_ckind = CKind_Fox;
@@ -56,6 +59,11 @@ static void vs_enter(GameModeState* state);
 static void vs_exit(GameModeState* state);
 static void splash_enter(GameModeState* state);
 static void splash_exit(GameModeState* state);
+static void sudden_exit(GameModeState* state);
+static void results_enter(GameModeState* state);
+static void results_exit(GameModeState* state);
+static void prize_enter(GameModeState* state);
+static void prize_exit(GameModeState* state);
 static u8 splash_data[0x20];
 static u32 splash_exit_data;
 
@@ -64,6 +72,12 @@ GameModeState mp_slippi_online_states[] = {
     { ST_SSS, lbDvdPreload_3, 0, sss_enter, sss_exit, { GS_SSS, &gmVsMelee_SssData, &gmVsMelee_SssData } },
     { ST_VS, lbDvdPreload_3, 0, vs_enter, vs_exit, { GS_VS, &gmVsMelee_StartData, &gmVsMelee_VsExitInfo } },
     { ST_SPLASH, lbDvdPreload_3, 0, splash_enter, splash_exit, { GS_INTRO_EASY, splash_data, &splash_exit_data } },
+    /* group play only (port/engine/group/group.c): a sudden death after a tied match, and the results screen, as in
+     * vanilla's VS mode */
+    { ST_SUDDEN, lbDvdPreload_3, 0, vs_enter, sudden_exit, { GS_SUDDEN_DEATH, &gmVsMelee_StartData, &gmVsMelee_SuddenDeathExitInfo } },
+    { ST_RESULTS, lbDvdPreload_3, 0, results_enter, results_exit, { GS_RESULTS, &gmVsMelee_ResultsEnterData, NULL } },
+    /* group play only: vanilla's prize screen (notices and trophies) after a match that earned some */
+    { ST_PRIZE, lbDvdPreload_2, 0, prize_enter, prize_exit, { GS_PRIZE_INTERFACE, &if_Scene_Prize_EnterData, NULL } },
     { GM_GAMEMODESTATE_TERMINATE },
 };
 
@@ -93,6 +107,13 @@ int mp_slippi_css_quiet(void)
 static void css_enter(GameModeState* state)
 {
     CSSData* css = gm_GetGameModeStateEnterData(state);
+    if (mp_group_mode()) {
+        mp_group_css_enter(state);   /* the lobby is the vanilla four-door CSS; none of the online CSS's text */
+        css_text = NULL;
+        slpcss_loaded = 0;
+        slpcss = NULL;
+        return;
+    }
     gm_801B06B0(css, 14, saved_ckind, 4, saved_color, 0x78, 0, 0);
     css->vs.start.players[1].slot_type = Gm_PKind_NA;
     lbDvd_SetupVsPreloadCache();
@@ -108,6 +129,10 @@ static void css_exit(GameModeState* state)
     CSSData* css = gm_GetGameModeStateExitData(state);
     s8 ckind;
     u8 color;
+    if (mp_group_mode()) {
+        mp_group_css_exit(state, ST_SSS);
+        return;
+    }
     if (css->pending_scene_change == 2) {
         /* B held: back to the menus. The connection closes. */
         mp_platform_slippi_ui_event(2 /* LEAVE */, 0);
@@ -259,12 +284,16 @@ int mp_slippi_css_frame(int ready, PlayerInitData* local, PlayerInitData* remote
 
 int mp_slippi_css_online(void)
 {
-    return gm_GetCurrentGameMode() == GM_HANYU_CSS;
+    return gm_GetCurrentGameMode() == GM_HANYU_CSS && !mp_group_mode();
 }
 
 static void sss_enter(GameModeState* state)
 {
     SSSData* sss = gm_GetGameModeStateEnterData(state);
+    if (mp_group_mode()) {
+        mp_group_sss_enter(state);
+        return;
+    }
     sss->vs = online_css.vs;
     sss->force_stage_id = -1;
     sss->no_lras = 1;
@@ -274,6 +303,10 @@ static void sss_enter(GameModeState* state)
 static void sss_exit(GameModeState* state)
 {
     SSSData* sss = gm_GetGameModeStateExitData(state);
+    if (mp_group_mode()) {
+        mp_group_sss_exit(state, ST_CSS, ST_VS);
+        return;
+    }
     if (sss->start_game) {
         int stage = sss->vs.start.rules.stkind;
         mp_platform_slippi_ui_event(3 /* STAGE */, stage | (mp_slippi_sss_alt_mode() << 16));
@@ -286,6 +319,10 @@ static void sss_exit(GameModeState* state)
 
 static void vs_enter(GameModeState* state)
 {
+    if (mp_group_mode()) {
+        mp_group_vs_enter(state);
+        return;
+    }
     (void) state;
     gm_LoadAnnouncer();
     mp_platform_slippi_ui_event(5 /* MATCH */, 0);
@@ -294,6 +331,10 @@ static void vs_enter(GameModeState* state)
 /* VSSceneDecide + CheckIfWonLastGame: back to the CSS; who picks next. */
 static void vs_exit(GameModeState* state)
 {
+    if (mp_group_mode()) {
+        mp_group_vs_exit(state, ST_RESULTS, ST_SUDDEN);   /* the results screen, or a sudden death */
+        return;
+    }
     MatchExitInfo* exit = gm_GetGameModeStateExitData(state);
     MatchEnd* end = &exit->match_end;
     int local = mp_slippi_online_local_index();
@@ -310,6 +351,33 @@ static void vs_exit(GameModeState* state)
     mp_platform_slippi_ui_event(4 /* RESULT */, won);
     css_quiet = 0;   /* after a game the announcer plays, as in VS mode */
     gm_SetNextGameModeStateId(ST_CSS);
+}
+
+/* Group play only: after a sudden death, its result is merged into the tied match's (vanilla), then the results. */
+static void sudden_exit(GameModeState* state)
+{
+    mp_group_sudden_exit(state, ST_RESULTS);
+}
+
+static void results_enter(GameModeState* state)
+{
+    mp_group_results_enter(state);
+}
+
+static void results_exit(GameModeState* state)
+{
+    mp_group_results_exit(state, ST_CSS, ST_PRIZE);
+}
+
+static void prize_enter(GameModeState* state)
+{
+    mp_group_prize_enter(state);
+}
+
+static void prize_exit(GameModeState* state)
+{
+    (void) state;
+    gm_SetNextGameModeStateId(ST_CSS);   /* as vanilla's (VS state 0): the lobby's character select */
 }
 
 /* ---- the VS splash before each game (Slippi's minor scene 4) ----

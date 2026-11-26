@@ -1114,6 +1114,9 @@ static void renderer_begin(void)
      * for the previous GPU queue before recycling any streaming storage. */
     if(frame_active)return;
     frame_pending=0;
+    /* The Group list's Mii heads (mii_icon.c), outside the frame: free what the GPU is done with, copy a finished icon
+     * back, start the next head. */
+    {extern void mp_mii_icon_between(void);mp_mii_icon_between();}
 #ifdef MP_BANNER_CAPTURE
     banner_capture_begin();
 #endif
@@ -1126,6 +1129,18 @@ static void renderer_begin(void)
 #ifdef MP_GPU_PROBE
     gpu_probe_frame_begin();
 #endif
+    /* One step of a Mii head (mii_icon.c), drawn into this frame before anything of ours, with no waits. Then nothing
+     * it left behind may survive into the rest of the frame: its fragment lighting and stencil, and the uniform values
+     * this renderer believes are installed (its shader wrote the same registers). The rest (program, attributes,
+     * buffers, texture units and combiners, raster state, target, viewport) is set again below. */
+    {extern int mp_mii_icon_step(void);
+     if(mp_mii_icon_step()){
+        C3D_LightEnvBind(NULL);C3D_StencilTest(false,GPU_ALWAYS,0,255,255);
+        C3D_StencilOp(GPU_STENCIL_KEEP,GPU_STENCIL_KEEP,GPU_STENCIL_KEEP);C3D_AlphaTest(false,GPU_ALWAYS,0);
+        C3D_SetScissor(GPU_SCISSOR_DISABLE,0,0,0,0);
+        memset(uniform_valid,0,sizeof(uniform_valid));material0_valid=0;stereo_shift_valid=0;
+        point_program_active=-1;
+     }}
     unsigned requested=mp_native_stereo_depth&&stereo_init();
     if(requested!=stereo_active){
         stereo_active=requested;gfxSet3D(stereo_active!=0);

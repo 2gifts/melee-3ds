@@ -3,7 +3,7 @@ import argparse
 import subprocess
 import sys
 from pathlib import Path
-from build import ROOT, prepare, local_clang, common_flags, run
+from build import ROOT, EXE, prepare, local_clang, common_flags, run
 from engine_build import compile_engine
 
 
@@ -15,6 +15,7 @@ def main():
     ap.add_argument('--release',action='store_true',help='Build a separate homebrew package with physical controls')
     ap.add_argument('--profile',choices=('unlocked','fresh','slippi'),default='unlocked',help='Save profile: everything unlocked (melee.3dsx), a fresh save earned by play (melee-fresh.3dsx), or the Slippi Direct beta (3ds/melee-slippi/melee-slippi.3dsx, everything unlocked); each keeps its own saves')
     ap.add_argument('--skip-engine',action='store_true')
+    ap.add_argument('--no-door-names',action='store_true',help='Group play: no console names under the character select doors (default: shown; the bottom screen shows them either way)')
     ap.add_argument('--sanitize',action='store_true',help='Stop with a source location on original-engine null accesses')
     ap.add_argument('--boot',action='store_true',help='Enter Melee original main and scene loop')
     ap.add_argument('--output',type=Path,help='Alternate 3DSX destination, preserving an existing hardware test package')
@@ -71,20 +72,20 @@ def main():
     sdk=ROOT/'.toolchain/devkitpro';arm=sdk/'devkitARM'
     arch=['--no-default-config','--target=arm-none-eabi','-mcpu=mpcore',
           '-mfpu=vfp','-mfloat-abi=hard','-mtp=soft']
-    includes=[*prepare(),'-I'+str(sdk/'libctru/include'),'-isystem',str(arm/'arm-none-eabi/include'),'-I'+str(ROOT/'port/3ds/slippi'),'-I'+str(ROOT/'port/3ds/slippi/enet/include')]
+    includes=[*prepare(),'-I'+str(sdk/'libctru/include'),'-isystem',str(arm/'arm-none-eabi/include'),'-I'+str(ROOT/'port/3ds/slippi'),'-I'+str(ROOT/'port/3ds/slippi/enet/include'),'-I'+str(ROOT/'port/3ds/localwireless'),'-I'+str(ROOT/'port/3ds/group'),'-I'+str(ROOT/'port/3ds/third_party/cfl-mii/include')]
     shader=out/'vertex.shbin'
     shader_dir=args.shader_dir or ROOT/'port/3ds'
     if not shader_dir.is_absolute():shader_dir=ROOT/shader_dir
     for stem in ('vertex','vertex-dual','vertex-stereo','vertex-dual-stereo'):
         assert ('; MP_AFFINE_IDENTITY_SHADER' in (shader_dir/(stem+'.v.pica')).read_text())==args.identity_affine,'Affine shader interface mismatch'
         assert ('; MP_UNLIT_AFFINE_SHADER' in (shader_dir/(stem+'.v.pica')).read_text())==args.unlit_affine,'Unlit shader interface mismatch'
-    run([ROOT/'.toolchain/bin/picasso.exe','-o',shader,shader_dir/'vertex.v.pica',ROOT/'port/3ds/point.g.pica'])
+    run([ROOT/'.toolchain/bin'/('picasso'+EXE),'-o',shader,shader_dir/'vertex.v.pica',ROOT/'port/3ds/point.g.pica'])
     shader_c=out/'shader.c'
     blob=shader.read_bytes()
     shader_c.write_text('const unsigned char mp_shader[] __attribute__((aligned(4)))={'+
                         ','.join(str(b) for b in blob)+'};\nconst unsigned mp_shader_size='+str(len(blob))+';\n')
     dual_shader=out/'vertex-dual.shbin'
-    run([ROOT/'.toolchain/bin/picasso.exe','-o',dual_shader,shader_dir/'vertex-dual.v.pica'])
+    run([ROOT/'.toolchain/bin'/('picasso'+EXE),'-o',dual_shader,shader_dir/'vertex-dual.v.pica'])
     dual_blob=dual_shader.read_bytes()
     with shader_c.open('a') as source:
         source.write('const unsigned char mp_dual_shader[] __attribute__((aligned(4)))={'+
@@ -94,7 +95,7 @@ def main():
         binary=out/f'{stem}-clamped.shbin'
         sources=[ROOT/'port/3ds'/f'{stem}-clamped.v.pica']
         if name in ('base','stereo'):sources.append(ROOT/'port/3ds/point.g.pica')
-        run([ROOT/'.toolchain/bin/picasso.exe','-o',binary,*sources])
+        run([ROOT/'.toolchain/bin'/('picasso'+EXE),'-o',binary,*sources])
         data=binary.read_bytes()
         with shader_c.open('a') as source:
             source.write(f'const unsigned char mp_clamped_{name}[] __attribute__((aligned(4)))={{'+','.join(str(b) for b in data)+f'}};\nconst unsigned mp_clamped_{name}_size={len(data)};\n')
@@ -107,13 +108,13 @@ def main():
         sources=[shader_dir/f'vertex-{name.replace("_","-")}.v.pica']
         if name=='stereo':sources.append(ROOT/'port/3ds/point.g.pica')
         if name=='stereo' and args.smoke:sources.append(reuse_source)
-        run([ROOT/'.toolchain/bin/picasso.exe','-o',binary,*sources])
+        run([ROOT/'.toolchain/bin'/('picasso'+EXE),'-o',binary,*sources])
         data=binary.read_bytes()
         with shader_c.open('a') as source:
             source.write(f'const unsigned char mp_{name}_shader[] __attribute__((aligned(4)))={{'+','.join(str(b) for b in data)+f'}};\nconst unsigned mp_{name}_shader_size={len(data)};\n')
     if args.smoke:
         reuse_binary=out/'stereo-reuse.shbin'
-        run([ROOT/'.toolchain/bin/picasso.exe','-o',reuse_binary,shader_dir/'vertex.v.pica',reuse_source])
+        run([ROOT/'.toolchain/bin'/('picasso'+EXE),'-o',reuse_binary,shader_dir/'vertex.v.pica',reuse_source])
         data=reuse_binary.read_bytes()
         with shader_c.open('a') as source:
             source.write('const unsigned char mp_stereo_reuse_shader[] __attribute__((aligned(4)))={'+','.join(map(str,data))+'};\n'+f'const unsigned mp_stereo_reuse_shader_size={len(data)};\n')
@@ -123,7 +124,7 @@ def main():
             binary=reference/f'{stem}.shbin'
             sources=[reference/f'{stem}.v.pica']
             if name in ('base','stereo'):sources.append(ROOT/'port/3ds/point.g.pica')
-            run([ROOT/'.toolchain/bin/picasso.exe','-o',binary,*sources])
+            run([ROOT/'.toolchain/bin'/('picasso'+EXE),'-o',binary,*sources])
             data=binary.read_bytes()
             with shader_c.open('a') as source:
                 source.write(f'const unsigned char mp_light_reference_{name}[] __attribute__((aligned(4)))={{'+','.join(str(b) for b in data)+f'}};\nconst unsigned mp_light_reference_{name}_size={len(data)};\n')
@@ -136,16 +137,28 @@ def main():
         includes+=['-DMP_RENDER_WORKER']
         extra.append(ROOT/'port/3ds/render_worker.c')
     if args.clamped_shade:includes+=['-DMP_CLAMPED_SHADE_TEST']
+    if args.no_door_names:includes+=['-DMP_GROUP_NO_DOOR_NAMES']
     if args.render_rework:includes+=['-DMP_RENDER_REWORK_TEST']
     if args.async_presentation or args.release:
         from async_renderqueue import generate
         extra.append(generate(out))
         includes+=['-I'+str(ROOT/'port/3ds'),'-DMP_ASYNC_PRESENTATION']
-    for src in (ROOT/'port/3ds/game.c',ROOT/'port/3ds/bottom.c',ROOT/'port/3ds/bottom_draw.c',ROOT/'port/3ds/renderer.c',ROOT/'port/3ds/early_queue.c',ROOT/'port/3ds/gx_thread.c',ROOT/'port/3ds/linear_lock.c',ROOT/'port/3ds/gpu_busy.c',ROOT/'port/3ds/citro3d_fix.c',ROOT/'port/3ds/uniform_dispatch.c',ROOT/'port/3ds/services.c',ROOT/'port/3ds/cpu_speed.c',ROOT/'port/3ds/file_io.c',ROOT/'port/3ds/audio.c',ROOT/'port/3ds/command_cache.c',ROOT/'port/3ds/log_io.c',ROOT/'port/3ds/jpeg_still.c',ROOT/'port/3ds/card_storage.c',ROOT/'port/3ds/settings.c',ROOT/'port/3ds/controls.c',*sorted((ROOT/'port/3ds/slippi').glob('*.c')),ROOT/'port/3ds/game_bridge.S',shader_c,*([ROOT/'tests/stereo_bounds_reference.c'] if args.smoke else []),*extra):
+    for src in (ROOT/'port/3ds/game.c',ROOT/'port/3ds/bottom.c',ROOT/'port/3ds/bottom_draw.c',ROOT/'port/3ds/renderer.c',ROOT/'port/3ds/early_queue.c',ROOT/'port/3ds/gx_thread.c',ROOT/'port/3ds/linear_lock.c',ROOT/'port/3ds/gpu_busy.c',ROOT/'port/3ds/citro3d_fix.c',ROOT/'port/3ds/uniform_dispatch.c',ROOT/'port/3ds/services.c',ROOT/'port/3ds/cpu_speed.c',ROOT/'port/3ds/file_io.c',ROOT/'port/3ds/audio.c',ROOT/'port/3ds/command_cache.c',ROOT/'port/3ds/log_io.c',ROOT/'port/3ds/jpeg_still.c',ROOT/'port/3ds/card_storage.c',ROOT/'port/3ds/settings.c',ROOT/'port/3ds/controls.c',ROOT/'port/3ds/name_text.c',ROOT/'port/3ds/mii_icon.c',*sorted((ROOT/'port/3ds/slippi').glob('*.c')),*sorted((ROOT/'port/3ds/localwireless').glob('*.c')),*sorted((ROOT/'port/3ds/group').glob('*.c')),ROOT/'port/3ds/net_select.c',ROOT/'port/3ds/game_bridge.S',shader_c,*([ROOT/'tests/stereo_bounds_reference.c'] if args.smoke else []),*extra):
         obj=out/(src.stem+'.o')
         run([cc,*arch,*common_flags(),'-fshort-enums','-D__3DS__',
-             *(['-DMP_SMOKE_TEST'] if args.smoke else []),*(['-DMP_AFFINE_IDENTITY_SHADER'] if args.identity_affine else []),*(['-DMP_UNLIT_AFFINE_SHADER'] if args.unlit_affine else []),*(['-DMP_BANNER_CAPTURE'] if args.banner_capture else []),*(['-DMP_AUDIO_HLE_TEST'] if args.audio_hle else []),*(['-DMP_BOOTMODE'] if args.boot else []),*(['-DMP_PROFILE_FRESH'] if args.profile=='fresh' else []),*(['-DMP_PROFILE_SLIPPI'] if args.profile=='slippi' else []),*(['-DMP_PROFILE_SLIPPI'] if args.profile=='slippi' else []),*includes,*(['-I'+str(sdk/'portlibs/3ds/include')] if src.name=='jpeg_still.c' else []),'-c',src,'-o',obj])
+             *(['-DMP_SMOKE_TEST'] if args.smoke else ['-DLW_NO_UDP']),*(['-DMP_AFFINE_IDENTITY_SHADER'] if args.identity_affine else []),*(['-DMP_UNLIT_AFFINE_SHADER'] if args.unlit_affine else []),*(['-DMP_BANNER_CAPTURE'] if args.banner_capture else []),*(['-DMP_AUDIO_HLE_TEST'] if args.audio_hle else []),*(['-DMP_BOOTMODE'] if args.boot else []),*(['-DMP_PROFILE_FRESH'] if args.profile=='fresh' else []),*(['-DMP_PROFILE_SLIPPI'] if args.profile=='slippi' else []),*(['-DMP_PROFILE_SLIPPI'] if args.profile=='slippi' else []),*includes,*(['-I'+str(sdk/'portlibs/3ds/include')] if src.name=='jpeg_still.c' else []),'-c',src,'-o',obj])
         objects.append(obj)
+    # cfl-mii (port/3ds/third_party/cfl-mii, a git submodule): the Group list's Mii heads (mii_icon.c). Its vertex
+    # shader goes in as a header it includes (vshader_shbin.h).
+    cfl=ROOT/'port/3ds/third_party/cfl-mii'
+    if not (cfl/'source/cfl_mii.c').is_file():raise SystemExit('cfl-mii is missing: git submodule update --init port/3ds/third_party/cfl-mii')
+    cfl_out=out/'cfl';cfl_out.mkdir(exist_ok=True)
+    run([ROOT/'.toolchain/bin'/('picasso'+EXE),'-o',cfl_out/'vshader.shbin',cfl/'source/vshader.v.pica'])
+    blob=(cfl_out/'vshader.shbin').read_bytes()
+    (cfl_out/'vshader_shbin.h').write_text('static const unsigned char vshader_shbin[] __attribute__((aligned(4)))={'+','.join(str(b) for b in blob)+'};\nstatic const unsigned int vshader_shbin_size='+str(len(blob))+';\n')
+    obj=out/'cfl_mii.o'
+    run([cc,*arch,*common_flags(),'-w','-fshort-enums','-D__3DS__',*includes,'-I'+str(cfl_out),'-include',str(ROOT/'port/3ds/mii_cfl_compat.h'),'-c',cfl/'source/cfl_mii.c','-o',obj])
+    objects.append(obj)
     # Slippi experiment: vendored ENet (port/3ds/slippi/enet, MIT); prefixed
     # object names keep its host.c/list.c/... apart from port sources.
     for src in sorted((ROOT/'port/3ds/slippi/enet').glob('*.c')):
@@ -161,7 +174,7 @@ def main():
     layout+='\nmp_image_text_start = ADDR(.text);\nmp_image_rodata_start = ADDR(.rodata);\nmp_image_data_start = ADDR(.data);\n'
     script.write_text(layout)
     linked=out/'melee-linked.elf';elf=out/'melee.elf'
-    command=[bin/'ld.lld.exe','-T',script,'--gc-sections','--emit-relocs','--wrap=GX_ProcessCommandList',
+    command=[bin/('ld.lld'+EXE),'-T',script,'--gc-sections','--emit-relocs','--wrap=GX_ProcessCommandList',
              *('--wrap='+name for name in ('C3D_UpdateUniforms','C3Di_LoadShaderUniforms','C3Di_ClearShaderUniforms','C3Di_DirtyUniforms')),
              *('--wrap='+name for name in ('linearAlloc','linearMemAlign','linearRealloc','linearFree','linearSpaceFree')),
              '--wrap=gspSubmitGxCommand','--wrap=gxCmdQueueInterrupt','--wrap=GPUCMD_Add',
@@ -181,7 +194,7 @@ def main():
     dest.parent.mkdir(parents=True,exist_ok=True)
     from launcher_icon import make_smdh
     smdh=make_smdh(out,args.profile)
-    run([ROOT/'.toolchain/bin/3dsxtool.exe',elf,dest,*([f'--smdh={smdh}'] if smdh else [])])
+    run([ROOT/'.toolchain/bin'/('3dsxtool'+EXE),elf,dest,*([f'--smdh={smdh}'] if smdh else [])])
     print('Built native engine integration:',dest,'Build-time BE8 relocation words:',image_info['be8_words'])
 
 

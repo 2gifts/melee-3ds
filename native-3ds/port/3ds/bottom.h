@@ -13,6 +13,11 @@ void mp_bottom_loading(uint16_t* pixels, const char* message);
 /* A full-screen message (missing game files); the hint is the last line. */
 void mp_bottom_notice(uint16_t* pixels, const char* title, const char* lead, const char* line1,
                       const char* line2, const char* line3, const char* hint);
+void mp_native_group_notice(int kind);
+/* The Group list's Mii heads (mii_icon.c on the 3DS): the icon of a game's host as 64 x 64 RGBA (0xRRGGBBAA, top row
+ * first) once rendered; NULL until then (the call asks for it; only rows on the page shown ask) or after a failure. */
+const uint32_t *mp_group_mii_icon(uint32_t key, uint16_t crc, const unsigned char *mii);
+unsigned mp_group_mii_serial(void);   /* changes when an icon is ready */
 void mp_native_bottom_notice(const char* title, const char* lead, const char* line1,
                              const char* line2, const char* line3, const char* hint);
 unsigned mp_bottom_hit(unsigned x, unsigned y);

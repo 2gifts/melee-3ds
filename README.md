@@ -27,6 +27,7 @@ Play Versus against CPUs, practice in Training, and explore Melee on a different
 - **4:3 by default**, with an optional expanded view that reveals more of the scene without stretching it.
 - A **touch-screen dashboard** with portraits, stocks, and damage for up to four fighters, plus menu guidance, an optional FPS display, a frame-rate mode switch, and **custom button mapping**.
 - Original music and sound effects, **UCF 0.84 input fixes**, and **C-stick attacks in single-player modes**.
+- **Group play:** Versus with up to **four nearby New 3DS consoles** over local wireless, with no internet or account.
 - **Two builds, installable side by side:** everything unlocked with editable tournament-friendly defaults, or a **fresh save** with vanilla options that you unlock by playing. Progress saves to the SD card as Dolphin-compatible memory-card files.
 - **HOME Menu launch through an installable CIA**, with a disc icon and a Final Destination/Fox diorama. Homebrew Launcher is also supported.
 - Optional **Diet Melee scenery** for five stages, simplifying visuals while retaining the original stage gameplay and collision.
@@ -76,7 +77,7 @@ For Homebrew Launcher, select **melee** after copying the same SD package. Updat
 
 ## Playing
 
-Choose **VS Mode → Melee**, select your fighter and CPU opponents, press START, and pick a stage. Training is under **1-P Mode → Training**. Only **one human player** is supported; the other fighters are CPUs.
+Choose **VS Mode → Melee**, select your fighter and CPU opponents, press START, and pick a stage. Training is under **1-P Mode → Training**. On one console, only **one human player** is supported; the other fighters are CPUs. To play with friends, use [group play](#group-play-local-wireless).
 
 In the everything-unlocked build, Versus starts with **4 stocks, 8 minutes, items off, team attack on, and pause enabled**; the fresh-save build uses Melee's original defaults. Change the rules in the usual menus for casual play. Rule changes are saved with your progress.
 
@@ -96,6 +97,14 @@ In the everything-unlocked build, Versus starts with **4 stocks, 8 minutes, item
 | SELECT | Exit to HOME or Homebrew Launcher |
 
 The touch-screen controls guide does not pause a match.
+
+## Group play (local wireless)
+
+Play Versus with up to **four New 3DS consoles in the same room**, each player on their own console. No internet, account or router is needed: the consoles talk over the 3DS's local wireless.
+
+Choose **VS Mode → Melee → Group**, then tap **HOST GAME** on one console's bottom screen. The others tap the host's game in the **Available Games** list. The character select screen is the shared lobby: everyone picks a fighter, anyone can add CPUs, and the host sets the rules. If a player drops out during a match, their fighter becomes a CPU.
+
+Both builds can play together, and every console needs wireless communication turned on. HOME is unavailable while you are in a group. Read the **[group play guide](native-3ds/docs/GROUP_PLAY.md)** for hosting, joining, the lobby, and troubleshooting.
 
 ## Slippi Direct beta (online play)
 
@@ -117,7 +126,7 @@ This is a free hobby project. Bug reports need facts: **builder problems need `b
 
 ## Scope and credits
 
-This is an unofficial homebrew port. The regular builds have **no multiplayer connection or replay recording**; the separate [Slippi Direct beta](native-3ds/docs/slippi/SLIPPI_BETA.md) adds 1v1 online play against Slippi Dolphin, without rollback on the 3DS. Optional movies are skipped, some graphics are simplified or approximate, and single-player modes have less coverage than Versus and Training. Bugs may remain. See [project status](native-3ds/docs/PORT_STATUS.md).
+This is an unofficial homebrew port. The regular builds have **local wireless group play** but **no internet play or replay recording**; the separate [Slippi Direct beta](native-3ds/docs/slippi/SLIPPI_BETA.md) adds 1v1 online play against Slippi Dolphin, without rollback on the 3DS. Optional movies are skipped, some graphics are simplified or approximate, and single-player modes have less coverage than Versus and Training. Bugs may remain. See [project status](native-3ds/docs/PORT_STATUS.md).
 
 Thanks to **doldecomp/melee and its contributors**, devkitPro, Diet Melee, the UCF authors and Project Slippi, and the Mario 64 3DS ports used as references. Development used OpenAI Codex alongside repeated testing on a physical New 3DS.
 

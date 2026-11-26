@@ -3,6 +3,7 @@
 #include <string.h>
 #include <stdio.h>
 #include "bottom.h"
+#include "group/group_session.h"
 
 extern void mp_game_bottom_snapshot(MPBottomState*);
 extern const unsigned char* mp_game_bottom_font(void);
@@ -48,6 +49,11 @@ void mp_native_bottom_art(void){
 void mp_native_bottom_notice(const char* title,const char* lead,const char* line1,const char* line2,const char* line3,const char* hint){
     mp_bottom_notice(pixels,title,lead,line1,line2,line3,hint);present();
 }
+/* Drawn at once, for the moments the engine blocks (nothing redraws the bottom screen then). */
+void mp_native_group_notice(int kind){
+    if(!ready)return;
+    if(kind==1)mp_native_bottom_notice("GROUP","STAGE CHOSEN","LOADING THE MATCH","","","");
+}
 void mp_native_bottom_frame(unsigned fps,unsigned expanded,unsigned rate,unsigned touch,unsigned x,unsigned y){
     if(!ready)return;
 #ifdef MP_SMOKE_TEST
@@ -67,6 +73,17 @@ void mp_native_bottom_frame(unsigned fps,unsigned expanded,unsigned rate,unsigne
     MPBottomState state;mp_game_bottom_snapshot(&state);
     /* The bridge changes ARM endianness, not the bytes of pointed-to data. */
     unsigned* words=(unsigned*)&state;for(unsigned i=0;i<sizeof(state)/4;++i)words[i]=__builtin_bswap32(words[i]);
+    /* Group play: a host passes the running match (timer, stocks, damage) on to consoles that joined during it. */
+    if(state.scene==2||state.scene==3){
+        lobby_status st;memset(&st,0,sizeof(st));
+        st.timer=state.timer?1:0;st.seconds=(uint16_t)(state.seconds>65535?65535:state.seconds);
+        for(unsigned i=0;i<4;++i){const MPBottomPlayer* p=&state.players[i];
+            st.port[i].kind=(uint8_t)(p->kind>3?3:p->kind);st.port[i].stocks=(uint8_t)(p->stocks>255?255:p->stocks);
+            st.port[i].damage=(uint16_t)(p->damage>999?999:p->damage);
+            /* the fighter shown now: the snapshot says Sheik (19) while Zelda is transformed */
+            st.port[i].fighter=(uint8_t)(p->character<26?p->character:0);st.port[i].costume=(uint8_t)(p->costume<6?p->costume:0);}
+        group_match_status(&st);
+    }
     /* Reuse the HUD snapshot instead of traversing fighter objects again.
      * Record scene/roster changes so automatic performance logs can identify
      * the actual workload without asking the player to transcribe it. */
@@ -89,7 +106,7 @@ void mp_native_bottom_frame(unsigned fps,unsigned expanded,unsigned rate,unsigne
 #ifdef MP_SMOKE_TEST
     mp_bottom_observed=state;mp_bottom_fps_visible=show_fps;mp_bottom_guide_visible=guide;
 #endif
-    {extern unsigned slippi_ui_serial(void);static unsigned online_serial;unsigned serial=slippi_ui_serial();
+    {extern unsigned slippi_ui_serial(void);extern unsigned group_serial(void);static unsigned online_serial;unsigned serial=slippi_ui_serial()+group_serial()+mp_group_mii_serial()*0x9E3779B1u;
      if(serial!=online_serial){online_serial=serial;dirty=1;}}
     unsigned shown=show_fps?fps:0;
     if(shown!=last_fps||expanded!=last_view||rate!=last_rate||

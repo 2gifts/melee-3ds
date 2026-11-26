@@ -31,6 +31,8 @@
 #include <sysdolphin/baselib/gobjproc.h>
 #include <sysdolphin/baselib/jobj.h>
 #include <sysdolphin/baselib/random.h>
+#include <group_bridge.h>
+#include <group_engine.h>
 #include <slippi_engine.h>
 #include <slippi_net_bridge.h>
 #include <slippi_rules.h>
@@ -68,7 +70,7 @@ static struct {
     int configured;           /* 0 unknown, 1 online, -1 offline */
     char opponent[24];
     int character, color, stage, stage_select, delay_setting, record;
-    int test_inputs, test_end_frame;   /* automated tests (config.ini) */
+    int test_inputs, test_end_frame, test_pause_frame;   /* automated tests (config.ini) */
     int auto_match;           /* auto_match=1: boot straight into the match (tests) */
     int prefetched_remote;
     int started;              /* matchmaking started */
@@ -77,6 +79,7 @@ static struct {
     u8 block[BLOCK_SIZE + 8];
     int active;
     u8 local_index, remote_index, delay;
+    int nplayers;             /* group play: the consoles' highest port + 1; 0 for Slippi online */
     u32 rng_offset;
     int frame;
     u8 last_local[PAD_SIZE];
@@ -176,6 +179,8 @@ static void load_config(void)
             on.test_inputs = parse_int(line + 12, 0);
         } else if (strncmp(line, "test_end_frame=", 15) == 0) {
             on.test_end_frame = parse_int(line + 15, 0);
+        } else if (strncmp(line, "test_pause_frame=", 17) == 0) {
+            on.test_pause_frame = parse_int(line + 17, 0);
         } else if (strncmp(line, "auto_match=", 11) == 0) {
             on.auto_match = parse_int(line + 11, 0);
         } else if (strncmp(line, "record=", 7) == 0) {
@@ -336,7 +341,8 @@ void mp_platform_idle(void);
 
 /* Automated tests (test_inputs=SEED): a deterministic pad per frame in place
  * of the 3DS controls, held a few frames like a person would, never Start;
- * test_end_frame=N pauses at N and ends the match with L+R+A+Start. */
+ * test_end_frame=N pauses at N and ends the match with L+R+A+Start;
+ * test_pause_frame=N pauses at N and stays paused (a console that then drops). */
 static void test_pad(PADStatus* pad, int frame)
 {
     u32 x = (u32) (frame / 6) * 2654435761u ^ (u32) on.test_inputs * 40503u;
@@ -354,6 +360,13 @@ static void test_pad(PADStatus* pad, int frame)
     if (pad->button & 0x0040) {
         pad->triggerLeft = 140;
     }
+    if (on.test_pause_frame > 0 && frame >= on.test_pause_frame && frame < on.test_pause_frame + 3) {
+        memset(pad, 0, sizeof *pad);
+        pad->button = 0x1000;                            /* Start: pause */
+        if (frame == on.test_pause_frame) {
+            logf_("Slippi online: test pause at frame %d\n", frame, 0, 0);
+        }
+    }
     if (on.test_end_frame > 0 && frame >= on.test_end_frame) {
         memset(pad, 0, sizeof *pad);
         if (frame < on.test_end_frame + 3) {
@@ -370,7 +383,7 @@ static void exchange_pads(int frame)
     PadLibData* p = &HSD_PadLibData;
     PADStatus* stat;
     PADStatus* source;
-    u8 remote[PAD_SIZE];
+    u8 remote[64];            /* group play's answer is 4 pads, the CPU mask and the console count (group_bridge.h) */
     int i, result, waited = 0;
 
     if (p->qcount == 0 || p->queue == NULL) {
@@ -431,16 +444,32 @@ static void exchange_pads(int frame)
         on.disconnected = 1;
         memset(remote, 0, sizeof remote);
     }
-    /* The local player's pad is the one from `delay` frames ago. */
-    wire_to_pad(&stat[on.local_index], on.delay_buffer[on.delay_index]);
-    memcpy(on.delay_buffer[on.delay_index], on.last_local, PAD_SIZE);
-    on.delay_index = (u8) ((on.delay_index + 1) % on.delay);
-    wire_to_pad(&stat[on.remote_index], remote);
+    if (on.nplayers > 0) {
+        /* Group play: the host's bundle holds every port's pad for this frame, ours included (sent `delay` frames
+         * ago); its CPU mask may turn a dropped console's fighter into a CPU (group_engine.h). */
+        for (i = 0; i < 4; i++) {
+            wire_to_pad(&stat[i], remote + 12 * i);
+        }
+        if (mp_group_frame_mask(remote[48], frame, result == RESP_NORMAL, on.local_index, on.block)) {
+            on.disconnected = 1;
+        }
+        mp_group_release_pause(remote[48], frame, result == RESP_NORMAL, stat);
+    } else {
+        /* The local player's pad is the one from `delay` frames ago. */
+        wire_to_pad(&stat[on.local_index], on.delay_buffer[on.delay_index]);
+        memcpy(on.delay_buffer[on.delay_index], on.last_local, PAD_SIZE);
+        on.delay_index = (u8) ((on.delay_index + 1) % on.delay);
+        wire_to_pad(&stat[on.remote_index], remote);
+    }
     {
-        u8 w0[PAD_SIZE], w1[PAD_SIZE];
-        pad_to_wire(w0, &stat[0]);
-        pad_to_wire(w1, &stat[1]);
-        mp_slippi_record_online_inputs(w0, w1, on.tx_checksum);
+        u8 w[4][PAD_SIZE];
+        for (i = 0; i < 4; i++) {
+            pad_to_wire(w[i], &stat[i]);
+        }
+        mp_slippi_record_online_inputs(w[0], w[1], on.tx_checksum);
+        if (on.nplayers > 2) {
+            mp_slippi_record_online_inputs_ports23(w[2], w[3]);
+        }
     }
     on.finalized = frame;
     on.frames++;
@@ -474,7 +503,7 @@ void mp_slippi_online_frame_begin(void)
     if (on.disconnected && !on.disconnect_shown && !on.game_over) {
         on.disconnect_shown = 1;
         mp_slippi_hud_message(1);
-        mp_slippi_gmvs_end_online(on.remote_index);
+        mp_slippi_gmvs_end_online(on.nplayers > 0 ? 0 : on.remote_index);   /* group play: a lost link is the host's */
     }
     {
         int v = frame > on.finalized ? on.finalized : frame;
@@ -517,7 +546,7 @@ void mp_slippi_online_frame_begin(void)
                     mp_slippi_hud_message(2);
                     lbAudioAx_80024030(3);
                     if (!on.game_over) {
-                        mp_slippi_gmvs_end_online(on.remote_index);
+                        mp_slippi_gmvs_end_online(on.nplayers > 0 ? 0 : on.remote_index);   /* group play: a lost link is the host's */
                     }
                 }
                 break;
@@ -802,13 +831,17 @@ void mp_slippi_online_start_melee(StartMeleeData* data)
         return;
     }
     on.pending = 0;
+    if (mp_platform_group_players() > 0) {
+        mp_group_check_block(data, on.block);
+    }
     memcpy(data, on.block, BLOCK_SIZE);
     memset((u8*) data + 0x38, 0, 0x5C - 0x38);
     on.rng_offset = be32(on.block + BLOCK_SIZE);
     on.local_index = on.block[BLOCK_SIZE + 4] & 3;
     on.remote_index = on.local_index == 0 ? 1 : 0;
     /* Online-only gameplay codes (LGL, GAME! hold) and the frozen Stadium choice. */
-    mp_slippi_rules_set_online(2 /* DIRECT */, on.local_index);
+    on.nplayers = mp_platform_group_players();
+    mp_slippi_rules_set_online(on.nplayers > 0 ? 5 /* group play: no LGL */ : 2 /* DIRECT */, on.local_index);
     mp_slippi_rules_set_frozen_stadium(on.block[BLOCK_SIZE + 6]);
     delay = on.block[BLOCK_SIZE + 5];
     if (delay < MIN_DELAY) {
@@ -821,6 +854,9 @@ void mp_slippi_online_start_melee(StartMeleeData* data)
         delay = MAX_DELAY;
     }
     on.delay = (u8) delay;
+    if (on.nplayers > 0) {
+        mp_group_match_begin(data, on.local_index, on.block);
+    }
     on.frame = 1;
     on.delay_index = 0;
     memset(on.delay_buffer, 0, sizeof on.delay_buffer);
@@ -866,6 +902,9 @@ void mp_slippi_online_match_exit(void)
     logf_("Slippi online: %d extra frames run to catch up, %d dropped to wait for the opponent\n",
           (int) on.advances, (int) on.dropped, 0);
     on.active = 0;
+    if (on.nplayers > 0) {
+        mp_group_match_exit();   /* back to the group's lobby */
+    }
 }
 
 int mp_slippi_online_active(void)

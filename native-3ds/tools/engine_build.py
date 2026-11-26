@@ -4,7 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 import subprocess
-from build import ROOT, UPSTREAM, prepare, common_flags, local_clang
+from build import ROOT, UPSTREAM, EXE, prepare, common_flags, local_clang
 from be8_object import convert
 from engine_encoding import shift_jis_literals
 
@@ -67,11 +67,13 @@ def compile_engine(jobs=6,sanitize=False,output_directory=None,clamped_shade=Fal
     subprocess.run([*flags,'-fsyntax-only',str(ROOT/'tests/arm_abi.c')],check=True,capture_output=True)
     sources = sorted((UPSTREAM/'src/melee').rglob('*.c'))
     sources += [p for p in sorted((UPSTREAM/'src/sysdolphin').rglob('*.c')) if p.name != 'debug.c']
-    sources.append(UPSTREAM/'extern/dolphin/src/dolphin/pad/Padclamp.c')
+    sources.append(UPSTREAM/'extern/dolphin/src/dolphin/pad/PadClamp.c')
     sources += [UPSTREAM/'src/MSL'/name for name in MSL_SOURCES]
     sources += sorted((ROOT/'port/engine').glob('*.c'))
     # Slippi online experiment: engine-side (big-endian) sources.
     sources += sorted((ROOT/'port/engine/slippi').glob('*.c'))
+    # Group play (local wireless lobbies): engine-side sources.
+    sources += sorted((ROOT/'port/engine/group').glob('*.c'))
     from engine_math import generate
     dolphin_math=generate()
     sources.append(dolphin_math)
@@ -181,7 +183,7 @@ def compile_engine(jobs=6,sanitize=False,output_directory=None,clamped_shade=Fal
         native_objects=[r['object'] for r in results if r.get('format')!='LLVM bitcode']
         bitcode_list.write_text('\n'.join('"'+p.replace('\\','/')+'"' for p in bitcode))
         raw=out/'engine-lto.raw.o';obj=out/'engine-lto.o'
-        command=[str(Path(cc).with_name('ld.lld.exe')),'-r','-m','armelfb',
+        command=[str(Path(cc).with_name('ld.lld'+EXE)),'-r','-m','armelfb',
                  '--lto-O2','-mllvm','-arm-assume-misaligned-load-store','--thinlto-jobs='+str(jobs),'--threads='+str(jobs),
                  '--thinlto-cache-dir='+str(out/'thinlto-cache'),'@'+str(bitcode_list),'-o',str(raw)]
         subprocess.run(command,check=True)
@@ -196,9 +198,9 @@ def compile_engine(jobs=6,sanitize=False,output_directory=None,clamped_shade=Fal
     if archive.exists(): archive.unlink()
     response=out/'objects.rsp'
     response.write_text('\n'.join('"'+p.replace('\\','/')+'"' for p in objects))
-    ar=Path(cc).with_name('llvm-ar.exe')
+    ar=Path(cc).with_name('llvm-ar'+EXE)
     subprocess.run([str(ar),'rcs',str(archive),'@'+str(response)],check=True)
-    check_native_imports(archive,Path(cc).with_name('llvm-nm.exe'))
+    check_native_imports(archive,Path(cc).with_name('llvm-nm'+EXE))
     print(f'Built {len(results)} ARM BE8 engine objects')
     return archive
 
