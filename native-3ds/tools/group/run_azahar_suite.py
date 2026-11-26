@@ -24,7 +24,8 @@ ALONE = 99
 # name, emulators (ALONE: no other test meanwhile), the script and its arguments
 TESTS = [
     ('smoke', 2, ['tools/group/group_smoke_test.py']),
-    ('quad', 3, ['tools/group/group_quad_test.py', '--players', '3', '--end-frame', '600', '--kill', '3:60',
+    # console 3 pauses, then drops while paused: the others make it a CPU, unpause for it and reach the host's end
+    ('quad', 3, ['tools/group/group_quad_test.py', '--players', '3', '--end-frame', '1500', '--pause-kill', '3:300',
                  '--timeout-ms', '20000']),
     ('lobby', 1, ['tools/group/group_lobby_test.py']),
     ('mii', 1, ['tools/group/group_mii_test.py']),

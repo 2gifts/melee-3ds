@@ -70,7 +70,7 @@ static struct {
     int configured;           /* 0 unknown, 1 online, -1 offline */
     char opponent[24];
     int character, color, stage, stage_select, delay_setting, record;
-    int test_inputs, test_end_frame;   /* automated tests (config.ini) */
+    int test_inputs, test_end_frame, test_pause_frame;   /* automated tests (config.ini) */
     int auto_match;           /* auto_match=1: boot straight into the match (tests) */
     int prefetched_remote;
     int started;              /* matchmaking started */
@@ -179,6 +179,8 @@ static void load_config(void)
             on.test_inputs = parse_int(line + 12, 0);
         } else if (strncmp(line, "test_end_frame=", 15) == 0) {
             on.test_end_frame = parse_int(line + 15, 0);
+        } else if (strncmp(line, "test_pause_frame=", 17) == 0) {
+            on.test_pause_frame = parse_int(line + 17, 0);
         } else if (strncmp(line, "auto_match=", 11) == 0) {
             on.auto_match = parse_int(line + 11, 0);
         } else if (strncmp(line, "record=", 7) == 0) {
@@ -339,7 +341,8 @@ void mp_platform_idle(void);
 
 /* Automated tests (test_inputs=SEED): a deterministic pad per frame in place
  * of the 3DS controls, held a few frames like a person would, never Start;
- * test_end_frame=N pauses at N and ends the match with L+R+A+Start. */
+ * test_end_frame=N pauses at N and ends the match with L+R+A+Start;
+ * test_pause_frame=N pauses at N and stays paused (a console that then drops). */
 static void test_pad(PADStatus* pad, int frame)
 {
     u32 x = (u32) (frame / 6) * 2654435761u ^ (u32) on.test_inputs * 40503u;
@@ -356,6 +359,13 @@ static void test_pad(PADStatus* pad, int frame)
     pad->button = buttons[(x >> 27) % 10];
     if (pad->button & 0x0040) {
         pad->triggerLeft = 140;
+    }
+    if (on.test_pause_frame > 0 && frame >= on.test_pause_frame && frame < on.test_pause_frame + 3) {
+        memset(pad, 0, sizeof *pad);
+        pad->button = 0x1000;                            /* Start: pause */
+        if (frame == on.test_pause_frame) {
+            logf_("Slippi online: test pause at frame %d\n", frame, 0, 0);
+        }
     }
     if (on.test_end_frame > 0 && frame >= on.test_end_frame) {
         memset(pad, 0, sizeof *pad);
@@ -443,6 +453,7 @@ static void exchange_pads(int frame)
         if (mp_group_frame_mask(remote[48], frame, result == RESP_NORMAL, on.local_index, on.block)) {
             on.disconnected = 1;
         }
+        mp_group_release_pause(remote[48], frame, result == RESP_NORMAL, stat);
     } else {
         /* The local player's pad is the one from `delay` frames ago. */
         wire_to_pad(&stat[on.local_index], on.delay_buffer[on.delay_index]);

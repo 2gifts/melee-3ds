@@ -13,6 +13,7 @@
 #include <melee/gm/gm_1BFA.h>
 #include <melee/gm/gmmain_lib.h>
 #include <melee/gm/gmresult.h>
+#include <melee/gm/gmvs.h>
 #include <melee/gm/gmvsmelee.h>
 #include <melee/gm/types.h>
 #include <melee/lb/inlines.h>
@@ -585,12 +586,34 @@ int mp_group_frame_mask(unsigned mask, int frame, int normal, int local_index, c
         Player_SetPlayerAndEntityCpuType(i, 4);
         Player_SetPlayerAndEntityCpuLevel(i, 3);
         logf_("Group: port %d dropped; a level 3 CPU plays from frame %d\n", i + 1, frame);
+        mp_slippi_hud_name_dropped(i);
     }
     if (mask & (1u << local_index)) {
         logf_("Group: the host made this console a CPU at frame %d\n", frame, 0);
         return 1;   /* the host is waiting for us no more: leave the match */
     }
     return 0;
+}
+
+void mp_group_release_pause(unsigned mask, int frame, int normal, void* pads)
+{
+    static int logged_frame = -1;
+    PADStatus* pad;
+    int p;
+    if (!normal || !(gm_GetDbPauseFlag(1) || gm_GetDbPauseFlag(2))) {
+        return;
+    }
+    p = gmVs_GetController_0()->pauser;
+    if (p < 0 || p > 3 || !(mask & (1u << p))) {
+        return;
+    }
+    pad = (PADStatus*) pads + p;
+    pad->err = 0;
+    pad->button = (u16) ((pad->button & ~PAD_BUTTON_START) | ((frame & 1) ? PAD_BUTTON_START : 0));
+    if (logged_frame < 0 || frame - logged_frame > 60) {
+        logf_("Group: port %d paused and dropped; pressing Start for it from frame %d\n", p + 1, frame);
+    }
+    logged_frame = frame;
 }
 
 /* The console's name over that port's damage display, as the game's text bytes (a UTF-8 name would be misread: kana
@@ -600,6 +623,9 @@ int mp_group_hud_name(int port, char* name, int size)
     char raw[MP_GROUP_NAME_MAX];
     if (mp_platform_group_players() <= 0) {
         return -1;
+    }
+    if (Player_GetPlayerSlotType(port) != Gm_PKind_Human) {
+        return 0;   /* a CPU door: no console plays it, even one that sits on that door in the lobby */
     }
     name[0] = 0;
     raw[0] = 0;

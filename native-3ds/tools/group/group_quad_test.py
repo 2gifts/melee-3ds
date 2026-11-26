@@ -5,6 +5,8 @@ fighter, and the host starts once group.ini auto_players consoles are here. Dete
 the match with L+R+A+Start, every console records the match (record=1) and the records must be identical.
 --kill N:SECONDS stops console N (2..4) that long after every console has started its match: the others must
 carry on, turn that player into a level 3 CPU at the same frame, and still produce identical records.
+--pause-kill N:FRAME makes console N pause the match at FRAME and stops it while the match is paused: only the console
+that paused can unpause, so the others must press Start for its port (group.c) and still reach the host's end.
 
     docker/emu-test.sh run tools/group/group_quad_test.py [--players 4] [--end-frame 600] [--kill 3:20]
 Four emulated consoles are CPU bound: this checks determinism, not timing.
@@ -34,6 +36,7 @@ def main():
     ap.add_argument('--delay', type=int, default=3)
     ap.add_argument('--seconds', type=float, default=1500)
     ap.add_argument('--kill', default='', help='N:SECONDS, stop console N that long after all matches started')
+    ap.add_argument('--pause-kill', default='', help='N:FRAME, console N pauses at FRAME and is stopped while paused')
     ap.add_argument('--timeout-ms', type=int, default=60000, help='group.ini timeout_ms (the real default is 2000; emulation stalls longer)')
     ap.add_argument('--port', type=int, default=47010)
     ap.add_argument('--dsx', default=os.environ.get('MELEE_DSX') or str(ROOT / 'dist/3ds/melee/melee-development.3dsx'))
@@ -45,6 +48,10 @@ def main():
     if args.kill:
         who, secs = args.kill.split(':')
         kill = (int(who), float(secs))
+    pause_kill = None
+    if args.pause_kill:
+        who, frame = args.pause_kill.split(':')
+        pause_kill = (int(who), int(frame))
 
     out = OUT / 'quad'
     if out.exists():
@@ -60,6 +67,8 @@ def main():
                  'stage_select=1', 'auto_match=1', 'record=1', f'test_inputs={i + 1}']
         if i == 0:
             lines.append(f'test_end_frame={args.end_frame}')
+        if pause_kill and i == pause_kill[0] - 1:
+            lines.append(f'test_pause_frame={pause_kill[1]}')
         (sd / 'slippi' / 'config.ini').write_text('\n'.join(lines) + '\n')
         group = ['udp=1', f'port={args.port}', f'delay={args.delay}', f'auto_players={n}', f'timeout_ms={args.timeout_ms}']
         (sd / 'slippi' / 'group.ini').write_text('\n'.join(group) + '\n')
@@ -72,6 +81,7 @@ def main():
         time.sleep(3)
     deadline = time.monotonic() + args.seconds
     all_started_at = None
+    paused_at = None
     try:
         while time.monotonic() < deadline:
             time.sleep(1)
@@ -93,6 +103,16 @@ def main():
                 print(f"stopping console {s['name']}")
                 emu.stop(s['proc'])
                 s['killed'] = True
+            if pause_kill and not sides[pause_kill[0] - 1]['killed']:
+                s = sides[pause_kill[0] - 1]
+                log = s['sd'] / 'game.log'
+                if paused_at is None and log.exists() and 'Slippi online: test pause' in log.read_text(errors='replace'):
+                    paused_at = time.monotonic()
+                    print(f"console {s['name']} paused the match")
+                if paused_at is not None and time.monotonic() - paused_at >= 5:
+                    print(f"stopping console {s['name']} while the match is paused")
+                    emu.stop(s['proc'])
+                    s['killed'] = True
             if all(s['copied'] or s['killed'] for s in sides):
                 break
     finally:
@@ -115,6 +135,13 @@ def main():
         if diff or not cnt:
             ok = False
             print('  first difference:', diff[0] if diff else None)
+    if pause_kill:
+        want = f'Group: port {pause_kill[0]} paused and dropped'
+        for s in alive:
+            path = out / f"{s['name']}-game.log"
+            seen = path.exists() and want in path.read_text(errors='replace')
+            print(f"{s['name']}: pressed Start for the paused, dropped port: {'yes' if seen else 'NO'}")
+            ok = ok and seen
     for s in sides:
         path = out / f"{s['name']}-game.log"
         if path.exists():

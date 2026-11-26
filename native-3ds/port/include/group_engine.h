@@ -36,8 +36,14 @@ void mp_group_match_exit(void);
  * console's own (the host has given up on us): the match is over here. `normal` is 0 when the frame came without a
  * bundle (a disconnect), so the mask means nothing. */
 int mp_group_frame_mask(unsigned mask, int frame, int normal, int local_index, const unsigned char* block);
-/* online_hud.c: the name over port n's damage: 1 and `name` filled for a group's console, 0 for none, -1 when this is
- * not a group match (Slippi's names apply). */
+/* After the frame's pads are in (`pads`: the four ports' PADStatus): when the console that paused has dropped (its bit is
+ * in the mask), its port presses Start on every other frame until the pause ends. Nobody else can unpause, so the rest
+ * would be stuck on the pause screen. Every console does this on the same frames. */
+void mp_group_release_pause(unsigned mask, int frame, int normal, void* pads);
+/* online_hud.c: greys the name over port n's damage (its console dropped mid-match). */
+void mp_slippi_hud_name_dropped(int port);
+/* online_hud.c: the name over port n's damage: 1 and `name` filled for a group's console, 0 for none (a CPU's port
+ * shows no name, even when a console sits on that door), -1 when this is not a group match (Slippi's names apply). */
 int mp_group_hud_name(int port, char* name, int size);
 
 /* The results screen patch (tools/group_edits/group_results.py, gmresultplayer.c): its state this frame, and the pads it

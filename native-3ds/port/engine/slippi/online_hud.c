@@ -25,6 +25,8 @@ enum { TEXT_GXLINK = 12, TEXT_GXPRI = 80, COBJ_GXPRI = 8 };
 
 static HSD_Text* info_text;
 static int info_shown;
+static HSD_Text* name_text[4];   /* group play's names, to grey one whose console drops */
+static int name_idx[4];
 
 /* Vanilla's pause (ifAll_802F3394) hides the damage digits one by one and
  * never sets the HUD-hidden flag, so the text also follows the digits' own
@@ -67,6 +69,7 @@ void mp_slippi_hud_init(void)
 
     info_text = NULL;
     info_shown = 0;
+    memset(name_text, 0, sizeof name_text);
     if (!mp_slippi_online_active()) {
         return;
     }
@@ -118,8 +121,21 @@ void mp_slippi_hud_init(void)
         idx = HSD_SisLib_803A6B98(t, 0.0f, 0.0f, "%s", name);
         if (group < 0) {
             HSD_SisLib_803A7548(t, idx, 0.54f, 0.54f);   /* Slippi online: its names as they were */
+        } else {
+            name_text[i] = t;
+            name_idx[i] = idx;
         }
     }
+}
+
+/* Group play: a console that drops mid-match keeps its name over the damage, in grey (a CPU plays on for it). */
+void mp_slippi_hud_name_dropped(int port)
+{
+    static const GXColor grey = { 0x80, 0x80, 0x80, 0xFF };
+    if (port < 0 || port > 3 || name_text[port] == NULL) {
+        return;
+    }
+    HSD_SisLib_803A74F0(name_text[port], name_idx[port], (GXColor*) &grey);
 }
 
 /* StartEngineLoop: 1 = DISCONNECTED (red), 2 = DESYNC DETECTED (amber). */
