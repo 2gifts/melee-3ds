@@ -32,7 +32,7 @@ sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parent / 'slippi'))
 sys.path.insert(0, str(HERE.parent))
 import emu  # noqa: E402
-from group_menu_test import to_main_menu, KEY_A, KEY_B, MENU_VS, PORT, SCENE_CHOOSE, Stub, save_bottom, save_top  # noqa: E402
+from emu_group import to_main_menu, KEY_A, KEY_B, MENU_VS, PORT, SCENE_CHOOSE, Stub, save_bottom, save_top  # noqa: E402
 
 KEY_UP = 0x40
 TOOLS = Path(os.environ.get('MELEE_GROUP_TOOLS_DIR') or emu.ROOT / 'build/group-tools')

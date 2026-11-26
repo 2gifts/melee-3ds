@@ -1,5 +1,5 @@
 /* The Melee lobby of a local wireless group: see group_lobby.h. Pure logic, no I/O, so the PC tests drive it directly
- * (tools/group/src/lobby_unit.c). */
+ * (tests/group_lobby_tests.c). */
 #include "group_lobby.h"
 #include <string.h>
 

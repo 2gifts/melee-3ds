@@ -1,10 +1,11 @@
-/* Unit test for the Melee lobby rules (port/3ds/group/group_lobby.c): wire round trips, doors, who may edit which door,
- * joins and leaves, start and stage arbitration, and the match block. Prints "lobby_unit: ok" or the first failure. */
+/* Host tests for the Melee lobby rules (port/3ds/group/group_lobby.c): wire round trips, doors, who may edit which door,
+ * joins and leaves, start and stage arbitration, and the match block. Prints "group_lobby: ok" or the first failure.
+ * Run by tools/test_group.py. */
 #include "group_lobby.h"
 #include <stdio.h>
 #include <string.h>
 
-#define CHECK(c) do { if (!(c)) { printf("lobby_unit: FAIL line %d: %s\n", __LINE__, #c); return 1; } } while (0)
+#define CHECK(c) do { if (!(c)) { printf("group_lobby: FAIL line %d: %s\n", __LINE__, #c); return 1; } } while (0)
 
 static lobby_slot fighter(int kind, int ch, int color)
 {
@@ -482,7 +483,7 @@ int main(void)
         for (int i = 0; i < 4; ++i) { u.st.slot[i] = fighter(LOBBY_HUMAN, 0x19, 5); memset(u.st.slot[i].tag, 0x82, 8); u.st.stars[i] = 99; }
         int n = lobby_encode(&u.st, b, sizeof(b));
         CHECK(n > 0 && n <= LOBBY_BLOB_MAX);
-        printf("lobby_unit: the lobby blob is %d of %d bytes\n", n, LOBBY_BLOB_MAX);
+        printf("group_lobby: the lobby blob is %d of %d bytes\n", n, LOBBY_BLOB_MAX);
         CHECK(lobby_decode(&x, b, n) == 0 && x.status.valid && x.status.port[0].fighter == 19 && x.status.port[0].costume == 2 &&
               x.status.port[1].fighter == 2 && x.status.port[1].costume == 1 && x.status.port[0].damage == 42 &&
               x.status.seconds == 90 && x.in_use == 0xF && x.played == 0xF && x.stars[3] == 99);
@@ -541,7 +542,7 @@ int main(void)
         for (int i = 1; i < 4; ++i) { u.st.gone |= (uint8_t)(1u << i); memset(u.st.gone_name[i], 'W', 30); u.st.gone_name[i][30] = 0; }
         n = lobby_encode(&u.st, b, sizeof(b));
         CHECK(n > 0 && n <= LOBBY_BLOB_MAX && lobby_decode(&x, b, n) == 0 && x.gone == 0x6 && strlen(x.gone_name[2]) == 30);
-        printf("lobby_unit: the largest blob is %d of %d bytes\n", n, LOBBY_BLOB_MAX);
+        printf("group_lobby: the largest blob is %d of %d bytes\n", n, LOBBY_BLOB_MAX);
         lobby_host_results_begin(&u);
         lobby_host_results_over(&u, NULL, NULL);
         CHECK(u.st.gone == 0 && !u.st.gone_name[1][0]);                                  /* the lobby reopened */
@@ -682,6 +683,6 @@ int main(void)
         CHECK(lobby_decode(&x, b, lobby_encode(&u.st, b, sizeof(b))) == 0 && x.rules.stage_sel == LOBBY_SSS_ANY);
     }
 
-    printf("lobby_unit: ok\n");
+    printf("group_lobby: ok\n");
     return 0;
 }

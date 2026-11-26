@@ -1,4 +1,4 @@
-"""Reading the character select's state out of an emulated console's memory (Azahar's GDB stub, through group_menu_test's
+"""Reading the character select's state out of an emulated console's memory (Azahar's GDB stub, through emu_group's
 Stub): the four doors (mncharsel.c's CSSDoor), whether READY shows, and where a slider's knob sits. Engine data is
 big-endian. Used by the group Azahar tests to check what the CSS shows, not only what the log says."""
 import struct

@@ -38,10 +38,14 @@ CODE = r'''
 #include <group_engine.h>
 #include <slippi_engine.h>
 #include <slippi_net_bridge.h>
+#include <group_rules.h>   /* the decisions (port/engine/group/css_rules.c); this file copies the scene in and applies */
 void gm_80167BC8(VsModeData* vs_data);
 typedef struct MpCssDoor { u8 kind, ckind, costume, team, cpu_level; } MpCssDoor;
 
-#define MP_CSS_REMOTE_HELD 5   /* token state: held by another console (a cursor holding a token is port + 1, 1 to 4) */
+#define MP_CSS_REMOTE_HELD GR_TOKEN_REMOTE_HELD   /* token state: held by another console (a cursor holding a token is
+                                                  * port + 1, 1 to 4) */
+_Static_assert(CKind_Playable_Count == GR_FIGHTERS, "group_rules.h: fighters");
+_Static_assert(HSD_PAD_A == GR_PAD_A, "group_rules.h: A");
 static MpGroupLobby mp_lob;       /* the newest lobby snapshot (group_bridge.h) */
 static int mp_lob_ok;
 static int mp_css_ctx = -1;
@@ -49,22 +53,16 @@ static int mp_css_go;             /* the host sent us to the stage select */
 static int mp_css_seen_css;       /* saw the lobby in its CSS phase since this scene began */
 static int mp_css_start_wait;
 static int mp_css_leave_asked;   /* Back is waiting for the host's answer to "End the session?" */
-static int mp_css_busy_now;      /* this console is busy: name tags, name entry, rules, a slider (the lobby's busy bit) */
-static int mp_css_busy_wait;
-static int mp_css_doors_now;     /* the doors this console is using (a slider, a name tag list, name entry, a held token) */
-static int mp_css_doors_sent;    /* ... as last told to the host */
-static int mp_css_naming = -1;   /* the door whose name entry this console opened, until the CSS is back */
-static int mp_css_ruling;        /* this console opened the rules menu, until the CSS is back */
-static int mp_css_why_sent;      /* the busy reason last sent (LOBBY_BUSY_*: 1 slider, 2 name tags, 3 rules, 4 name entry,
-                                 * 6 a dialog) */
+static GrCssBusy mp_css_busy = { 0, -1 };   /* this console busy (name tags, name entry, rules, a slider, a dialog) and
+                                             * the doors it is using; see gr_css_busy_step */
 static HSD_PadStatus mp_css_no_pad;   /* what the CSS reads while a top-screen dialog is up: nothing pressed */
 #define MP_CSS_DOOR 15     /* a door as the lobby holds it: kind, fighter, costume, team, level, chosen, tag[8], handicap */
-static u8 mp_css_last_view[4][MP_CSS_DOOR], mp_css_last_view_ok[4];
-static u8 mp_css_applied[4][MP_CSS_DOOR], mp_css_applied_ok;
+_Static_assert(MP_CSS_DOOR == GR_DOOR_BYTES, "group_rules.h: door");
+static GrCssSync mp_css_sync_st[4];   /* each door as last applied or sent, the lobby's as last seen, a pending edit */
+static u8 mp_css_applied_ok;
 static u8 mp_css_hc_shown[4];    /* each door's handicap as the lobby last showed it (auto handicap of a door not ours) */
 HSD_Text* mp_css_banner;         /* the rules banner at the top (the CSS scene's setup keeps it here) */
 static int mp_css_banner_key = -1;
-static u8 mp_css_pending[4];
 static MpGroupRules mp_css_rules_sent;
 static int mp_css_rules_sent_ok;
 static HSD_Text* mp_css_dtext[4];       /* the name under each door */
@@ -88,7 +86,7 @@ GameRules* mp_css_game_rules(void)
 {
     static GameRules over;
     GameRules* real = (gmMainLib_GetGameRules)();
-    if (!mp_lob_ok || mp_lob.host || !mp_lob.rules.melee_valid) {
+    if (!gr_css_shows_host_rules(mp_lob_ok, mp_lob.host, mp_lob.rules.melee_valid)) {
         return real;
     }
     over = *real;
@@ -106,19 +104,19 @@ GameRules* mp_css_game_rules(void)
 s8 mp_css_auto_hc(u8 port, u8 tag)
 {
     s8* h;
-    int kind;
-    if (!mp_lob_ok || port > 3) {
+    int kind = port <= 3 ? mnCharSel_803F0DFC.doors[port].p_kind : 3;
+    switch (gr_css_auto_hc_from(mp_lob_ok, port, mp_lob_ok ? mp_css_game_rules()->handicap : 0, kind, mp_css_my(),
+                                mp_lob.host)) {
+    case GR_HC_VANILLA:
         return (gm_801685D4)(port, tag);
-    }
-    if (mp_css_game_rules()->handicap != 1) {
+    case GR_HC_ZERO:
         return 0;
-    }
-    kind = mnCharSel_803F0DFC.doors[port].p_kind;
-    if ((kind == 0 && port == mp_css_my()) || (kind == 1 && mp_lob.host)) {
+    case GR_HC_SAVE:
         h = gmMainLib_8015CE44(port, tag);
         return h != NULL ? *h : 5;
+    default:
+        return mp_css_hc_shown[port];
     }
-    return mp_css_hc_shown[port];
 }
 
 /* Move a door's handicap slider to the value the door holds now (as the name tag list does after a tag is chosen). */
@@ -159,53 +157,35 @@ static void mp_css_show_level(int d)
 static u8 mp_css_read_hc(int d, int kind)
 {
     PlayerInitData* p = &mnCharSel_804D6CB0->vs.start.players[d];
-    int mode = mp_css_game_rules()->handicap, h;
-    if (kind == 2 || mode == 0) {
-        return 0;
-    }
-    h = mode == 1 ? mp_css_auto_hc(d, p->nametag) : p->handicap;
-    return h >= 1 && h <= 9 ? h : 0;
+    int mode = mp_css_game_rules()->handicap;
+    return gr_css_door_hc(kind, mode, mode == 1 && kind != 2 ? mp_css_auto_hc(d, p->nametag) : p->handicap);
 }
 
 /* The pad a door's cursor reads: my door gets pad 0 (the only real pad), every other port an unplugged channel. */
 HSD_PadStatus* mp_css_pad(int port)
 {
-    int my;
-    if (!mp_css_group()) {
-        return &HSD_PadCopyStatus[port];
-    }
-    if (mp_group_dialog_up()) {
-        return &mp_css_no_pad;   /* the dialog reads pad 0 itself; the CSS sees no buttons and the stick at rest */
-    }
-    my = mp_css_my();
-    if (port == my) {
-        return &HSD_PadCopyStatus[0];
-    }
-    if (port == 0) {
-        return &HSD_PadCopyStatus[my];
-    }
-    return &HSD_PadCopyStatus[port];
+    int group = mp_css_group();
+    int i = gr_css_pad_for(group, group && mp_group_dialog_up(), mp_css_my(), port);
+    /* a dialog reads pad 0 itself; the CSS then sees no buttons and the stick at rest */
+    return i == GR_PAD_EMPTY ? &mp_css_no_pad : &HSD_PadCopyStatus[i];
 }
 
 /* A door whose cursor is not ours: never flipped to CPU for lack of a pad. */
 int mp_css_remote(int door)
 {
-    return mp_css_group() && door != mp_css_my();
+    return gr_css_remote(mp_css_group(), mp_css_my(), door);
 }
 
 /* The Human/CPU/closed click's end of the cycle: Human where a console sits, else CPU. */
 int mp_css_unplugged(int door)
 {
-    if (mp_css_group() && mp_lob_ok) {
-        return !mp_css_present(door);
-    }
-    return HSD_PadCopyStatus[(u8) door].err != 0;
+    return gr_css_unplugged(mp_css_group(), mp_lob_ok, mp_lob.present, HSD_PadCopyStatus[(u8) door].err, door);
 }
 
 /* Rules and the Teams switch belong to the host. */
 int mp_css_can_edit_rules(void)
 {
-    return !mp_css_group() || !mp_lob_ok || mp_lob.host != 0;
+    return gr_css_can_edit_rules(mp_css_group(), mp_lob_ok, mp_lob.host);
 }
 
 /* The cursor is on the Rules banner or the Teams switch: 1 when this console may use it (as vanilla). Elsewhere the
@@ -234,13 +214,7 @@ static int mp_css_watching(void)
  * to leave reads the held buttons, not these, and stays. */
 u32 mp_css_trigger(int hand, f32 x, f32 y, u32 trigger)
 {
-    if (!mp_css_watching()) {
-        return trigger;
-    }
-    if (hand != 1 && x > 17.3f && y > 22.0f) {   /* hand 1: holding a puck or a slider */
-        return trigger & HSD_PAD_A;
-    }
-    return 0;
+    return gr_css_trigger(mp_css_watching(), hand, x, y, trigger);
 }
 
 /* READY waits while another console is busy (a name tag list, name entry, the rules page, a slider in hand; vanilla
@@ -248,10 +222,8 @@ u32 mp_css_trigger(int hand, f32 x, f32 y, u32 trigger)
  * session?"): Start does nothing there. */
 int mp_css_hide_ready(void)
 {
-    if (mp_css_group() && mp_group_dialog_up()) {
-        return 1;
-    }
-    return mp_css_group() && mp_lob_ok && ((mp_lob.busy & 0xF & ~(1u << mp_css_my())) != 0 || mp_lob.watching);
+    int group = mp_css_group();
+    return gr_css_hide_ready(group, group && mp_group_dialog_up(), mp_lob_ok, mp_lob.busy, mp_css_my(), mp_lob.watching);
 }
 
 /* Tell the host while this console is busy: a name tag list open, a CPU level or handicap slider in hand, name entry or
@@ -261,74 +233,32 @@ int mp_css_hide_ready(void)
  * shut and no slider held. The lobby's copy of the bit is checked every frame, so a lost command is sent again. */
 static void mp_css_busy_frame(void)
 {
-    static int idle_resend;
-    int my = mp_css_my(), i, doors = 0, resend = 0, why = 0;
+    GrCssBusyIn in;
+    int i, send;
+    memset(&in, 0, sizeof in);
+    in.scene = mnCharSel_804D6CF6;
+    in.name_door = mnCharSel_804D6CF9;
+    in.my = mp_css_my();
+    in.dialog_up = mp_group_dialog_up();
     if (mnCharSel_804D6CF6 == 0) {
-        mp_css_busy_now = 0;
-        mp_css_naming = -1;
-        mp_css_ruling = 0;
         for (i = 0; i < 4; i++) {
             if (mnCharSel_803F0E8C[i].data != NULL && mnCharSel_803F0E8C[i].data->state != 0) {
-                mp_css_busy_now = 1;
-                doors |= 1 << i;
-                why = 2;                                  /* a name tag list (wins over a slider) */
+                in.tag_lists |= 1u << i;
             }
-            /* only this console's cursor acts here, so a held slider is ours whichever door it belongs to */
             if (mnCharSel_803F0DFC.doors[i].is_hold_cpu_slider || mnCharSel_803F0DFC.doors[i].is_hold_handicap_slider) {
-                mp_css_busy_now = 1;
-                doors |= 1 << i;
-                if (why == 0) {
-                    why = 1;
-                }
+                in.sliders |= 1u << i;
             }
         }
         /* this console's cursor holds something (vanilla's mnCharSel_804A0BC0[door]->x5 == 1 on the toggle) */
-        if (mnCharSel_804A0BC0[my] != NULL && mnCharSel_804A0BC0[my]->x5 == 1) {
-            doors |= 1 << my;
-        }
-    } else if (mnCharSel_804D6CF6 == 3 || mnCharSel_804D6CF6 == 4) {
-        mp_css_busy_now = 1;
-        if (mnCharSel_804D6CF6 == 4) {
-            mp_css_naming = mnCharSel_804D6CF9 & 3;   /* name entry for this door's tag */
-        } else {
-            mp_css_ruling = 1;
-        }
+        in.holding = mnCharSel_804A0BC0[in.my] != NULL && mnCharSel_804A0BC0[in.my]->x5 == 1;
     }
-    if (mnCharSel_804D6CF6 != 0) {
-        /* 3 rules or 4 name entry, as seen when asked for; kept while it is up (byte 5) */
-        why = mp_css_naming >= 0 ? 4 : mp_css_ruling ? 3 : mp_css_busy_now ? 1 : 0;
-    }
-    if (mp_group_dialog_up()) {
-        mp_css_busy_now = 1;   /* "End the session?" is up: busy like the rules page (READY waits, Start is refused) */
-        why = 6;
-    }
-    if (mp_css_naming >= 0) {
-        doors |= 1 << mp_css_naming;                  /* the door is in use while its name entry lasts */
-    }
-    mp_css_doors_now = doors;
-    if (mp_css_busy_wait > 0) {
-        mp_css_busy_wait--;
-        return;
-    }
-    /* resend when the lobby lacks our busy bit or one of our doors; a lost release of our own door (the only one a held
-     * token marks without the busy bit) is sent again now and then */
-    if (mp_css_busy_now && why == 0) {
-        why = 1;
-    }
-    resend = (int) ((mp_lob.busy >> my) & 1) != mp_css_busy_now || doors != mp_css_doors_sent ||
-             (doors & ~mp_lob.in_use & 0xF) != 0 || why != mp_css_why_sent ||
-             (mp_css_busy_now && mp_lob.busy_why[my] != why);
-    if (!resend && !mp_css_busy_now && doors == 0 && ((mp_lob.in_use >> my) & 1) && ++idle_resend >= 60) {
-        resend = 1;
-    }
-    if (resend) {
-        idle_resend = 0;
+    in.lob_busy = mp_lob.busy;
+    in.lob_in_use = mp_lob.in_use;
+    in.lob_why = mp_lob.busy_why[in.my];
+    if (gr_css_busy_step(&mp_css_busy, &in, &send)) {
         OSReport("GROUPCSS busy %d why %d doors %x (1 slider, 2 name tag list, 3 rules, 4 name entry, 6 dialog; doors in use)\n",
-                 mp_css_busy_now, why, doors);
-        mp_platform_group_lobby_busy(why | doors << 4);
-        mp_css_doors_sent = doors;
-        mp_css_why_sent = why;
-        mp_css_busy_wait = 15;
+                 mp_css_busy.busy, send & 0xF, send >> 4);
+        mp_platform_group_lobby_busy(send);
     }
 }
 
@@ -336,7 +266,7 @@ static void mp_css_busy_frame(void)
  * switch does nothing here (the toggle's condition in mnCharSel_CursorThink). */
 int mp_css_door_in_use(int d)
 {
-    return mp_css_group() && mp_lob_ok && d >= 0 && d < 4 && ((mp_lob.in_use >> d) & 1) && !((mp_css_doors_now >> d) & 1);
+    return gr_css_door_in_use(mp_css_group(), mp_lob_ok, mp_lob.in_use, mp_css_busy.doors, d);
 }
 
 /* A fighter this save has not unlocked can be picked on another console. Every fighter has a fixed tile here (a "?" one,
@@ -390,85 +320,59 @@ static void mp_css_read_door(int d, u8* o)
 {
     PlayerInitData* p = &mnCharSel_804D6CB0->vs.start.players[d];
     CSSDoor* dr = &mnCharSel_803F0DFC.doors[d];
+    GrCssScene s;
     int kind = dr->p_kind == 0 ? 0 : dr->p_kind == 1 ? 1 : 2;
-    int chosen;
-    int tok = mnCharSel_804A0BD0[d]->x5;
-    if (tok == MP_CSS_REMOTE_HELD && mp_css_applied_ok) {
-        memcpy(o, mp_css_applied[d], MP_CSS_DOOR);   /* another console holds this token: nothing here to report */
-        return;
-    }
-    int placed = kind != 2 && dr->sel_icon < 0x19 && mnCharSel_804A0BD0[d]->x5 == 0 && p->ckind >= 0 &&
-                 p->ckind < CKind_Playable_Count;
-    /* The token is held over a fighter: the door shows it see-through, and the others should too. Over no fighter the
-     * character select keeps the last one in sel_icon and only marks sel_icon_prev 0x19 (and hides the door's fighter),
-     * so both must agree, or the others would keep showing the fighter it left (held over nothing, below). */
-    int hover = kind != 2 && !placed && dr->sel_icon < 0x19 && dr->sel_icon_prev == dr->sel_icon &&
-                mnCharSel_804A0BD0[d]->x5 == mp_css_my() + 1 &&
-                icons[dr->sel_icon].char_kind >= 0 && icons[dr->sel_icon].char_kind < CKind_Playable_Count;
-    int held = kind != 2 && !placed && !hover && mnCharSel_804A0BD0[d]->x5 == mp_css_my() + 1;
-    chosen = placed ? 1 : hover ? 2 : held ? 3 : 0;
-    o[0] = kind;
-    o[1] = placed ? p->ckind : hover ? icons[dr->sel_icon].char_kind : 0;
-    /* the costume; with Teams the team's (what the door shows and the match uses) */
-    o[2] = chosen && chosen != 3 ? (mnCharSel_804D6CB0->vs.start.rules.is_teams ? p->color : dr->costume) : 0;
-    o[3] = kind == 2 ? 0 : dr->team;
-    o[4] = kind == 1 ? p->cpu_level : 3;
-    o[5] = chosen;
-    memset(o + 6, 0, 8);
-    if (kind == 0 && d == mp_css_my() && mnCharSel_803F0E8C[d].data->use_tag && p->nametag != 0x78) {
-        char* t = GetNameText(p->nametag);
-        if (t != NULL) {
-            strncpy((char*) o + 6, t, 8);   /* the tag's own text: an id means nothing in another save */
-        }
-    }
-    o[14] = mp_css_read_hc(d, kind);
+    s.p_kind = dr->p_kind;
+    s.sel_icon = dr->sel_icon;
+    s.sel_icon_prev = dr->sel_icon_prev;
+    s.token = mnCharSel_804A0BD0[d]->x5;
+    s.ckind = p->ckind;
+    s.icon_ckind = dr->sel_icon < 0x19 ? icons[dr->sel_icon].char_kind : -1;
+    s.teams = mnCharSel_804D6CB0->vs.start.rules.is_teams;
+    s.color = p->color;
+    s.costume = dr->costume;
+    s.team = dr->team;
+    s.cpu_level = p->cpu_level;
+    s.tag = gr_css_door_has_tag(kind, d, mp_css_my(), mnCharSel_803F0E8C[d].data->use_tag, p->nametag) ?
+                GetNameText(p->nametag) : NULL;
+    s.handicap = mp_css_read_hc(d, kind);
+    gr_css_read_door(&s, mp_css_my(), mp_css_applied_ok, mp_css_sync_st[d].applied, o);
 }
 
 static void mp_css_view_door(int d, u8* o)
 {
-    const MpGroupDoor* v = &mp_lob.door[d];
-    int chosen = v->kind != 2 ? v->chosen : 0;   /* 0 none, 1 placed, 2 held over a fighter, 3 held over nothing */
-    o[0] = v->kind;
-    o[1] = chosen && chosen != 3 ? v->fighter : 0;
-    o[2] = chosen && chosen != 3 ? v->color : 0;
-    o[3] = v->kind == 2 ? 0 : v->team;
-    o[4] = v->kind == 1 ? v->level : 3;
-    o[5] = chosen;
-    memcpy(o + 6, v->tag, 8);
-    o[14] = v->kind != 2 ? v->handicap : 0;
+    gr_css_view_door(&mp_lob.door[d], o);
 }
 
 /* A door as 15 bytes (kind, fighter, costume, team, level, chosen, tag[8], handicap) to the host. */
-static void mp_css_send_door(int d, const u8* o)
+static void mp_css_send_door(int d, const u8* o, int spare)
 {
     MpGroupDoor door;
-    memset(&door, 0, sizeof door);
-    memcpy(&door, o, 14);
-    door.handicap = o[14];
-    /* the door's kind before this edit (as last sent or applied), so the host can drop an edit made from an older view */
-    door.spare = mp_css_applied_ok ? mp_css_applied[d][0] + 1 : 0;
+    gr_css_door_to_send(o, spare, &door);
     mp_platform_group_lobby_set_door(d, &door);
 }
 
 static void mp_css_put_door(int d, const u8* o)
 {
     MpCssDoor t;
-    t.kind = o[0] == 0 ? 0 : o[0] == 1 ? 1 : 3;
-    t.ckind = o[5] == 1 ? o[1] : ChKind_None;   /* 2 and 3 show nothing in the door's slot of the roster */
-    t.costume = o[2];
-    t.team = o[3];
-    t.cpu_level = o[4];
+    GrCssPut put;
+    gr_css_put_plan(o, mp_css_game_rules()->handicap, &put);
+    t.kind = put.kind;
+    t.ckind = put.ckind >= 0 ? put.ckind : ChKind_None;   /* 2 and 3 show nothing in the door's slot of the roster */
+    t.costume = put.costume;
+    t.team = put.team;
+    t.cpu_level = put.cpu_level;
     mp_css_apply_door(d, &t);
     mp_css_hc_shown[d] = o[14];
-    if (mp_css_game_rules()->handicap == 2 && o[14] >= 1 && o[14] <= 9) {
-        mnCharSel_804D6CB0->vs.start.players[d].handicap = o[14];   /* the fixed slider's value */
+    if (put.fixed_hc) {
+        mnCharSel_804D6CB0->vs.start.players[d].handicap = put.fixed_hc;   /* the fixed slider's value */
     }
     mp_css_show_hc(d);
     mp_css_show_level(d);
-    if (o[5] == 3) {
+    if (put.remote_held) {
         mnCharSel_804A0BD0[d]->x5 = MP_CSS_REMOTE_HELD;   /* in someone's hand, over nothing: no puck here */
     }
-    if (o[5] == 2) {
+    if (put.preview) {
         /* A preview: the token is held over this fighter (what the local hand's door shows while it hovers). The
          * fighter may be locked in this save: it still has a tile here (a "?" one, see mp_css_keep_locked_icon), so the
          * door shows it as for a placed one. The token is marked held in every case, or this CSS would read it as
@@ -476,7 +380,7 @@ static void mp_css_put_door(int d, const u8* o)
          * holding console's puck would fall out of its hand. */
         int i, found = -1;
         for (i = 0; i < 0x19; i++) {
-            if (icons[i].char_kind == (s8) o[1] && (found < 0 || icons[i].state >= 1)) {
+            if (icons[i].char_kind == (s8) put.preview_fighter && (found < 0 || icons[i].state >= 1)) {
                 found = i;
                 if (icons[i].state >= 1) {
                     break;
@@ -487,7 +391,7 @@ static void mp_css_put_door(int d, const u8* o)
             u8 save = mnCharSel_804D6CF6;
             mnCharSel_804D6CF6 = 4;
             mnCharSel_803F0DFC.doors[d].sel_icon = found;
-            mnCharSel_803F0DFC.doors[d].costume = o[2];
+            mnCharSel_803F0DFC.doors[d].costume = put.costume;
             mnCharSel_804A0BD0[d]->x5 = MP_CSS_REMOTE_HELD;
             mnCharSel_8025DB34(d);
             mp_css_keep_locked_icon(found);
@@ -501,7 +405,10 @@ static void mp_css_put_door(int d, const u8* o)
 /* The READY overlay waits while a token is held over a fighter (ours or one mirrored from another console). */
 int mp_css_hovering(int door)
 {
-    return mp_css_group() && mnCharSel_803F0DFC.doors[door].p_kind != 3 && mnCharSel_804A0BD0[door]->x5 != 0;
+    if (!mp_css_group() || mnCharSel_803F0DFC.doors[door].p_kind == 3) {
+        return 0;   /* (a closed door's token is not read) */
+    }
+    return gr_css_hovering(1, mnCharSel_803F0DFC.doors[door].p_kind, mnCharSel_804A0BD0[door]->x5);
 }
 
 
@@ -525,16 +432,15 @@ static void mp_css_hide_held_pucks(void)
     }
 }
 
-/* The lobby decides; a local edit is sent to the host and held for a few frames so the answer does not undo it. */
+/* The lobby decides; a local edit is sent to the host and held for a few frames so the answer does not undo it
+ * (gr_css_sync_door). */
 static void mp_css_sync(void)
 {
     static int hc_mode = -1;
     int d;
     if (mp_css_game_rules()->handicap != hc_mode) {
         /* The host's handicap mode changed: every door's handicap now reads differently here (mp_css_read_hc), but no
-         * one moved a slider. Take the new reading as already applied, so it is not sent as an edit (a joiner's saved
-         * value would replace a CPU's handicap in the lobby), and show the lobby's value instead. This console's own
-         * Human door keeps the change: its handicap is this console's to give (its save or its slider). */
+         * one moved a slider. This console's own Human door keeps the change: its handicap is this console's to give. */
         if (hc_mode != -1 && mp_css_applied_ok) {
             for (d = 0; d < 4; d++) {
                 u8 now[MP_CSS_DOOR];
@@ -542,76 +448,41 @@ static void mp_css_sync(void)
                     continue;
                 }
                 mp_css_read_door(d, now);
-                mp_css_applied[d][14] = now[14];
-                mp_css_last_view_ok[d] = 0;
+                gr_css_sync_hc_mode(&mp_css_sync_st[d], now);
             }
         }
         hc_mode = mp_css_game_rules()->handicap;
     }
     for (d = 0; d < 4; d++) {
         u8 now[MP_CSS_DOOR], view[MP_CSS_DOOR];
+        GrCssSyncIn in;
+        int act, spare, why;
         mp_css_read_door(d, now);
-        if (mp_css_applied_ok && memcmp(now, mp_css_applied[d], MP_CSS_DOOR) != 0 &&
-            (mp_css_owned_elsewhere(d) || mp_css_watching())) {
-            /* Another console's door changed here without that console: only Human / CPU / closed and the team are
-             * anyone's to change. Anything else (its fighter, costume, tag or hand) is this CSS's own doing, never a
-             * player's edit: do not send it, show the lobby's door again. While watching a match, the CSS is read-only
-             * (mp_css_trigger) and no door is this console's to change: nothing is sent, every door is shown again. */
-            mp_css_view_door(d, view);
-            if (mp_css_watching() || (now[0] == mp_css_applied[d][0] && now[3] == mp_css_applied[d][3])) {
-                OSReport("GROUPCSS door %d changed here without its console: restored\n", d);
-                mp_css_put_door(d, view);
-                mp_css_read_door(d, mp_css_applied[d]);
-                mp_css_last_view_ok[d] = 0;
-                continue;
-            }
-        }
-        if (!mp_css_applied_ok || memcmp(now, mp_css_applied[d], MP_CSS_DOOR) != 0) {
-            if (mp_css_applied_ok) {
-                mp_css_send_door(d, now);
-                OSReport("GROUPCSS send door %d: kind %d fighter %d color %d team %d level %d chosen %d handicap %d\n", d,
-                         now[0], now[1], now[2], now[3], now[4], now[5], now[14]);
-                mp_css_pending[d] = 12;
-                mp_css_last_view_ok[d] = 0;
-            }
-            memcpy(mp_css_applied[d], now, MP_CSS_DOOR);
-            if (!mp_css_applied_ok && d == mp_css_my()) {
-                /* A CSS that was just (re)built. Back from name entry (the door is Human in the lobby), what this
-                 * console's door holds (a new name tag, a fighter) is authoritative: tell the host if the lobby does
-                 * not have it yet. Otherwise the lobby's door wins: joining opens no door (a closed door stays closed
-                 * and a CPU stays a CPU until this player opens or clicks it, as with a controller plugged in), so
-                 * a door left open in this console's VS data, e.g. from an earlier session, is not sent. */
-                mp_css_view_door(d, view);
-                if (view[0] != 0 || (now[5] == 0 && now[6] == 0) || mp_css_watching()) {
-                    mp_css_put_door(d, view);
-                    mp_css_read_door(d, mp_css_applied[d]);
-                } else if (memcmp(now, view, MP_CSS_DOOR) != 0) {
-                    mp_css_send_door(d, now);
-                    mp_css_pending[d] = 12;
-                    mp_css_last_view_ok[d] = 0;
-                }
-            }
-            continue;
-        }
-        if (mp_css_pending[d] != 0) {
-            mp_css_pending[d]--;
-            continue;
-        }
         mp_css_view_door(d, view);
-        if (mp_css_last_view_ok[d] && memcmp(view, mp_css_last_view[d], MP_CSS_DOOR) == 0) {
-            continue;
+        in.applied_ok = mp_css_applied_ok;
+        in.mine = d == mp_css_my();
+        in.owned_elsewhere = mp_css_owned_elsewhere(d);
+        in.watching = mp_css_watching();
+        in.now = now;
+        in.view = view;
+        act = gr_css_sync_door(&mp_css_sync_st[d], &in, &spare, &why);
+        if (act & GR_SYNC_SEND) {
+            mp_css_send_door(d, now, spare);
         }
-        memcpy(mp_css_last_view[d], view, MP_CSS_DOOR);
-        mp_css_last_view_ok[d] = 1;
-        if (memcmp(view, now, 6) != 0 || view[14] != now[14]) {
+        if (why == GR_SYNC_RESTORED) {
+            OSReport("GROUPCSS door %d changed here without its console: restored\n", d);
+        } else if (why == GR_SYNC_SENT) {
+            OSReport("GROUPCSS send door %d: kind %d fighter %d color %d team %d level %d chosen %d handicap %d\n", d,
+                     now[0], now[1], now[2], now[3], now[4], now[5], now[14]);
+        } else if (why == GR_SYNC_APPLIED) {
             OSReport("GROUPCSS apply door %d: kind %d fighter %d color %d team %d level %d chosen %d handicap %d\n", d,
                      view[0], view[1], view[2], view[3], view[4], view[5], view[14]);
+        }
+        if (act & GR_SYNC_PUT) {
             mp_css_put_door(d, view);
-            if (view[5] == 2) {
-                memcpy(mp_css_applied[d], view, MP_CSS_DOOR);   /* a mirrored hover: what we show, not a local edit */
-            } else {
-                mp_css_read_door(d, mp_css_applied[d]);
-            }
+        }
+        if (act & GR_SYNC_REREAD) {
+            mp_css_read_door(d, mp_css_sync_st[d].applied);
         }
     }
     mp_css_applied_ok = 1;
@@ -645,6 +516,7 @@ static void mp_css_rules_frame(void)
     VsModeData* vs = &mnCharSel_804D6CB0->vs;
     static VsModeData scratch;
     MpGroupRules r;
+    GrOwnRules own;
     if (mp_lob_ok && mp_lob.host == 0) {
         if (mp_lob.rules.teams != vs->start.rules.is_teams) {
             vs->start.rules.is_teams = mp_lob.rules.teams;
@@ -654,11 +526,10 @@ static void mp_css_rules_frame(void)
             /* The banner shows mp_css_game_rules(), the host's: write it again whenever those rules change (the scene's
              * setup wrote it from whatever the lobby held then). A new handicap mode also redraws the doors' sliders,
              * through the door's Human/CPU/closed change path. */
-            int key = mp_lob.rules.mode | mp_lob.rules.time_limit << 8 | mp_lob.rules.stock_count << 16 |
-                      (mp_lob.rules.stock_time_limit & 0x3F) << 24 | (mp_lob.rules.handicap & 3) << 30;
+            int key = gr_css_rules_key(&mp_lob.rules);
             if (key != mp_css_banner_key) {
                 int d;
-                int relayout = mp_css_banner_key != -1 && ((mp_css_banner_key >> 30) & 3) != mp_lob.rules.handicap;
+                int relayout = gr_css_rules_relayout(mp_css_banner_key, key);
                 mp_css_banner_key = key;
                 if (mp_css_banner != NULL) {
                     mnCharSel_8025BD30();
@@ -684,25 +555,22 @@ static void mp_css_rules_frame(void)
         }
         return;
     }
-    memset(&r, 0, sizeof r);
-    r.time_mode = gr->mode != 1;
-    r.stocks = gr->stock_count;
-    r.minutes = r.time_mode ? gr->time_limit : gr->stock_time_limit;
-    r.items = gmMainLib_GetGamePrefs()->item_freq == 255 ? 0 : gmMainLib_GetGamePrefs()->item_freq + 1;   /* 0 off, else frequency + 1 */
-    r.teams = vs->start.rules.is_teams ? 1 : 0;
-    r.friendly_fire = gr->friendly_fire ? 1 : 0;
+    own.mode = gr->mode;
+    own.time_limit = gr->time_limit;
+    own.stock_count = gr->stock_count;
+    own.stock_time_limit = gr->stock_time_limit;
+    own.handicap = gr->handicap;
+    own.stage_sel = gr->stage_sel;
+    own.friendly_fire = gr->friendly_fire;
+    own.teams = vs->start.rules.is_teams;
+    own.item_freq = gmMainLib_GetGamePrefs()->item_freq;
+    gr_css_rules_to_lobby(&own, &r);
     /* The match's rules exactly as vanilla builds them from this console's rules menu when a VS match starts
      * (match kind, timer, items, damage ratio, pause...), on a copy; the match block takes its rules fields from them. */
     scratch = *vs;
     gm_80167BC8(&scratch);
     r.melee_valid = 1;
     memcpy(r.melee, &scratch.start.rules, sizeof r.melee);
-    r.mode = gr->mode;
-    r.time_limit = gr->time_limit;
-    r.stock_count = gr->stock_count;
-    r.stock_time_limit = gr->stock_time_limit;
-    r.handicap = gr->handicap;
-    r.stage_sel = gr->stage_sel;   /* the host's Stage Selection rule decides who picks the stage for everyone */
     if (!mp_css_rules_sent_ok || memcmp(&r, &mp_css_rules_sent, sizeof r) != 0) {
         mp_css_rules_sent = r;
         mp_css_rules_sent_ok = 1;
@@ -911,16 +779,14 @@ static void mp_css_toast_frame(void)
 static void mp_css_stars_frame(void)
 {
     u8* ko = mnCharSel_804D6CB0->ko_counts;
+    unsigned changed;
     int d;
-    if (ko == NULL || mp_lob.phase == 3 || mnCharSel_804D6CF6 != 0) {
+    if (ko == NULL) {
         return;
     }
+    changed = gr_css_stars(ko, mp_lob.stars, mp_lob.phase, mnCharSel_804D6CF6);
     for (d = 0; d < 4; d++) {
-        if (ko[d] == mp_lob.stars[d]) {
-            continue;
-        }
-        ko[d] = mp_lob.stars[d];
-        if (mnCharSel_803F0DFC.doors[d].p_kind != 3) {
+        if ((changed >> d & 1) && mnCharSel_803F0DFC.doors[d].p_kind != 3) {
             mnCharSel_8025D1C4(d, 2);
         }
     }
@@ -933,8 +799,10 @@ void mp_css_group_reset(void)
     mp_css_toast = NULL;
     mp_css_toast_col_now = -1;
     mp_css_door_text_gone();
-    memset(mp_css_last_view_ok, 0, sizeof mp_css_last_view_ok);
-    memset(mp_css_pending, 0, sizeof mp_css_pending);
+    for (d = 0; d < 4; d++) {
+        mp_css_sync_st[d].last_view_ok = 0;
+        mp_css_sync_st[d].pending = 0;
+    }
     for (d = 0; d < 4; d++) {
         mp_css_name_now[d][0] = 1;
     }
@@ -953,15 +821,13 @@ void mp_css_group_reset(void)
     memset(&mp_css_no_pad, 0, sizeof mp_css_no_pad);
     mp_css_seen_css = 0;
     mp_css_start_wait = 0;
-    mp_css_doors_now = 0;
-    mp_css_doors_sent = 0;
-    mp_css_why_sent = 0;
+    gr_css_busy_scene(&mp_css_busy);
 }
 
 /* Start was pressed with every door filled: ask the host (it answers with the stage select for everyone). */
 int mp_css_back_intercept(void)
 {
-    if (!mp_css_group() || mp_platform_group_confirm_leave()) {
+    if (!gr_css_back_waits(mp_css_group(), mp_css_group() && mp_platform_group_confirm_leave())) {
         return 0;
     }
     mp_css_leave_asked = 1;
@@ -976,10 +842,11 @@ int mp_css_back_intercept(void)
 
 int mp_css_start_intercept(void)
 {
-    if (!mp_css_group() || mp_css_go) {
+    int what = gr_css_start(mp_css_group(), mp_css_go, mp_css_watching());
+    if (what == GR_START_VANILLA) {
         return 0;
     }
-    if (mp_css_watching()) {
+    if (what == GR_START_IGNORE) {
         return 1;   /* a match is running without this console: Start does nothing */
     }
     OSReport("GROUPCSS Start pressed: asking the host\n");
@@ -1028,11 +895,11 @@ void mp_css_group_frame(void)
             OSReport("GROUPCSS \"End the session?\": %s\n", d == 1 ? "Yes" : "No");
             mp_platform_group_confirm_answer(d == 1);
         }
-        a = mp_platform_group_confirm_state();
-        if (a == 1) {
+        a = gr_css_leave_step(mp_platform_group_confirm_state());
+        if (a == GR_LEAVE_GO) {
             mp_css_leave_asked = 0;
             mnCharSel_804D6CF6 = 2;   /* the answer was yes: leave for real (confirm_leave now says 1) */
-        } else if (a == 2) {
+        } else if (a == GR_LEAVE_STAY) {
             mp_css_leave_asked = 0;
         }
     }
@@ -1043,7 +910,7 @@ void mp_css_group_frame(void)
         if (mp_css_start_wait > 0) {
             mp_css_start_wait--;
         }
-        if (mp_css_seen_css && !mp_css_go && mp_lob.phase != 0) {
+        if (gr_css_go_sss(mp_css_seen_css, mp_css_go, mp_lob.phase)) {
             /* the host sent everyone to the stage select */
             mp_css_go = 1;
             OSReport("GROUPCSS the host sent everyone to the stage select\n");
@@ -1079,7 +946,8 @@ SSS_LOADING = '''
  * stage select's "nothing selected" index (0x1E: no outline, no name, an empty preview) during "Now loading", so the
  * stage is not revealed; the vanilla exit would read the table at that index, so the group code leaves with this. */
 static int mp_sss_hidden_stage = -1;
-#define MP_SSS_FROM_LOBBY 0x7FFF   /* mp_sss_hidden_stage: a random pick the host resolves; the stage is the lobby's */
+#define MP_SSS_FROM_LOBBY GR_SSS_FROM_LOBBY   /* mp_sss_hidden_stage: a random pick the host resolves; the stage is
+                                             * the lobby's */
 static int mp_sss_resolving;       /* host: a random pick from another console is being resolved from this save */
 static int mp_sss_random_sent;     /* this console sent a random pick (it is not the host) */
 static int mp_sss_picker = -1;     /* the port that picks the stage (the host's Stage Selection rule), -1 any */
@@ -1090,7 +958,7 @@ static void mp_sss_start_loading(void);
 /* Only the picker's console has a cursor and reads its pad here (Turns, Loser, and the host's Random or Ordered). */
 static int mp_sss_no_cursor(void)
 {
-    return mp_group_mode() && mp_sss_picker >= 0 && mp_sss_picker != mp_platform_slippi_net_local_index();
+    return gr_sss_no_cursor(mp_group_mode(), mp_sss_picker, mp_platform_slippi_net_local_index());
 }
 
 /* The Random icon on a console that is not the host: the host picks the stage from its own save (its Random Stage
@@ -1099,7 +967,9 @@ static int mp_sss_no_cursor(void)
 static int mp_sss_random_to_host(void)
 {
     MpGroupLobby l;
-    if (!mp_group_mode() || !mp_platform_group_lobby_get(&l) || l.host) {
+    int group = mp_group_mode();
+    int ok = group && mp_platform_group_lobby_get(&l);
+    if (!gr_sss_random_to_host(group, ok, ok && l.host)) {
         return 0;
     }
     OSReport("GROUPCSS stage select: Random; the host picks the stage\\n");
@@ -1150,104 +1020,104 @@ int mp_group_sss_sent(void)
 static int mp_group_sss_frame(void)
 {
     MpGroupLobby l;
-    int i, stage;
+    GrSssIn in;
+    GrSssOut out;
+    int i, act, stkind[GR_SSS_ICONS], unlocked[GR_SSS_ICONS];
     if (!mp_group_mode() || !mp_platform_group_lobby_get(&l)) {
         return 0;
     }
-    if (mp_sss_picker != (l.sss_picker < 4 ? l.sss_picker : -1)) {
+    if (mp_sss_picker != gr_sss_picker(l.sss_picker)) {
         /* the picker left: the host passed the pick on (its cursor appears on that console only) */
-        mp_sss_picker = l.sss_picker < 4 ? l.sss_picker : -1;
+        mp_sss_picker = gr_sss_picker(l.sss_picker);
         mnStageSel_804D50A0 = mp_sss_picker;
         if (mp_sss_cursor != NULL) {
             do_anim(mp_sss_cursor, mp_sss_picker + 1);   /* the new picker's colour, as vanilla colours it at setup */
         }
         OSReport("GROUPCSS stage select: port %d picks the stage now\n", mp_sss_picker + 1);
     }
-    if (mp_platform_group_lost()) {
+    in.lost = mp_platform_group_lost();
+    in.hidden = mp_sss_hidden_stage;
+    in.loading = mnStageSel_804D6CAF;
+    in.timer = mnStageSel_804D6CA4;
+    in.remote = mp_sss_remote;
+    in.sent = mp_sss_sent;
+    in.resolving = mp_sss_resolving;
+    in.stage_picked = l.stage_picked;
+    in.phase = l.phase;
+    in.host = l.host;
+    in.stage = (l.stage_hi << 8) | l.stage_lo;
+    act = gr_sss_frame(&in, &out);
+    if (out.remote) {
+        mp_sss_remote = 1;
+    }
+    switch (act) {
+    case GR_SSS_LOST:
         mnStageSel_804D6CAF = 0;   /* the session ended: back to the CSS, which leaves */
         mp_sss_remote = 1;
         mp_sss_hidden_stage = -1;
         gm_801A4B60();
         return 1;
-    }
-    if (mp_sss_hidden_stage >= 0) {
-        /* A hidden pick's "Now loading" (30 to 90 frames, as for any pick): leave with its stage once it is over. */
-        if (mnStageSel_804D6CAF == 2 && mnStageSel_804D6CA4 == 0) {
-            stage = (l.stage_hi << 8) | l.stage_lo;
-            if (mp_sss_hidden_stage != MP_SSS_FROM_LOBBY) {
-                sss_data->vs.start.rules.stkind = mp_sss_hidden_stage;
-            } else if (l.stage_picked && stage != MP_GROUP_STAGE_RANDOM) {
-                sss_data->vs.start.rules.stkind = stage;   /* else the match's block names it */
-            }
-            mp_sss_hidden_stage = -1;
-            gm_801A4B60();
-            return 1;
+    case GR_SSS_LEAVE:   /* a hidden pick's "Now loading" is over: leave with its stage */
+        if (out.set_stage) {
+            sss_data->vs.start.rules.stkind = out.stage;   /* else the match's block names it */
         }
+        mp_sss_hidden_stage = -1;
+        gm_801A4B60();
+        return 1;
+    case GR_SSS_SEND:   /* the pick animation runs here: tell the others at once (the cursor is already gone) */
+        mp_sss_sent = 1;
+        mp_platform_group_lobby_stage(mnStageSel_803F06D0[mnStageSel_804D6CAE].stkind, 0);
         return 0;
-    }
-    if (mnStageSel_804D6CAF != 0) {
-        /* The pick animation ("Now loading") is running here: tell the others at once. The cursor is already gone. */
-        if (!mp_sss_remote && !mp_sss_sent) {
-            mp_sss_sent = 1;
-            mp_platform_group_lobby_stage(mnStageSel_803F06D0[mnStageSel_804D6CAE].stkind, 0);
+    case GR_SSS_RESOLVE:   /* another console pressed Random: this save picks; the next frame shows it as any pick */
+        mp_sss_resolving = 1;
+        i = mnStageSel_802599EC();
+        OSReport("GROUPCSS stage select: a random pick; this save picks stage %d\n", mnStageSel_803F06D0[i].stkind);
+        mp_platform_group_lobby_stage(mnStageSel_803F06D0[i].stkind, 0);
+        return 0;
+    case GR_SSS_HIDDEN:
+        OSReport("GROUPCSS stage select: a random pick; the host picks the stage\n");
+        mp_sss_hidden_stage = out.stage;
+        mnStageSel_804D6CAE = 0x1E;
+        mp_sss_start_loading();
+        return 0;
+    case GR_SSS_SHOW:
+        /* Someone else picked: show the same pick here, so this console also goes to "Now loading" and its cursor
+         * stops. */
+        OSReport("GROUPCSS stage select: stage %d was picked\n", out.stage);
+        for (i = 0; i < GR_SSS_ICONS; i++) {
+            stkind[i] = mnStageSel_803F06D0[i].stkind;
+            unlocked[i] = mnStageSel_803F06D0[i].x8;
         }
-        return 0;
-    }
-    if (l.stage_picked || l.phase == 2) {
-        /* Someone else picked: show the same pick here, so this console also goes to "Now loading" and its cursor stops. */
-        stage = (l.stage_hi << 8) | l.stage_lo;
-        mp_sss_remote = 1;
-        if (stage == MP_GROUP_STAGE_RANDOM) {
-            if (l.host) {
-                /* another console pressed Random: this save picks, and the next frame shows it as any remote pick */
-                if (!mp_sss_resolving) {
-                    mp_sss_resolving = 1;
-                    i = mnStageSel_802599EC();
-                    OSReport("GROUPCSS stage select: a random pick; this save picks stage %d\n", mnStageSel_803F06D0[i].stkind);
-                    mp_platform_group_lobby_stage(mnStageSel_803F06D0[i].stkind, 0);
-                }
-                return 0;
-            }
-            OSReport("GROUPCSS stage select: a random pick; the host picks the stage\n");
-            mp_sss_hidden_stage = MP_SSS_FROM_LOBBY;
+        i = gr_sss_find(stkind, unlocked, out.stage);
+        if (i == GR_SSS_LOCKED) {
+            /* not unlocked here: "Now loading" without showing which stage (vanilla would refuse the pick) */
+            OSReport("GROUPCSS stage select: stage %d is locked here; loading without showing it\n", out.stage);
+            mp_sss_hidden_stage = out.stage;
             mnStageSel_804D6CAE = 0x1E;
             mp_sss_start_loading();
             return 0;
         }
-        OSReport("GROUPCSS stage select: stage %d was picked\n", stage);
-        for (i = 0; i < 0x1E; i++) {
-            if (mnStageSel_803F06D0[i].stkind == stage && mnStageSel_803F06D0[i].x8 < 2) {
-                /* not unlocked here: "Now loading" without showing which stage (vanilla would refuse the pick) */
-                OSReport("GROUPCSS stage select: stage %d is locked here; loading without showing it\n", stage);
-                mp_sss_hidden_stage = stage;
-                mnStageSel_804D6CAE = 0x1E;
-                mp_sss_start_loading();
+        if (i >= 0) {
+            mnStageSel_804D6CAE = i;
+            mnStageSel_804D6CA0 = 0x1100;
+            mnStageSel_804D6CA4 = 0;
+            mnStageSel_80259C28();
+            mnStageSel_804D6CA0 = 0;
+            if (mnStageSel_804D6CAF != 0) {
                 return 0;
-            }
-            if (mnStageSel_803F06D0[i].stkind == stage) {
-                mnStageSel_804D6CAE = i;
-                mnStageSel_804D6CA0 = 0x1100;
-                mnStageSel_804D6CA4 = 0;
-                mnStageSel_80259C28();
-                mnStageSel_804D6CA0 = 0;
-                if (mnStageSel_804D6CAF != 0) {
-                    return 0;
-                }
-                break;
             }
         }
         mnStageSel_804D6CAF = 2;   /* a stage this console cannot show: leave straight away */
-        sss_data->vs.start.rules.stkind = stage;
+        sss_data->vs.start.rules.stkind = out.stage;
         gm_801A4B60();
         return 1;
-    }
-    if (l.phase == 0) {
+    case GR_SSS_BACK:
         mnStageSel_804D6CAF = 0;
-        mp_sss_remote = 1;
         gm_801A4B60();
         return 1;
+    default:
+        return 0;
     }
-    return 0;
 }
 
 '''
@@ -1259,7 +1129,7 @@ FIXES = {
         # menu with the session still open).
         ('    if (!mp_slippi_css_online() && mn_8022F218() != 0) {\n',
          '    if (mp_group_mode() && mn_8022F218() != 0) {\n'
-         '        if (mnCharSel_804D6CF6 == 0 && !mp_group_dialog_up()) {\n'
+         '        if (gr_css_soft_reset_backs(mnCharSel_804D6CF6, mp_group_dialog_up())) {\n'
          '            mnCharSel_804D6CF6 = 2;\n'
          '        }\n'
          '    } else if (!mp_slippi_css_online() && mn_8022F218() != 0) {\n', 1),
@@ -1268,7 +1138,7 @@ FIXES = {
         # code (inert outside a group). The group code calls the real functions as (gmMainLib_GetGameRules)() and
         # (gm_801685D4)(...), which these function-like macros leave alone.
         ('#include <sysdolphin/baselib/sislib.h>\n\nstatic u8 mnCharSel_804D50C8[4]',
-         '#include <sysdolphin/baselib/sislib.h>\n'
+         '#include <sysdolphin/baselib/sislib.h>\n#include <group_rules.h>\n'
          'GameRules* mp_css_game_rules(void);\ns8 mp_css_auto_hc(u8 port, u8 tag);\nextern HSD_Text* mp_css_banner;\n'
          '#define gmMainLib_GetGameRules() mp_css_game_rules()\n#define gm_801685D4(port, tag) mp_css_auto_hc(port, tag)\n'
          '\nstatic u8 mnCharSel_804D50C8[4]', 1),
@@ -1384,7 +1254,8 @@ FIXES = {
         ('    if (sss_data->no_lras == 0 && mn_8022F218()) {\n',
          '    if (!mp_group_mode() && sss_data->no_lras == 0 && mn_8022F218()) {\n', 1),
         ('#include "mnstagesel.h"\n',
-         '#include <group_bridge.h>\n#include <group_engine.h>\n#include <slippi_net_bridge.h>\n#include "mnstagesel.h"\n', 1),
+         '#include <group_bridge.h>\n#include <group_engine.h>\n#include <group_rules.h>\n#include <slippi_net_bridge.h>\n'
+         '#include "mnstagesel.h"\n', 1),
         ('            HSD_GObj_SetupProc(gobj, mn_8022BA1C, 5);\n',
          '            HSD_GObj_SetupProc(gobj, mp_group_camera_proc, 5);\n', 1),
         ('void mnStageSel_80259C28(void)\n{\n', SSS_LOADING + 'void mnStageSel_80259C28(void)\n{\n', 1),

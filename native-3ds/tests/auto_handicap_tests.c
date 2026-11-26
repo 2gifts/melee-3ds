@@ -1,9 +1,9 @@
-/* Vanilla's auto handicap rule (fn_80169000, compiled from the decomp's gm_1601.c by build_tools.py), for the inputs
+/* Vanilla's auto handicap rule (fn_80169000, compiled from the decomp's gm_1601.c by tools/test_group.py), for the inputs
  * the group's results screen gives it (port/engine/group/group.c, mp_group_results_exit): every door's handicap from
  * the match, 5 where none was known, and the places. The expected values are the rule as vanilla plays it: first place
  * one step down and last place one up, with the special cases at the ends of the 1..9 range; CPUs count as players,
  * empty doors do not. */
-#include "auto_handicap_unit.h"
+#include "auto_handicap_tests.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -26,7 +26,7 @@ static void expect(const char *what, const char *kinds, const int place[4], cons
         if (kinds[i] != '-' && hc[i] != want[i]) ok = 0;
     if (!ok) {
         ++fails;
-        printf("auto_handicap_unit: FAIL %s: got %d %d %d %d, want %d %d %d %d\n", what, hc[0], hc[1], hc[2], hc[3],
+        printf("auto_handicap: FAIL %s: got %d %d %d %d, want %d %d %d %d\n", what, hc[0], hc[1], hc[2], hc[3],
                want[0], want[1], want[2], want[3]);
     }
 }
@@ -55,6 +55,6 @@ int main(void)
     expect("4 players, all 5", "HCHC", A4(3, 1, 0, 2), A4(5, 5, 5, 5), A4(6, 5, 4, 5));
     expect("4 players, winner 1 and last 8", "HHHH", A4(0, 1, 2, 3), A4(1, 5, 5, 8), A4(1, 4, 5, 9));
     if (fails) return 1;
-    printf("auto_handicap_unit: ok\n");
+    printf("auto_handicap: ok\n");
     return 0;
 }

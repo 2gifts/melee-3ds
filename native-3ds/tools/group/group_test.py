@@ -1,7 +1,7 @@
 """Group play on PC consoles (group_client, the 3DS's group code over the loopback link): a host and 1..3 joiners meet in
 a lobby, fill their doors (the host adds a CPU on a free port), start, pick a stage and play matches with test pads.
-Every console that stays must report the same bundle hash for every game. The lobby rules' unit test (lobby_unit) and
-the auto handicap rule's (auto_handicap_unit, where the decomp's source is available) run first.
+Every console that stays must report the same bundle hash for every game. The rules' host tests (the lobby, auto
+handicap, ...) are tools/test_group.py, the tier before this one.
 
     python tools/group/group_test.py [--players 3] [--games 2] [--drop 30] [--via-menu] [--crash 3:200]
 --via-menu   meet through the Melee -> Group pages (group_menu.c) instead of joining directly
@@ -33,6 +33,9 @@ the auto handicap rule's (auto_handicap_unit, where the decomp's source is avail
 --cycles K   console 2 leaves after each game on its results screen and a fresh console takes port 2 for the next,
              K times (games = K + 1); the host and console 3 play every game; each newcomer starts with the host's
              door for port 2, not one of its own (--players 3)
+--link-delay MS  every console's link thread sleeps MS in each open, join, close and scan (test_link_delay_ms, as a
+             slow UDS would take): the sessions still open, play and close; with --via-menu the browsing console's
+             scans are slowed too
 
 Build the tools first: python tools/group/build_tools.py (docker/emu-test.sh group ... does both).
 Logs: build/group-tests/<label>/*.log
@@ -77,21 +80,11 @@ def main():
     ap.add_argument('--rejoin', default='')
     ap.add_argument('--results-rejoin', type=int, default=0)
     ap.add_argument('--cycles', type=int, default=0)
+    ap.add_argument('--link-delay', type=int, default=0)
     ap.add_argument('--port', type=int, default=44200)
     ap.add_argument('--label', default='')
     ap.add_argument('--timeout-s', type=float, default=3.0, help=argparse.SUPPRESS)
     args = ap.parse_args()
-    # The lobby rules alone first (group_lobby.c): a failure there makes the console runs below meaningless.
-    for name in ('lobby_unit', 'auto_handicap_unit'):
-        exe = TOOLS / (name + EXE)
-        if not exe.exists() and name == 'auto_handicap_unit':
-            print('auto_handicap_unit: not built (no decomp source here)', flush=True)
-            continue
-        unit = subprocess.run([str(exe)], capture_output=True, text=True)
-        print(unit.stdout.strip() or unit.stderr.strip(), flush=True)
-        if unit.returncode != 0:
-            print(f'RESULT: FAIL ({name})')
-            return 1
     if args.wireless_off:
         return wireless_off(args)
     if args.lost or args.last_leaves:
@@ -133,6 +126,8 @@ def main():
                 lines.append('test_late=1')
             if args.via_menu:
                 lines += ['menu=1', 'via_menu=1']
+            if args.link_delay:
+                lines.append(f'test_link_delay_ms={args.link_delay}')
             if args.drop:
                 lines.append(f'drop_pct={args.drop}')
             if i + 1 in crash:
@@ -269,6 +264,20 @@ def main():
         print(f'lost: HOME and sleep off at {off}, on at {on}, the note at {note_at} (log offsets)')
         # the Host/Join page browses again at once, so HOME and sleep stay off: never on between the close and the reopen
         ok = ok and note == [want] and page == ['2'] and 0 <= off < note_at and on < 0
+    if args.link_delay:
+        # every console's link thread did the slow calls (here a sleep of the delay each), and the session still
+        # opened, ran its games and closed
+        for i in range(1, n + 1):
+            text = log_of(i)
+            opened = [int(l.split('session open (')[1].split()[0]) for l in text.splitlines() if 'session open (' in l]
+            closed = 'group: session closed (' in text
+            delayed = f'test delay of {args.link_delay} ms in the link thread (open)' in text
+            print(f'link delay: console {i} opened in {opened} ms, delayed {delayed}, closed {closed}')
+            ok = ok and delayed and bool(opened) and opened[0] >= args.link_delay and closed
+        browsing = log_of(2)
+        scans = browsing.count(f'test delay of {args.link_delay} ms in the link thread (scan)')
+        print(f'link delay: console 2 browsed with {scans} slowed scans')
+        ok = ok and (not args.via_menu or scans >= 1)
     if args.last_leaves:
         host = log_of(1)
         bad = [l for l in host.splitlines() if 'lost note' in l or 'group: The ' in l or 'was lost' in l]

@@ -10,7 +10,7 @@ Melee hovered without the submenu); when the session ended under this console, a
 (port/engine/group/group_dialog.c) and the Host / Join page opens again after OK. Without menu=1 nothing changes.
 """
 
-DECL = '#include <group_bridge.h>\n#include <group_engine.h>\n'
+DECL = '#include <group_bridge.h>\n#include <group_engine.h>\n#include <group_rules.h>\n'
 
 
 def sis_text(text):
@@ -72,13 +72,13 @@ int mp_group_top_menu(void)
  * opened it. */
 int mp_group_menu_return(int from_lobby)
 {
-    int solo = mp_group_solo_back;
+    int row = gr_menu_return_row(from_lobby, mp_group_solo_back);
     mp_group_solo_back = 0;
-    if ((!from_lobby && !solo) || !mp_group_top_menu() || !mp_platform_group_open()) {
+    if (row < 0 || !mp_group_top_menu() || !mp_platform_group_open()) {
         return -1;
     }
     mp_group_menu_prepare();
-    return from_lobby ? 1 : 0;
+    return row;
 }
 
 /* From the VS menu's think: open the Solo / Group submenu (kind 11) with `row` hovered. */

@@ -42,7 +42,35 @@ character select doors (shown by default; the bottom-screen strip shows names an
 
 ## Tests
 
-`tools/group/`: `group_test.py` (PC consoles; runs `src/lobby_unit.c` first), `group_quad_test.py`, `group_menu_test.py`,
-`group_lobby_test.py` (the emulated console hosts), `group_join_test.py` (it joins a PC host the test drives) and
-`group_late_test.py` (it joins during a match) and `group_door_test.py` (doors in use), all in Azahar, reading the CSS from memory with `css_probe.py`;
-`uds_smoke.py` (one emulated console on the real UDS link). See `docker/README.md`.
+Three tiers, fastest first. Run them in that order: a failure in an earlier one makes the later ones meaningless.
+
+1. **Host C, seconds:** `python3 tools/test_group.py`. Every pure rule, built with AddressSanitizer and
+   UndefinedBehaviorSanitizer by the system compiler: the character select (`port/engine/group/css_rules.c`:
+   which pad a cursor reads, doors in use, busy, READY, the read-only character select while watching, the door sync
+   with the lobby, auto handicap, the host's rules, the stars, Start and Back), the stage select (`sss_rules.c`: who
+   has a cursor, Random from a joiner, a pick shown, locked or unknown here, Back, a lost session), the results screen
+   (`results_rules.c`: presses kept and replayed, ready, stars, auto handicap, names), Melee -> Solo / Group
+   (`group_menu.c` over a fake session: the pages, Host, Join, a full game, "End the session?", a lost session's
+   note, HOME and sleep, the toasts), the lobby the host keeps (`group_lobby.c`) and vanilla's auto handicap rule (from
+   the decomp's `gm_1601.c`, when it is there). The tests are `tests/group_*_tests.c` and
+   `tests/auto_handicap_tests.c`.
+2. **PC consoles, minutes:** `docker/emu-test.sh run tools/group/run_pc_suite.py`. The real session, lobby and link
+   code built for the PC (`tools/group/src/group_client.c`), several consoles over the loopback link, every scenario of
+   `group_test.py` (lobby, matches, drops, late joiners, results, leaving, a lost session, wireless off, rejoins, a slow
+   link thread), the localwireless module alone (`tools/localwireless/lw_lobby_test.py`) and the menu art over the
+   disc's archives (`menu_art_test.py`, `tests/menu_art_tests.c`); several at once.
+3. **The emulator, minutes:** `python3 tools/group/run_azahar_suite.py` (on the host, next to Docker). Only what needs
+   the real game on an emulated 3DS, several at once (at most 6 emulators; the frame-time tests alone):
+   - `group_smoke_test.py`: one session of two emulated consoles and a PC one through the glue between the scenes and
+     the rules: the Solo / Group submenu, "Choose a game.", HOME and sleep and the refused-HOME notice, a door in use
+     on the other console, the camera following the other console's C-stick, a tied match and its sudden death, the
+     names on the results, the saves after a match, "End the session?" and the joiner's notice, the "Match in progress"
+     page, the soft reset;
+   - `group_lobby_test.py`: the emulated console hosts a PC console through a whole match;
+   - `group_quad_test.py`: identical records across 2 to 4 emulated consoles, a CPU taking over a dropped one;
+   - `group_mii_test.py`: Mii heads (cfl-mii loads, renders without stalling the engine, unloads);
+   - `group_scan_test.py`: the real UDS scan does not stall the engine;
+   - `group_link_test.py`: a slow link thread (open, close, join) does not stall the engine.
+
+The Azahar tests read the emulated console's memory through the GDB stub (`emu_group.py`, `css_probe.py`).
+`uds_smoke.py`: one emulated console on the real UDS link. See `docker/README.md`.

@@ -1,6 +1,6 @@
 /* The top-screen menu art (port/engine/group/menu_art.c) over one menu archive's tables, written by menu_art_test.py:
  *
- *   menu_art_unit TABLES OUT_DIR
+ *   menu_art_tests TABLES OUT_DIR
  *
  * TABLES (little-endian u32s): label count, tab count; each image: width, height, format, byte count, the bytes; then
  * the label track and the tab track: frac_value, byte count, the bytes. Prints "check ok key N" or "check refused WHY";
@@ -69,7 +69,7 @@ int main(int argc, char** argv)
     FILE* f;
 
     if (argc != 3) {
-        fprintf(stderr, "usage: menu_art_unit TABLES OUT_DIR\n");
+        fprintf(stderr, "usage: menu_art_tests TABLES OUT_DIR\n");
         return 2;
     }
     if ((f = fopen(argv[1], "rb")) == NULL) {

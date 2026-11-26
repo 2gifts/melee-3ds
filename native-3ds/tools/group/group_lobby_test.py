@@ -1,6 +1,6 @@
 """The networked group lobby in Azahar the real Melee character select as the lobby of two consoles.
 
-The emulated 3DS hosts (Melee -> Group -> Host, as group_menu_test.py); a PC console (tools/group/src/group_client.c) joins
+The emulated 3DS hosts (Melee -> Group -> Host); a PC console (tools/group/src/group_client.c) joins
 over the loopback link, fills its own door with a fighter and waits for the match. Then: the host's CSS must show the
 PC's door (a mirrored portrait, the PC's name and signal under it), the host picks a fighter, opens its Rules menu (the
 host is busy on the PC console until it is back), presses Start, the stage select appears, a stage is picked, and the
@@ -28,7 +28,7 @@ KEY_L, KEY_R = 1 << 9, 1 << 8
 CPAD_LEFT, CPAD_DOWN = 1 << 29, 1 << 31
 from css_probe import Css  # noqa: E402
 from gdb_probe import packet, receive  # noqa: E402
-from group_menu_test import CPAD_RIGHT, CPAD_UP, KEY_A, KEY_B, KEY_DOWN, KEY_START, MENU_VS, PORT, Stub, save_bottom, save_top  # noqa: E402
+from emu_group import CPAD_RIGHT, CPAD_UP, KEY_A, KEY_B, KEY_DOWN, KEY_START, MENU_VS, PORT, Stub, save_bottom, save_top  # noqa: E402
 
 FOX_TILE = (-24.4, -17.4, 6.0, 13.0)   # left, right, bottom, top in CSS units (mncharsel.c icons[], a starter: never locked)
 

@@ -1,6 +1,6 @@
 """The top-screen Solo / Group submenu's art (port/engine/group/menu_art.c) over the disc's own menu archives, on the PC.
 
-menu_art.c is compiled with tools/group/src/menu_art_unit.c and given the tables that menu_art_hook.c reads in the
+menu_art.c is compiled with tests/menu_art_tests.c and given the tables that menu_art_hook.c reads in the
 game (MenMainCursor_Top joint 3's row labels, MenMainPanel_Top joint 85's submenu tabs, and their image tracks):
 
   * vanilla's MnMaAll.usd and Slippi's: accepted, the same three images built from both, frame 2400's tab key (and no
@@ -89,10 +89,10 @@ def blob(labels, tabs):
 
 
 def build_unit(tmp):
-    exe = Path(tmp) / 'menu_art_unit'
+    exe = Path(tmp) / 'menu_art_tests'
     cc = os.environ.get('CC', 'cc')
     subprocess.run([cc, '-std=c99', '-O2', '-Wall', '-Wextra', '-I', str(ROOT / 'port/engine/group'),
-                    str(HERE / 'src/menu_art_unit.c'), str(ROOT / 'port/engine/group/menu_art.c'), '-o', str(exe)],
+                    str(ROOT / 'tests/menu_art_tests.c'), str(ROOT / 'port/engine/group/menu_art.c'), '-o', str(exe)],
                    check=True)
     return exe
 

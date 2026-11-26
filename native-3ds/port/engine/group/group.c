@@ -23,6 +23,7 @@
 #include <melee/pl/player.h>
 #include <group_bridge.h>
 #include <group_engine.h>
+#include <group_rules.h>
 #include <slippi_engine.h>
 #include <slippi_net_bridge.h>
 #include <sysdolphin/baselib/cobj.h>
@@ -215,15 +216,15 @@ void mp_group_sss_enter(GameModeState* state)
         return;
     }
     rule = lobby.rules.stage_sel;
-    if (lobby.host && (rule == 1 || rule == 2)) {
+    if (gr_sss_host_picks(lobby.host, rule)) {
         gmVsMelee_EnterSss(state, gmVsMelee_GetVsData());
         logf_("Group: stage selection rule %d: the host picks stage %d\n", rule, sss->force_stage_id);
         return;
     }
     sss->vs = *gmVsMelee_GetVsData();
     sss->force_stage_id = -1;
-    sss->unk_stage = lobby.sss_picker < 4 ? lobby.sss_picker + 1 : 0;
-    logf_("Group: stage selection rule %d, picker %d\n", rule, lobby.sss_picker < 4 ? lobby.sss_picker + 1 : 0);
+    sss->unk_stage = gr_sss_unk_stage(lobby.sss_picker);
+    logf_("Group: stage selection rule %d, picker %d\n", rule, gr_sss_unk_stage(lobby.sss_picker));
 }
 
 /* Block until the host has started the match (its block is then pending), or the lobby went back to the CSS, or the
@@ -263,7 +264,7 @@ void mp_group_sss_exit(GameModeState* state, int css_state, int vs_state)
     }
     /* The first pick wins: send ours (the host ignores it if another came first), then wait for the host's start, whose
      * block carries the stage that was picked. */
-    if (!sent && !remote) {
+    if (gr_sss_exit_sends(sent, remote)) {
         mp_platform_group_lobby_stage(sss->vs.start.rules.stkind, 0);
     }
     if (wait_match(0)) {
@@ -317,9 +318,8 @@ void mp_group_sudden_exit(GameModeState* state, int results_state)
 static int match_auto;             /* the match was played with the host's handicap on Auto */
 static u8 match_hc[4];             /* each door's handicap in it (the lobby's, 0 = not known) */
 
-static int busy_wait;              /* frames before this console's "busy" goes to the host again */
+static GrResultsState results_st;  /* frames before "busy" goes to the host again; a press kept for the host's screen */
 static int prize_due;              /* this save earned a notice or trophy in the match: the prize screen follows */
-static int early_advance;          /* a press made before the host reached its results screen: the step it asks for */
 static int shown_step, shown_ready;   /* what the log last said about this screen (-1: nothing yet) */
 
 /* Vanilla's checks of this save after a VS match (gmVsMelee_ExitResults), each console on its own save: the KO total,
@@ -350,8 +350,8 @@ void mp_group_results_enter(GameModeState* state)
 {
     MatchEnd* end = &gmVsMelee_VsExitInfo.match_end;
     int me = mp_platform_slippi_net_local_index() & 3;
-    busy_wait = 0;
-    early_advance = 0;
+    results_st.busy_wait = 0;
+    results_st.early_advance = 0;
     shown_step = shown_ready = -1;
     logf_("Group: the results screen\n", 0, 0);
     gmVsMelee_EnterResults(state);
@@ -418,16 +418,25 @@ static void record_log(MatchEnd* end, int after)
     mp_platform_log(line);
 }
 
+/* vanilla's auto handicap rule (gm_1601.c), for gr_results_auto_hc */
+static void auto_hc_rule(void* end, u8 hc[4])
+{
+    fn_80169000((MatchEnd*) end, hc);
+}
+
 void mp_group_results_exit(GameModeState* state, int css_state, int prize_state)
 {
     MatchEnd* end = &gmVsMelee_VsExitInfo.match_end;
     MpGroupLobby lobby;
-    u8 stars[4], hc[4];
+    u8 stars[4], hc[4], pkind[4];
+    int kos[4];
+    unsigned write;
     int me = mp_platform_slippi_net_local_index();
     int host, i;
     (void) state;
     memset(hc, 0, sizeof hc);
     memset(stars, 0, sizeof stars);
+    memset(&lobby, 0, sizeof lobby);
     host = mp_platform_group_lobby_get(&lobby) && lobby.host;
     if (!gm_WasMatchCanceled(end->outcome)) {
         /* VS Records, as vanilla: every fighter in the match (the same on every console) and this console's own name
@@ -441,26 +450,16 @@ void mp_group_results_exit(GameModeState* state, int css_state, int prize_state)
             gm_80168710(end, gmVsMelee_GetVsData());
         }
     }
-    if (lobby.valid) {
-        memcpy(stars, lobby.stars, 4);
-    }
     for (i = 0; i < 4; i++) {
-        if (end->player_standings[i].pkind == Gm_PKind_Human) {
-            stars[i] = (u8) lbTime_8000AF74(stars[i], end->player_standings[i].x20);
-        }
+        pkind[i] = end->player_standings[i].pkind;
+        kos[i] = end->player_standings[i].x20;
     }
-    if (match_auto && !gm_WasMatchCanceled(end->outcome)) {
+    gr_results_stars(lobby.stars, lobby.valid, pkind, kos, stars);   /* the lobby's plus each Human's KOs */
+    if (gr_results_auto_hc(match_auto, gm_WasMatchCanceled(end->outcome), match_hc, pkind, me, host, auto_hc_rule, end,
+                           hc, &write))
+    {
         for (i = 0; i < 4; i++) {
-            hc[i] = match_hc[i] >= 1 && match_hc[i] <= 9 ? match_hc[i] : 5;
-        }
-        fn_80169000(end, hc);
-        for (i = 0; i < 4; i++) {
-            u8 kind = end->player_standings[i].pkind;
-            if (kind == 3) {
-                hc[i] = 0;
-                continue;
-            }
-            if ((kind == Gm_PKind_Human && i == me) || (kind == Gm_PKind_Cpu && host)) {
+            if (write >> i & 1) {   /* this console's own Human door, and the host's CPUs */
                 s8* saved = gmMainLib_8015CE44(i, end->player_standings[i].x4);
                 if (saved != NULL) {
                     *saved = (s8) hc[i];
@@ -470,6 +469,7 @@ void mp_group_results_exit(GameModeState* state, int css_state, int prize_state)
         logf_("Group: auto handicap after the match: %04x %04x (ports 1-2, 3-4)\n", hc[0] << 8 | hc[1], hc[2] << 8 | hc[3]);
     }
     memcpy(gmVsMelee_GetKOCounts(), stars, 4);
+    /* the decomp's "winner" field is where vanilla's gm_80168710 (above, on the host) put the Loser rule's picker */
     mp_platform_group_results_end(stars, hc, host ? gmVsMelee_GetVsData()->winner : -1);
     match_auto = 0;
     lbCardGame_SetupArchive();
@@ -493,101 +493,67 @@ void mp_group_results_exit(GameModeState* state, int css_state, int prize_state)
 void mp_group_results_pads(const MpGroupResults* r, const MatchEnd* end, HSD_PadStatus* copy, HSD_PadStatus* master)
 {
     MpGroupLobby lobby;
+    GrResultsIn in;
+    GrResultsOut out;
     int me = mp_platform_slippi_net_local_index() & 3;
-    unsigned humans = 0, want_ready = 0;
-    int want_advance = 0, over, here, inj = -1, i;
-    u32 trig = HSD_PadCopyStatus[0].trigger;
-    int canceled = gm_WasMatchCanceled(end->outcome);
+    int i, k;
     int ok = mp_platform_group_lobby_get(&lobby);
 
+    memset(&in, 0, sizeof in);
     for (i = 0; i < 4; i++) {
         if (end->player_standings[i].pkind == Gm_PKind_Human) {
-            humans |= 1u << i;
-            if (inj < 0) {
-                inj = i;
-            }
+            in.humans |= 1u << i;
         }
     }
-    if (inj < 0) {
-        inj = me;
+    in.stage = r->stage;
+    in.panels_live = r->panels_live;
+    in.shown_ready = r->ready;
+    in.me = me;
+    in.trigger = HSD_PadCopyStatus[0].trigger;
+    in.canceled = gm_WasMatchCanceled(end->outcome);
+    in.lob_ok = ok;
+    if (ok) {
+        in.lob_busy = lobby.busy;
+        in.since_end = lobby.since_end;
+        in.phase = lobby.phase;
+        in.lob_ready = lobby.ready;
+        in.lob_advance = lobby.advance;
     }
+    in.lost = !ok || mp_platform_group_lost();
+    gr_results_step(&in, &results_st, &out);
     /* This console is busy while its results screen is up: the host refuses Start until every console is back on the
      * character select (its CSS clears the bit), so the lobby stays there until this screen has seen it. */
-    if (ok && !(lobby.busy >> me & 1) && --busy_wait <= 0) {
+    if (out.send_busy) {
         mp_platform_group_lobby_busy(1);
-        busy_wait = 30;
     }
-    /* The lobby counts only in a view that arrived after this console's match ended: an older one is from before the
-     * host reached its results (a STAGE or MATCH phase, or the results phase the host passes through when a match is
-     * tied, before its sudden death). Here: the host's results screen is up. Over: the host's screen ended (the lobby
-     * is back in the character select). */
-    here = ok && lobby.since_end && lobby.phase == 3;
-    over = !ok || mp_platform_group_lost() || (lobby.phase == 0 && lobby.since_end);
-    if (over) {
-        want_ready = 0xF;
-        want_advance = 2;
-    } else if (here) {
-        want_ready = lobby.ready;
-        want_advance = lobby.advance;
-    }
-
     for (i = 0; i < 4; i++) {
         memset(&copy[i], 0, sizeof copy[i]);
         memset(&master[i], 0, sizeof master[i]);
-        copy[i].err = master[i].err = (humans >> i & 1) ? 0 : PAD_ERR_NO_CONTROLLER;
+        copy[i].err = master[i].err = (in.humans >> i & 1) ? 0 : PAD_ERR_NO_CONTROLLER;
     }
     copy[me] = HSD_PadCopyStatus[0];   /* this console's only pad, on its own port */
     master[me] = HSD_PadMasterStatus[0];
-    copy[me].trigger &= r->stage < 3 ? 0 : ~(u32) PAD_BUTTON_START;
-
-    /* this console's press: to the host (kept until the host's results screen is up) */
-    if (!over && trig != 0 && ((humans >> me & 1) || humans == 0)) {
-        int advance = 0;
-        if (r->stage == 0 && canceled && humans && (trig & PAD_BUTTON_START)) {
-            advance = 1;
-        } else if (r->stage == 2) {
-            advance = 2;
-        }
-        if (advance > early_advance) {
-            early_advance = advance;
-            if (!here) {
-                logf_("Group: results press kept until the host's results screen (step %d)\n", advance, 0);
-            }
-        }
-        if (here && r->stage == 3 && r->panels_live && (trig & PAD_BUTTON_START)) {
-            mp_platform_group_results_press(!(lobby.ready >> me & 1), 0);
-        }
+    copy[me].trigger &= out.withhold_mine ? 0 : ~(u32) PAD_BUTTON_START;   /* presses go to the host, never here */
+    if (out.kept) {
+        logf_("Group: results press kept until the host's results screen (step %d)\n", results_st.early_advance, 0);
     }
-    if (!over && here && early_advance > 0) {
-        if (early_advance > lobby.advance) {
-            mp_platform_group_results_press(lobby.ready >> me & 1, early_advance);
-        }
-        early_advance = 0;
+    for (k = 0; k < out.presses; k++) {   /* this console's press, to the host */
+        mp_platform_group_results_press(out.press[k].ready, out.press[k].advance);
     }
-
     if (r->stage != shown_step || r->ready != shown_ready) {
         shown_step = r->stage;
         shown_ready = r->ready;
         logf_("Group: results step %d, ready %x\n", r->stage, r->ready);
     }
-
     /* the lobby's state, as presses */
-    if (r->stage == 0 && want_advance >= 1 && canceled && humans) {
-        copy[inj].trigger |= PAD_BUTTON_START;
-    } else if (r->stage == 2 && want_advance >= 2) {
-        copy[inj].trigger |= PAD_BUTTON_A;
-        copy[inj].err = master[inj].err = 0;
-    } else if (r->stage == 3 && r->panels_live) {
-        if (humans) {
-            for (i = 0; i < 4; i++) {
-                if ((humans >> i & 1) && (r->ready >> i & 1) != (want_ready >> i & 1)) {
-                    copy[i].trigger |= PAD_BUTTON_START;
-                }
-            }
-        } else if (want_ready & 0xF) {
-            for (i = 0; !(want_ready >> i & 1); i++) {
-            }
+    for (i = 0; i < 4; i++) {
+        if (out.inject_start >> i & 1) {
             copy[i].trigger |= PAD_BUTTON_START;
+        }
+        if (out.inject_a >> i & 1) {
+            copy[i].trigger |= PAD_BUTTON_A;
+        }
+        if (out.plug >> i & 1) {
             copy[i].err = master[i].err = 0;
         }
     }
@@ -733,9 +699,15 @@ void mp_group_match_begin(StartMeleeData* data, int local_index, const unsigned 
         /* The results screen's names: every port that is a Human in this match, by the name of its console now. Later
          * roster changes (a console leaving, a new one taking its port) must not change them, and a player who drops
          * keeps theirs; a sudden death keeps the tied match's. */
+        u8 slot[4];
+        unsigned named;
+        for (i = 0; i < 4; i++) {
+            slot[i] = data->players[i].slot_type;
+        }
+        named = gr_results_name_ports(slot);
         for (i = 0; i < 4; i++) {
             result_names[i][0] = 0;
-            if (data->players[i].slot_type == Gm_PKind_Human) {
+            if (named >> i & 1) {
                 mp_platform_group_player_name(i, result_names[i], sizeof result_names[i]);
                 result_names[i][sizeof result_names[i] - 1] = 0;
             }

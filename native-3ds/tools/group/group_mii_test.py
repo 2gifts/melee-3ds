@@ -40,7 +40,7 @@ sys.path.insert(0, str(HERE.parent / 'slippi'))
 sys.path.insert(0, str(HERE.parent))
 import emu  # noqa: E402
 import test_miis  # noqa: E402
-from group_menu_test import KEY_A, KEY_START, MENU_VS, PORT, Stub, save_bottom, save_top  # noqa: E402
+from emu_group import KEY_A, KEY_START, MENU_VS, PORT, Stub, save_bottom, save_top  # noqa: E402
 
 TOOLS = Path(os.environ.get('MELEE_GROUP_TOOLS_DIR') or emu.ROOT / 'build/group-tools')
 HOSTS = [('Dana', 'mii'), ('Eli', 'fail'), ('Fumiko', 'corrupt'), ('Gus', 'mii'), ('Hana', 'mii')]
@@ -49,7 +49,7 @@ WANT_HEAD = {'mii': 1, 'fail': 2, 'corrupt': 2}
 
 def save_burst(src, out):
     """The burst frames as PNGs, and a contact sheet of every frame that differs from the one before (with its number)."""
-    from group_menu_test import png
+    from emu_group import png
     dest = out / 'burst'
     dest.mkdir(exist_ok=True)
     frames = sorted(src.glob('*.rgb565'))

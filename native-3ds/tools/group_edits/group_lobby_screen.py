@@ -77,7 +77,9 @@ static void mp_group_lobby_frame(void)
         if (mp_platform_group_lost_note(mp_group_lobby_note, sizeof mp_group_lobby_note)) {
             (void) mp_group_dialog_open(mp_group_lobby_note, "OK", NULL, 0);
         }
-        if (!mp_platform_group_listing() && !mp_platform_group_reopen() && mp_platform_group_open()) {
+        if (gr_choose_opens_list(mp_platform_group_listing(), mp_platform_group_listing() || mp_platform_group_reopen()) &&
+            mp_platform_group_open())
+        {
             mp_platform_group_pick(1);
         }
     }
@@ -86,11 +88,12 @@ static void mp_group_lobby_frame(void)
     if (notice) {
         (void) mp_group_dialog_poll();   /* OK (or B) only closes it */
     }
-    r = mp_platform_group_poll(!notice && (fn_8018F674(4) & PAD_BUTTON_B) != 0);
-    if (r == 2) {
+    r = gr_choose_step(mp_platform_group_poll(!notice && (fn_8018F674(4) & PAD_BUTTON_B) != 0),
+                       mp_platform_group_listing());
+    if (r == GR_CHOOSE_LOBBY) {
         mp_group_dialog_close();             /* a game picked under the notice: straight in */
         mp_group_lobby_leave(GM_HANYU_CSS);  /* hosting, or joined: the lobby */
-    } else if (!mp_platform_group_listing()) {
+    } else if (r == GR_CHOOSE_BACK) {
         mp_group_dialog_close();
         sfxBack();                           /* B, the list's Back, or the network failed */
         mp_group_lobby_back = 1;
@@ -103,7 +106,7 @@ static void mp_group_lobby_frame(void)
 FIXES = {
     'melee/gm/gmtou_0.c': [
         ('#include <sysdolphin/baselib/sislib.h>\n',
-         '#include <sysdolphin/baselib/sislib.h>\n#include <group_bridge.h>\n#include <group_engine.h>\n' + DECLS, 1),
+         '#include <sysdolphin/baselib/sislib.h>\n#include <group_bridge.h>\n#include <group_engine.h>\n#include <group_rules.h>\n' + DECLS, 1),
         ('/// Tournament Mode per-frame update handler.\n', CODE + '/// Tournament Mode per-frame update handler.\n', 1),
         # No rule rows (Match Type ...): only the frame, the header box and the background.
         ('                (void (*)(HSD_GObj*)) fn_8019175C, 0.0f);\n\n    for (i = 0; i < 6; i++) {\n',

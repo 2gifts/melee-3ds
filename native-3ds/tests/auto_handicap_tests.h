@@ -1,4 +1,4 @@
-/* The few types vanilla's auto handicap rule (fn_80169000, gm_1601.c) reads, for auto_handicap_unit.c: build_tools.py
+/* The few types vanilla's auto handicap rule (fn_80169000, gm_1601.c) reads, for auto_handicap_tests.c: tools/test_group.py
  * compiles the function itself, taken from the decomp's source, against these. */
 #ifndef AUTO_HANDICAP_UNIT_H
 #define AUTO_HANDICAP_UNIT_H

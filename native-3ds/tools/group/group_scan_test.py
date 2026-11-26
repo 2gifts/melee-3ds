@@ -22,7 +22,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parent / 'slippi'))
 import emu  # noqa: E402
-from group_menu_test import Stub, KEY_A, KEY_START, MENU_VS, PORT, save_top, save_bottom  # noqa: E402,F401
+from emu_group import Stub, KEY_A, KEY_START, MENU_VS, PORT, save_top, save_bottom  # noqa: E402,F401
 
 LONG = re.compile(r'Long engine frame (\d+): ([\d.]+) ms')
 SCAN = re.compile(r'uds: scan took (\d+) ms')

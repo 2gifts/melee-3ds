@@ -59,7 +59,16 @@ docker/emu-test.sh pair --games 1 --end-frame 600
 docker/emu-test.sh net pc-pair
 ```
 
-Group play (Melee -> Group, local wireless lobbies; `port/3ds/group`, `tools/group`):
+Group play (Melee -> Group, local wireless lobbies; `port/3ds/group`, `tools/group`), in three tiers (details in
+`port/3ds/group/README.md`):
+
+```sh
+python3 tools/test_group.py                                  # host C: every rule, sanitized, seconds (no Docker)
+docker/emu-test.sh run tools/group/run_pc_suite.py           # PC consoles: every group_test.py scenario, lw_lobby, menu art
+python3 tools/group/run_azahar_suite.py                      # Azahar: smoke, lobby, quad, Mii, scan, link (at most 6 emulators)
+```
+
+One scenario or test alone:
 
 ```sh
 docker/emu-test.sh group --players 4 --games 2 --drop 50        # PC consoles: lobby, doors, Start, stage, matches
@@ -77,19 +86,14 @@ docker/emu-test.sh group --wireless-off          # "Please enable wireless and t
 docker/emu-test.sh group --players 3 --games 2 --frames 900 --rejoin 3:200   # a console drops mid-match and comes back during it
 docker/emu-test.sh group --players 3 --games 2 --results-rejoin 2            # a console leaves on the results and comes back
 docker/emu-test.sh group --cycles 3              # port 2 changes hands after every game; nobody inherits a door
+docker/emu-test.sh group --players 2 --games 1 --via-menu --link-delay 500   # a slow link thread: open, scans, close
 docker/emu-test.sh run tools/localwireless/lw_lobby_test.py     # the localwireless module alone (incl. menu input)
-docker/emu-test.sh run tools/group/group_quad_test.py --players 3 --end-frame 600 --kill 3:60 --timeout-ms 20000   # engine, Azahar
-docker/emu-test.sh run tools/group/group_menu_test.py            # Melee -> Solo / Group (the top-screen submenu; --bottom-page) in Azahar; "Choose a game."; wireless off; HOME and sleep off; the soft reset
 docker/emu-test.sh run tools/group/menu_art_test.py             # the submenu's art over the disc's MnMaAll archives (PC, no emulator)
+docker/emu-test.sh run tools/group/group_smoke_test.py          # two emulated consoles and a PC one: the glue, end to end
 docker/emu-test.sh run tools/group/group_lobby_test.py           # Azahar hosts, a PC console joins: doors, Rules, Start, stage, match
-docker/emu-test.sh run tools/group/group_join_test.py            # a PC console hosts, Azahar joins: doors, CPU level, READY, handicap, rejoin, the host-left notice, a game picked under it
-docker/emu-test.sh run tools/group/group_lost_test.py            # two emulated consoles: the host vanishes mid-match, the joiner lands on "Choose a game." with the notice
-docker/emu-test.sh run tools/group/group_late_test.py            # Azahar joins during a match: the read-only CSS, then the lobby
-docker/emu-test.sh run tools/group/group_cstick_test.py          # the CSS / stage select camera follows every console's C-stick; door plates
-docker/emu-test.sh run tools/group/group_results_test.py         # two emulated consoles: sudden death, the results screen, stars, auto handicap, Back
-docker/emu-test.sh run tools/group/group_door_test.py            # a door in use on one console cannot be switched from another
-docker/emu-test.sh run tools/group/group_names_test.py           # three emulated consoles and a PC one: the consoles' names under the results windows
+docker/emu-test.sh run tools/group/group_quad_test.py --players 3 --end-frame 600 --kill 3:60 --timeout-ms 20000   # engine, Azahar
 docker/emu-test.sh run tools/group/group_mii_test.py              # five PC hosts: Mii heads, the emblem, pages of games
+docker/emu-test.sh run tools/group/group_scan_test.py             # the real UDS scan does not stall the engine
 docker/emu-test.sh run tools/group/group_link_test.py             # a PC host, test_link_delay_ms=500: no engine stall on Group, Back, Join, Host, leaving
 ```
 
@@ -105,13 +109,11 @@ docker run --rm -v "$PWD":/src --mount type=volume,src=melee3ds-slippi-work,dst=
 python3 tools/dump_stock_icons.py --usd <IfAll.usd>   # the stock icon contact sheet (build/stock-icons.png)
 ```
 
-`group` (group_test.py) runs the lobby rules' unit test (`lobby_unit`) and vanilla's auto handicap rule
-(`auto_handicap_unit`, compiled from the decomp's `gm_1601.c`) first. The Azahar tests read the emulated
-console's memory through Azahar's GDB stub while it runs (the CSS doors, READY, the slider knobs: `tools/group/css_probe.py`)
-and save screenshots of each step. Nothing presses buttons by itself in these builds (`no-scripted-input`), so each
-test drives the console from the title screen; give a test about 2 to 5 minutes (`group_results_test.py`, two
-emulated consoles and a full match, about 15). Do not run them while the browser
-session (`emu-web.sh`) is up: both compete for the CPU.
+The Azahar tests read the emulated console's memory through Azahar's GDB stub while it runs (the CSS doors, READY,
+the slider knobs: `tools/group/emu_group.py`, `tools/group/css_probe.py`) and save screenshots of each step. Nothing
+presses buttons by itself in these builds (`no-scripted-input`), so each test drives the console from the title
+screen; give a test about 2 to 5 minutes (`group_smoke_test.py`, two emulated consoles and a sudden death, about 10).
+Do not run them while the browser session (`emu-web.sh`) is up: both compete for the CPU.
 
 Results land in `native-3ds/build/emu-test/` (set `MELEE_TEST_OUT` to change it).
 It uses the `linuxserver/azahar` image (about 5 GB, amd64 only, so it is
