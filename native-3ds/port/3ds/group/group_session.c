@@ -114,6 +114,7 @@ void group_config_load(group_config *c)
     snprintf(path, sizeof(path), "%s/group.ini", sp_data_dir());
     char *t = sp_read_file(path, NULL);
     const char *s = t ? t : "";
+    memset(c, 0, sizeof(*c));   /* the test fields a build leaves out (#ifdef below) read 0, not the caller's stack */
     c->menu = group_ini_int(s, "menu", GROUP_MENU_DEFAULT);
     c->top_menu = group_ini_int(s, "top_menu", 1);
     c->delay = group_ini_int(s, "delay", 2);

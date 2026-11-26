@@ -4,11 +4,12 @@ session ended: port/engine/group/group.c mp_group_css_exit) the console comes ba
 when the session ended under it, a dialog over the screen says why (port/engine/group/group_dialog.c): OK closes it, and
 a game picked on the bottom screen meanwhile goes straight in.
 
-The scene builds as vanilla's (its frame, the header box, the turning bracket behind them) without the rule rows
-(Match Type and the rest), and its header reads "Choose a game." in place of "Choose a match style.". Its per-frame
-step is ours: the Group list (port/3ds/group/group_menu.c) is polled, Host or Join goes to the lobby (GM_HANYU_CSS), and
-B or the list closing (its Back, a network failure) goes back to the submenu with Group hovered (group_menu.py). The
-vanilla tournament is unchanged: everything here waits on mp_group_lobby_screen, set only by the submenu.
+The scene builds as vanilla's (its frame, the header box, the turning bracket behind them) without the rule rows (Match
+Type and the rest), its header reads "Choose a game." in place of "Choose a match style.", and the announcer does not
+say "Tournament Mode". Its per-frame step is ours: the Group list (port/3ds/group/group_menu.c) is polled, Host or Join
+goes to the lobby (GM_HANYU_CSS), and B or the list closing (its Back, a network failure) goes back to the submenu with
+Group hovered (group_menu.py). The vanilla tournament is unchanged: everything here waits on mp_group_lobby_screen, set
+only by the submenu.
 """
 
 
@@ -137,6 +138,11 @@ FIXES = {
          '        gm_GetTournamentData()->cur_option = 0;\n'
          '    }\n'
          '    fn_801935B8();\n', 1),
+        # The announcer's "Tournament Mode": not for Group (the menu music plays on as vanilla's).
+        ('    lbAudioAx_800237A8(0x7539, 0x7F, 0x40);\n',
+         '    if (!mp_group_lobby_screen) {\n'
+         '        lbAudioAx_800237A8(0x7539, 0x7F, 0x40);\n'
+         '    }\n', 1),
         ('    gm_GetTournamentData()->cur_option = 0x13;\n',
          '    mp_group_lobby_screen = 0;\n    gm_GetTournamentData()->cur_option = 0x13;\n', 1),
     ],
