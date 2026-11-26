@@ -590,24 +590,34 @@ def main():
               a.log().count('group: HOME and sleep off') == 1 and 'group: HOME and sleep on' not in a.log())
         lists_a = a.log().count('group: Group, looking for games')
         lists_b = b.log().count('group: Group, looking for games')
-        notes_a = a.log().count('group: dialog "')
+        def notices(c):
+            # the notices shown (OK), not "End the session?" itself, whose line may reach the log a little late
+            return sum(1 for l in c.log().splitlines() if 'group: dialog "' in l and 'End the session?' not in l)
+        notes_a = notices(a)
         notes_b = b.log().count('group: dialog "')
         answer_dialog(a, True)
         # "Yes": the host lands on "Choose a game." with the list open, no notice (it chose to leave); B lands there too,
         # with a notice saying why and the list open under it.
         wait_scene(a, SCENE_CHOOSE, '"Yes": A lands on "Choose a game."', 120, False)
-        wait_log(a, 'group: HOME and sleep on', 'A: HOME and sleep on again once the session ends', 60)
         wait_log(a, 'group: Group, looking for games', 'A: the Group list is open again', 60, lists_a + 1, False)
         a.stub.until_frames(60)
+        # the list browses again at once, so HOME and sleep stay off: never on between the close and the reopen
+        check('A: HOME and sleep stay off (the Group list browses again)', 'group: HOME and sleep on' not in a.log())
+        a.stub.until_frames(60)
         a.capture('06-host-after-yes')
-        check('A: no notice (the host ended the session itself)', a.log().count('group: dialog "') == notes_a,
+        check('A: no notice (the host ended the session itself)', notices(a) == notes_a,
               str([l for l in a.log().splitlines() if 'group: dialog "' in l][-1:]))
         check('ending the session does not crash A', a.proc.poll() is None and a.log().count('PANIC') == panics)
         wait_scene(b, SCENE_CHOOSE, 'B lands on "Choose a game." as the session ends', 120, False)
-        wait_log(b, 'group: HOME and sleep on', 'B: HOME and sleep on again once the session ends', 60, 2)
         wait_log(b, 'group: dialog "', 'B: a notice says why the session ended', 60, notes_b + 1, False)
         wait_log(b, 'group: Group, looking for games', 'B: the Group list is open under the notice', 60, lists_b + 1,
                  False)
+        b.stub.until_frames(60)
+        # HOME and sleep may come on for a moment as the lost session's link closes (if it closes before the list
+        # reopens); once the list browses again they are off
+        home = [l for l in b.log().splitlines() if 'group: HOME and sleep ' in l]
+        check('B: HOME and sleep off once the Group list browses again', bool(home) and 'sleep off' in home[-1],
+              str(home[-3:]))
         b.stub.until_frames(40)
         b.capture('06-joiner-notice')
         check('out of the session the stars are gone (A)', a.stars() == [0, 0, 0, 0], str(a.stars()))

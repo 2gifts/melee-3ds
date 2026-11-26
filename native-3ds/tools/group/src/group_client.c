@@ -628,6 +628,7 @@ int main(int argc, char **argv)
             group_poll(0);
             sp_log("group-test: lost note: %s", group_view()->error);
             sp_log("group-test: page after the loss: %d", group_view()->page);
+            group_system_frame();   /* a frame on the page, which browses again */
         }
     }
     sp_log("group-test: %s", failed ? "FAIL" : "PASS");

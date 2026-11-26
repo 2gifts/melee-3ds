@@ -267,7 +267,8 @@ def main():
         text = log_of(2)
         off, on, note_at = text.find('HOME and sleep off'), text.find('HOME and sleep on'), text.find('lost note: ')
         print(f'lost: HOME and sleep off at {off}, on at {on}, the note at {note_at} (log offsets)')
-        ok = ok and note == [want] and page == ['2'] and 0 <= off < on < note_at
+        # the Host/Join page browses again at once, so HOME and sleep stay off: never on between the close and the reopen
+        ok = ok and note == [want] and page == ['2'] and 0 <= off < note_at and on < 0
     if args.last_leaves:
         host = log_of(1)
         bad = [l for l in host.splitlines() if 'lost note' in l or 'group: The ' in l or 'was lost' in l]

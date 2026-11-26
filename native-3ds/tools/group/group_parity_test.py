@@ -56,7 +56,9 @@ def main():
     sym = emu.elf_symbols(args.elf)
     results = []
     t0 = time.monotonic()
-    ini = 'test_vs_matches=49\ntimeout_ms=3000\n'
+    # a short link timeout, so the pick passes on soon after B vanishes; not much shorter: a console the test drives
+    # through the GDB stub runs at a few frames a second meanwhile, and must not take the other for gone
+    ini = 'test_vs_matches=49\ntimeout_ms=8000\n'
     a = Console('A', 24881, sym, out, args.dsx, args.show, 'name=Anna\n' + ini, 'group-parity', LINK_PORT)
     time.sleep(3)
     b = Console('B', 24882, sym, out, args.dsx, args.show, 'name=Beeb\n' + ini, 'group-parity', LINK_PORT)

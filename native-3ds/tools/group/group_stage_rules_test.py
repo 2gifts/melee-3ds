@@ -16,8 +16,9 @@ with name tag id 5, as if chosen on the character select). A hosts a 1 minute ti
   leaving  Both saves at 99 VS matches; match 2 (B walks off); both reach their prize screens; A goes back to the
            character select and leaves the lobby (Back, "Yes") while B is still on its prize screen. B's prize screen
            ends normally, its character select sees the session gone and leaves, and B's earned challenger starts.
-           A lands on "Choose a game."; B loses the challenger fight and lands there too, with a notice saying why
-           the session ended and the Group list open under it.
+           A (its save earned a challenger as well) loses that fight and lands on "Choose a game."; B loses its
+           challenger fight and lands there too, with a notice saying why the session ended and the Group list open
+           under it.
 
     docker/emu-test.sh run tools/group/group_stage_rules_test.py [--show]
 Results: $MELEE_TEST_OUT/group-stage-rules/ (PNGs, both game.logs)."""
@@ -333,7 +334,18 @@ def main():
         a.stub.until_frames(30)
         end_session_if_asked(a)
         wait_log(a, 'group: left the lobby', 'A (the host) leaves the lobby', 120)
-        wait_scene(a, SCENE_CHOOSE, 'A (the host) lands on "Choose a game."', 120, False)
+        # A's save earned a challenger too (its VS counter reached 100 as well): that fight comes first, as on one
+        # console; A loses it (walks off), then lands on "Choose a game."
+        wait_log(a, 'Group: a new challenger approaches', 'A: its earned challenger starts on leaving', 120, 1, False)
+        end = time.monotonic() + 900
+        i = 0
+        while time.monotonic() < end and a.scene() != SCENE_CHOOSE:
+            a.stub.poke('mp_test_keys', CPAD_LEFT | (KEY_A if i % 4 == 0 else 0))
+            a.stub.until_frames(30)
+            i += 1
+        a.stub.poke('mp_test_keys', 0)
+        check('A (the host) lands on "Choose a game." after its challenger fight', a.scene() == SCENE_CHOOSE,
+              f'scene {a.scene()}')
         lists_b = b.log().count('group: Group, looking for games')
         notes_b = b.log().count('group: dialog "')
         b.stub.until_frames(240)

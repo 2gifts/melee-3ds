@@ -98,7 +98,8 @@ def main():
         for round_ in (1, 2):
             stub.choose()   # GROUP
             ok = wait_log('group: Group, looking for games', round_, 60)
-            check(f'round {round_}: Group opens the list on UDS', ok and 'uds: init ok' in log_text())
+            # the link thread opens UDS after the list is up (it logs when it is done)
+            check(f'round {round_}: Group opens the list on UDS', ok and wait_log('uds: init ok', round_, 30))
             start = stub.frames()
             wall = time.monotonic()
             stub.until_frames(args.frames, limit=args.frames / 10 + 60)
