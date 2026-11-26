@@ -426,6 +426,40 @@ void mp_bottom_notice(uint16_t* pixels,const char* title,const char* lead,const 
     fit(17,96,line1,14,286,ink);fit(17,122,line2,12,286,muted);fit(17,140,line3,12,286,muted);
     rect(0,190,320,50,RGB(10,18,29));rect(0,190,320,1,RGB(80,98,111));fit(17,207,hint,14,286,gold);
 }
+/* ---- Touch keyboards: the Slippi connect code, the game's name entry ----
+ * A key is a rectangle {x, y, w, h} (slippi_ui.c steers the Slippi one's
+ * cursor over the same table) with a label: ASCII text, or with no text a
+ * glyph of the game's font atlas. The key under the cursor is gold. */
+/* A glyph of the game's font atlas (the same 32x32 I4 cells mp_bottom_font_init
+ * decodes), h pixels high, centred on cx. The atlas comes from the page's caller. */
+static const unsigned char* atlas_font;
+static void atlas_glyph(int cx,int y,unsigned g,int h,uint16_t color){
+    const unsigned char* font=atlas_font;
+    if(g==MP_NAME_GLYPH_SPACE){int w=h*3/4,top=y+h/2;   /* an open box: the space bar */
+        rect(cx-w/2,y+h*3/4,w,2,color);rect(cx-w/2,top,2,h/4,color);rect(cx-w/2+w-2,top,2,h/4,color);return;}
+    if(!font||g>=287)return;
+    const unsigned char* src=font+512*g;
+    unsigned left=31,right=0;
+    for(unsigned sy=0;sy<32;++sy)for(unsigned sx=0;sx<32;++sx){unsigned at=((sy/8)*4+sx/8)*64+(sy%8)*8+sx%8;
+        if(((src[at/2]>>(at&1?0:4))&15)>2){if(sx<left)left=sx;if(sx>right)right=sx;}}
+    if(left>right)return;
+    int w=(int)((right-left+1)*h+31)/32,x=cx-w/2;
+    for(int yy=0;yy<h;++yy){unsigned sy=yy*32/h;
+        for(int xx=0;xx<w;++xx){unsigned sx=left+xx*32/h;if(sx>31)continue;
+            unsigned at=((sy/8)*4+sx/8)*64+(sy%8)*8+sx%8,a=(src[at/2]>>(at&1?0:4))&15;
+            if(a)pixel(x+xx,y+yy,color,(a*32+7)/15);}}
+}
+static void key_cap(const short* r,const char* label,unsigned glyph,int size,int active,uint16_t background,uint16_t color){
+    rect(r[0],r[1],r[2],r[3],active?gold:background);
+    if(active)color=dark;
+    if(label){while(size>8&&width(label,size)>r[2]-6)--size;center(r[0]+r[2]/2,r[1]+(r[3]-size)/2,label,size,color);}
+    else atlas_glyph(r[0]+r[2]/2,r[1]+(r[3]-size)/2,glyph,size,color);
+}
+/* The key under a touch, or -1; slop widens every key by that many pixels a side. */
+static int key_hit(const short (*keys)[4],int count,unsigned x,unsigned y,int slop){
+    for(int i=0;i<count;++i)if(inside(x,y,keys[i][0]-slop,keys[i][1]-slop,keys[i][2]+2*slop,keys[i][3]+2*slop))return i;
+    return -1;
+}
 /* ---- Slippi Direct (port/3ds/slippi/slippi_ui.c) ----
  * The online CSS companion: who you are, who you play, Slippi's three status
  * lines and the actions; and the connect-code keyboard. Same idiom as the
@@ -570,12 +604,11 @@ static void slippi_code_page(void){
     if(n<SLIPPI_CODE_MAX)rect(x+1,64,12,2,v->spinner?gold:card_color);
     right(306,40,v->suggestion[0]?"X: USE":"",10,gold);right(306,54,"L/R: RECENT",10,muted);
     for(int i=0;i<SLIPPI_KEYS;++i){
-        const short* r=slippi_ui_key_rects[i];char label[8];const char* s=label;char c=slippi_ui_keys[i];
+        char label[8];const char* s=label;char c=slippi_ui_keys[i];
         switch(c){case '\b':s="ERASE";break;case '\x1b':s="CANCEL";break;case '<':s="L OLDER";break;case '>':s="R NEWER";break;case '\r':s="OK";break;
             default:label[0]=c;label[1]=0;}
-        int active=i==v->key,small=c=='\r'||c=='\b'||c=='\x1b'||c=='<'||c=='>';
-        if(c=='\x1b'&&!active){rect(r[0],r[1],r[2],r[3],dark);center(r[0]+r[2]/2,r[1]+(r[3]-12)/2,s,12,muted);}
-        else pill(r[0],r[1],r[2],r[3],s,small?12:15,active);
+        int small=c=='\r'||c=='\b'||c=='\x1b'||c=='<'||c=='>',cancel=c=='\x1b';
+        key_cap(slippi_ui_key_rects[i],s,0,small?12:15,i==v->key,cancel?dark:card_color,cancel?muted:ink);
     }
 }
 /* A touch on an online page (not the footer); 1 if used. */
@@ -584,8 +617,8 @@ unsigned mp_bottom_online_touch(unsigned x,unsigned y){
     if(y>=214)return 0;
     if(v->page!=SLIPPI_PAGE_CODE&&v->page!=SLIPPI_PAGE_CHAT&&inside(x,y,SSS_FROZEN_X,SSS_FROZEN_Y,SSS_FROZEN_W,SSS_FROZEN_H)&&!slippi_online_css_drawn){slippi_ui_alt(1);return 1;}
     if(v->page==SLIPPI_PAGE_CODE){
-        for(int i=0;i<SLIPPI_KEYS;++i){const short* r=slippi_ui_key_rects[i];
-            if(inside(x,y,r[0],r[1],r[2],r[3])){slippi_ui_type(i);return 1;}}
+        int key=key_hit(slippi_ui_key_rects,SLIPPI_KEYS,x,y,0);
+        if(key>=0){slippi_ui_type(key);return 1;}
         if(inside(x,y,8,35,304,36))slippi_ui_use_suggestion();
         return 1;
     }
@@ -662,4 +695,71 @@ void mp_bottom_draw(uint16_t* pixels,const MPBottomState* s,unsigned fps,unsigne
         fit(19,161,"YOUR PROGRESS SAVES TO THE SD CARD",11,282,muted);
     }else menu_page(s);
     footer(fps,show_fps,expanded,rate,guide);
+}
+/* ---- The game's name entry (port/engine/name_entry.c) ----
+ * Whenever the name entry is up: the name so far, the current mode's 50 keys
+ * laid out as on the top screen, and its function keys; the variant picker
+ * over them while it is open. A touch becomes the game's own input. */
+enum{NAME_KEY_X=5,NAME_KEY_Y=73,NAME_KEY_W=29,NAME_KEY_H=21,NAME_KEY_DX=31,NAME_KEY_DY=23,NAME_FN_Y=189,NAME_FN_H=22,
+     NAME_FN_KEYS=7,NAME_ALL_KEYS=MP_NAME_KEYS+NAME_FN_KEYS,NAME_PICK_W=44,NAME_PICK_H=40,NAME_PICK_DX=48,NAME_PICK_Y=106,NAME_PICK_DY=46};
+/* The function keys: key, x, width, label (none: the mode's glyph). */
+static const struct{short key,x,w;const char* label;}name_fn_keys[NAME_FN_KEYS]={
+    {MP_NAME_KEY_HIRAGANA,5,28,NULL},{MP_NAME_KEY_KATAKANA,35,28,NULL},{MP_NAME_KEY_ENGLISH,65,36,"ABC"},
+    {MP_NAME_KEY_ERASE,105,50,"ERASE"},{MP_NAME_KEY_RANDOM,159,56,"RANDOM"},{MP_NAME_KEY_BACK,219,42,"BACK"},
+    {MP_NAME_KEY_OK,265,50,"CONFIRM"}};
+/* Every key's rectangle: the letters (key / 5 counts columns from the right,
+ * key % 5 is the row), then the function keys in name_fn_keys' order. */
+static const short (*name_keys(void))[4]{
+    static short keys[NAME_ALL_KEYS][4];
+    if(!keys[0][2]){
+        for(int key=0;key<MP_NAME_KEYS;++key){keys[key][0]=(short)(NAME_KEY_X+(9-key/5)*NAME_KEY_DX);
+            keys[key][1]=(short)(NAME_KEY_Y+(key%5)*NAME_KEY_DY);keys[key][2]=NAME_KEY_W;keys[key][3]=NAME_KEY_H;}
+        for(int i=0;i<NAME_FN_KEYS;++i){short* k=keys[MP_NAME_KEYS+i];
+            k[0]=name_fn_keys[i].x;k[1]=NAME_FN_Y;k[2]=name_fn_keys[i].w;k[3]=NAME_FN_H;}
+    }
+    return (const short (*)[4])keys;
+}
+/* The variant picker's choices: two rows (i % 2), a column per variant. */
+static void name_pick_keys(const MPNameEntryState* n,short keys[MP_NAME_VARIANTS][4]){
+    int columns=(int)n->variants/2;
+    for(int i=0;i<(int)n->variants&&i<MP_NAME_VARIANTS;++i){
+        keys[i][0]=(short)(160-(columns*NAME_PICK_DX-4)/2+(i/2)*NAME_PICK_DX);keys[i][1]=(short)(NAME_PICK_Y+(i%2)*NAME_PICK_DY);
+        keys[i][2]=NAME_PICK_W;keys[i][3]=NAME_PICK_H;}
+}
+void mp_bottom_name_entry(uint16_t* pixels,const MPNameEntryState* n,const unsigned char* font,
+                          unsigned fps,unsigned show_fps,unsigned expanded,unsigned rate){
+    static const char*const modes[3]={"HIRAGANA","KATAKANA","ENGLISH"};
+    canvas=pixels;atlas_font=font;background();
+    header("NAME ENTRY",modes[n->mode<3?n->mode:2]);
+    /* The name: four characters, the next one underlined. */
+    rect(8,35,304,34,card_color);rect(8,35,3,34,gold);rect(11,35,301,1,RGB(70,85,103));
+    for(unsigned i=0;i<4;++i){int x=19+(int)i*34;
+        rect(x,62,28,2,i==n->cursor?gold:line_color);
+        if(n->name[i]!=MP_NAME_GLYPH_NONE)atlas_glyph(x+14,38,n->name[i],22,ink);}
+    right(306,40,"L/R: MODE",10,muted);right(306,54,"B: ERASE",10,muted);
+    const short (*keys)[4]=name_keys();
+    for(unsigned key=0;key<MP_NAME_KEYS;++key)key_cap(keys[key],NULL,n->keys[key],15,key==n->hovered,card_color,ink);
+    for(unsigned i=0;i<NAME_FN_KEYS;++i){const short* r=keys[MP_NAME_KEYS+i];int key=name_fn_keys[i].key,active=(unsigned)key==n->hovered;
+        /* The mode keys: the current mode underlined, the others muted. */
+        int mode=key>=MP_NAME_KEY_HIRAGANA&&key<=MP_NAME_KEY_ENGLISH?key-MP_NAME_KEY_HIRAGANA:-1,current=mode>=0&&(unsigned)mode==n->mode;
+        unsigned glyph=key==MP_NAME_KEY_HIRAGANA?n->mode_glyph[0]:key==MP_NAME_KEY_KATAKANA?n->mode_glyph[1]:MP_NAME_GLYPH_NONE;
+        key_cap(r,name_fn_keys[i].label,glyph,name_fn_keys[i].label?12:15,active,card_color,mode>=0&&!current?muted:ink);
+        if(current&&!active)rect(r[0],r[1]+r[3]-3,r[2],3,gold);
+    }
+    if(n->variants){
+        short picks[MP_NAME_VARIANTS][4];name_pick_keys(n,picks);
+        rect(0,71,320,143,RGB(6,10,17));rect(8,78,304,130,dark);rect(8,78,304,2,gold);
+        text(20,86,"CHOOSE A CHARACTER",12,ink);right(300,87,"B: CLOSE",10,muted);
+        for(unsigned i=0;i<n->variants&&i<MP_NAME_VARIANTS;++i)key_cap(picks[i],NULL,n->variant_glyph[i],28,i==n->variant,card_color,ink);
+    }
+    footer(fps,show_fps,expanded,rate,0);
+}
+int mp_bottom_name_entry_touch(const MPNameEntryState* n,unsigned x,unsigned y){
+    if(n->variants){
+        short picks[MP_NAME_VARIANTS][4];name_pick_keys(n,picks);
+        int pick=key_hit((const short (*)[4])picks,n->variants<MP_NAME_VARIANTS?(int)n->variants:MP_NAME_VARIANTS,x,y,0);
+        return pick>=0?MP_NAME_REQUEST_VARIANT+pick:MP_NAME_REQUEST_CLOSE;
+    }
+    int key=key_hit(name_keys(),NAME_ALL_KEYS,x,y,1);
+    return key<0?MP_NAME_REQUEST_NONE:key<MP_NAME_KEYS?key:name_fn_keys[key-MP_NAME_KEYS].key;
 }

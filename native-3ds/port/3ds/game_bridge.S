@@ -69,6 +69,9 @@ ENGINEBRIDGE mp_game_gx_disable,mp_gx_async_disable
 ENGINEBRIDGE mp_game_bottom_snapshot,mp_bottom_snapshot
 ENGINEBRIDGE mp_game_card_flush,mp_card_flush
 ENGINEBRIDGE mp_game_bottom_font,mp_bottom_font
+/* The name entry's touch keyboard (port/engine/name_entry.c, bottom.c). */
+ENGINEBRIDGE mp_game_name_entry_snapshot,mp_name_entry_snapshot
+SDKBRIDGE mp_platform_name_entry_request,mp_native_name_entry_request
 #ifdef MP_SMOKE_TEST
 ENGINEBRIDGE mp_game_memory_check,mp_memory_compare_self_test
 ENGINEBRIDGE mp_game_rotation_check,mp_rotation_self_test

@@ -28,4 +28,11 @@ void mp_native_bottom_art(void);
 void mp_native_bottom_frame(unsigned fps, unsigned expanded, unsigned rate, unsigned touch, unsigned x, unsigned y);
 void mp_native_bottom_exit(void);
 extern const uint16_t* mp_native_bottom_pixels;
+/* The game's name entry: its keyboard page (font: the game's font atlas, as
+ * mp_bottom_font_init takes it), and a touch above the footer as a request for
+ * the engine (MP_NAME_REQUEST_NONE if it hit nothing). */
+#include "name_entry_state.h"
+void mp_bottom_name_entry(uint16_t* pixels, const MPNameEntryState* n, const unsigned char* font,
+                          unsigned fps, unsigned show_fps, unsigned expanded, unsigned rate);
+int mp_bottom_name_entry_touch(const MPNameEntryState* n, unsigned x, unsigned y);
 #endif

@@ -28,6 +28,18 @@ static void present(void){
     memcpy(fb,pixels,sizeof(pixels));GSPGPU_FlushDataCache(fb,sizeof(pixels));
     gfxScreenSwapBuffers(GFX_BOTTOM,false);last_vblank=C3D_FrameCounter(1);
 }
+/* The game's name entry: the engine's view of it (name_entry.c) and what was
+ * drawn of it; a touch on its keyboard waits here for the engine's next read
+ * of the name entry's buttons. */
+extern void mp_game_name_entry_snapshot(MPNameEntryState*);
+static MPNameEntryState name_entry,name_entry_drawn;
+static int name_entry_request=MP_NAME_REQUEST_NONE;
+int mp_native_name_entry_request(void){int r=name_entry_request;name_entry_request=MP_NAME_REQUEST_NONE;return r;}
+static void name_entry_update(void){
+    mp_game_name_entry_snapshot(&name_entry);
+    unsigned* words=(unsigned*)&name_entry;for(unsigned i=0;i<sizeof(name_entry)/4;++i)words[i]=__builtin_bswap32(words[i]);
+    if(!name_entry.open)name_entry_request=MP_NAME_REQUEST_NONE;
+}
 void mp_native_bottom_init(void){
     gfxSetDoubleBuffering(GFX_BOTTOM,true);
     mp_bottom_font_init(mp_game_bottom_font());
@@ -56,6 +68,12 @@ void mp_native_bottom_frame(unsigned fps,unsigned expanded,unsigned rate,unsigne
 #endif
     /* The open CONTROLS page: tabs, button customization, tap jump. */
     if(touch&&guide&&mp_bottom_guide_touch(x,y)){dirty=1;touch=0;}
+    /* The name entry's keyboard, as last drawn; the footer stays usable. */
+    name_entry_update();
+    if(touch&&!guide&&name_entry_drawn.open&&y<214){
+        int request=mp_bottom_name_entry_touch(&name_entry_drawn,x,y);
+        if(request!=MP_NAME_REQUEST_NONE)name_entry_request=request;
+        touch=0;}
     /* Slippi Direct: the online CSS and the code keyboard, as last drawn. */
     if(touch&&!guide&&mp_bottom_online_active(&previous)&&mp_bottom_online_touch(x,y)){dirty=1;touch=0;}
     if(touch){switch(mp_bottom_hit(x,y)){
@@ -94,11 +112,14 @@ void mp_native_bottom_frame(unsigned fps,unsigned expanded,unsigned rate,unsigne
     unsigned shown=show_fps?fps:0;
     if(shown!=last_fps||expanded!=last_view||rate!=last_rate||
         (guide?state.scene!=previous.scene:memcmp(&state,&previous,sizeof(state))))dirty=1;
+    if(!guide&&memcmp(&name_entry,&name_entry_drawn,sizeof(name_entry)))dirty=1;
     /* C3D does not own a bottom render target. Present at most once per
      * bottom VBlank, without waiting or changing top-screen GPU commands. */
     if(!dirty||last_vblank==C3D_FrameCounter(1))return;
     u64 tick=svcGetSystemTick();
-    mp_bottom_draw(pixels,&state,fps,show_fps,expanded,rate,guide);present();
+    if(name_entry.open&&!guide)mp_bottom_name_entry(pixels,&name_entry,mp_game_bottom_font(),fps,show_fps,expanded,rate);
+    else mp_bottom_draw(pixels,&state,fps,show_fps,expanded,rate,guide);
+    present();name_entry_drawn=name_entry;if(guide)name_entry_drawn.open=0;
     mp_bottom_draw_ticks+=(unsigned)((svcGetSystemTick()-tick)*40500000/SYSCLOCK_ARM11);
     ++mp_bottom_redraws;previous=state;last_fps=shown;last_view=expanded;last_rate=rate;dirty=0;
 }
