@@ -93,6 +93,7 @@ int mp_platform_group_confirm_state(void); /* while it is: 0 waiting, 1 yes, 2 n
 void mp_platform_group_confirm_answer(int yes);   /* the top-screen "End the session?" was answered */
 int mp_platform_group_lost(void);          /* 1 once the session ended under us (the host left or the link failed) */
 int mp_platform_group_lost_note(char* out, int len);   /* VS menu: 1 with why the session ended, to show (read and clear) */
+int mp_platform_group_fail_note(char* out, int len);   /* "Choose a game.": 1 with why the Group list closed on a failure (read and clear) */
 int mp_platform_group_fresh(void);         /* VS menu, once after a lobby: 1 = reset its entering-a-menu state */
 int mp_platform_group_reopen(void);        /* VS menu, once after that: 1 = the Host/Join page is open again */
 void mp_platform_group_notice(int kind);   /* a full bottom-screen notice while the engine blocks: 1 stage chosen, loading */

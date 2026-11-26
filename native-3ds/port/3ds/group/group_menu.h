@@ -45,6 +45,8 @@ int group_confirm_leave(void);
 int group_confirm_state(void);               /* 0 waiting, 1 yes (then confirm_leave returns 1), 2 no */
 int group_lost(void);                        /* 1 once the session ended under us (the host left, or the link failed) */
 int group_lost_note(char *out, int len);     /* VS menu: 1 once, with why it ended (the engine shows it in a dialog) */
+int group_fail_note(char *out, int len);     /* "Choose a game.": 1 once, with why the Group list closed on a failure
+                                              * (wireless off, the link failed); not after Back */
 int group_fresh(void);                       /* 1 once on the VS menu after a lobby: clear its "entering a menu" state */
 int group_reopen(void);                      /* 1 once, on the VS menu after that: open the Host/Join page again */
 int group_toast_port(void);                  /* the port of the console the toast is about (its colour) */

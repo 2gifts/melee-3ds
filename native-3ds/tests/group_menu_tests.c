@@ -238,6 +238,11 @@ static void host_and_back(void)
     snprintf(F.error, sizeof F.error, "Please enable wireless and try again");
     CHECK(group_poll(0) == 0 && v->page == GROUP_PAGE_ASK && !strcmp(v->error, "Please enable wireless and try again") &&
           !group_active());
+    {   /* "Choose a game." shows why, once */
+        char note[96];
+        CHECK(group_fail_note(note, sizeof note) && !strcmp(note, "Please enable wireless and try again"));
+        CHECK(!group_fail_note(note, sizeof note));
+    }
     F.error[0] = 0;
     F.status = 0;
     /* Back from the list closes the session and shows the Solo / Group page */
@@ -250,6 +255,8 @@ static void host_and_back(void)
         group_back();
         CHECK(group_poll(0) == 0 && v->page == GROUP_PAGE_ASK && F.stops == stops + 1 && !group_active() &&
               logged("group: Back from the Group page"));
+        char note[96];
+        CHECK(!group_fail_note(note, sizeof note));   /* Back is no failure: no notice */
     }
     /* the session failing under the list (the link went away) */
     group_pick(1);
@@ -258,6 +265,10 @@ static void host_and_back(void)
     F.status = 4;
     snprintf(F.error, sizeof F.error, "The link failed");
     CHECK(group_poll(0) == 0 && v->page == GROUP_PAGE_ASK && !strcmp(v->error, "The link failed"));
+    {
+        char note[96];
+        CHECK(group_fail_note(note, sizeof note) && !strcmp(note, "The link failed"));
+    }
     F.error[0] = 0;
     F.status = 0;
     /* a session that cannot even be asked for */

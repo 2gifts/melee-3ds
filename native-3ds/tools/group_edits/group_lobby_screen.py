@@ -2,13 +2,14 @@
 Melee's first screen) as a backdrop while the bottom screen lists the games nearby. Out of the lobby (Back, or the
 session ended: port/engine/group/group.c mp_group_css_exit) the console comes back here with the Group list open again;
 when the session ended under it, a dialog over the screen says why (port/engine/group/group_dialog.c): OK closes it, and
-a game picked on the bottom screen meanwhile goes straight in.
+a game picked on the bottom screen meanwhile goes straight in. When the list itself fails (wireless is off, the link
+failed), the screen stays with a dialog saying why, and its OK goes back to the submenu.
 
 The scene builds as vanilla's (its frame, the header box, the turning bracket behind them) without the rule rows (Match
 Type and the rest), its header reads "Choose a game." in place of "Choose a match style.", and the announcer does not
 say "Tournament Mode". Its per-frame step is ours: the Group list (port/3ds/group/group_menu.c) is polled, Host or Join
-goes to the lobby (GM_HANYU_CSS), and B or the list closing (its Back, a network failure) goes back to the submenu with
-Group hovered (group_menu.py). The vanilla tournament is unchanged: everything here waits on mp_group_lobby_screen, set
+goes to the lobby (GM_HANYU_CSS), and B or the list's Back goes back to the submenu with Group hovered (group_menu.py),
+as does OK on a failure's dialog. The vanilla tournament is unchanged: everything here waits on mp_group_lobby_screen, set
 only by the submenu.
 """
 
@@ -38,6 +39,7 @@ int mp_group_lobby_screen;   /* set by the Solo / Group submenu: this scene is t
 int mp_group_lobby_back;     /* left by B: the menu opens on the submenu, Group hovered */
 static int mp_group_lobby_leaving;
 static int mp_group_lobby_started;
+static int mp_group_lobby_failed;    /* the list failed: its dialog is up, and OK goes back */
 static char mp_group_lobby_note[96];   /* why the session ended, for its notice */
 static const u8 mp_group_lobby_title[] = { /* "''' + TITLE + r'''" */
     ''' + ', '.join(f'0x{b:02X}' for b in sis_title(TITLE)) + r''' };
@@ -86,6 +88,13 @@ static void mp_group_lobby_frame(void)
     }
     mp_group_dialog_test_frame();   /* tests only (mp_test_dialog) */
     notice = mp_group_dialog_up();
+    if (mp_group_lobby_failed) {
+        if (!notice || mp_group_dialog_poll() > 0) {   /* OK (or B): the submenu */
+            mp_group_lobby_back = 1;
+            mp_group_lobby_leave(GM_MENU);
+        }
+        return;
+    }
     if (notice) {
         (void) mp_group_dialog_poll();   /* OK (or B) only closes it */
     }
@@ -94,6 +103,10 @@ static void mp_group_lobby_frame(void)
     if (r == GR_CHOOSE_LOBBY) {
         mp_group_dialog_close();             /* a game picked under the notice: straight in */
         mp_group_lobby_leave(GM_HANYU_CSS);  /* hosting, or joined: the lobby */
+    } else if (r == GR_CHOOSE_BACK && mp_platform_group_fail_note(mp_group_lobby_note, sizeof mp_group_lobby_note) &&
+               mp_group_dialog_open(mp_group_lobby_note, "OK", NULL, 0))
+    {
+        mp_group_lobby_failed = 1;           /* wireless off, the link failed: say why here; OK goes back */
     } else if (r == GR_CHOOSE_BACK) {
         mp_group_dialog_close();
         sfxBack();                           /* B, the list's Back, or the network failed */
@@ -134,6 +147,7 @@ FIXES = {
          '    if (mp_group_lobby_screen) {\n'
          '        mp_group_lobby_leaving = 0;\n'
          '        mp_group_lobby_started = 0;\n'
+         '        mp_group_lobby_failed = 0;\n'
          '        mp_group_dialog_scene();   /* the session-lost notice is shown here */\n'
          '        gm_GetTournamentData()->cur_option = 0;\n'
          '    }\n'

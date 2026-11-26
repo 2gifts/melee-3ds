@@ -11,6 +11,7 @@
 
 static int lost, reopen;            /* the session ended under us; reopen the Host/Join page on the VS menu */
 static char lost_note[96];         /* the size of GroupView.error */
+static char fail_note[96];         /* why the Group list just closed on a failure ("Choose a game." shows it) */
 static int fresh_menu;              /* we just came back from a lobby: the VS menu must take input again */
 
 enum { REQ_NONE, REQ_SOLO, REQ_GROUP, REQ_HOST, REQ_JOIN, REQ_BACK };
@@ -97,6 +98,7 @@ int group_open(void)
     if (!group_enabled()) return 0;
     mp_native_slippi_unlimited();
     reset_view();
+    fail_note[0] = 0;
     view.page = GROUP_PAGE_ASK;
     ++view.serial;
     req = REQ_NONE;
@@ -214,6 +216,7 @@ int group_poll(int back)
             join_pending = mii_wanted = 0;
             ++view.serial;
         } else {
+            snprintf(fail_note, sizeof(fail_note), "%s", view.error);
             view.page = GROUP_PAGE_ASK;
             ++view.serial;
         }
@@ -280,6 +283,7 @@ int group_poll(int back)
         }
         if (group_net_status() == 4 /* failed: opening, hosting or the link */) {
             set_error(group_net_error());
+            snprintf(fail_note, sizeof(fail_note), "%s", view.error[0] ? view.error : "Local wireless failed");
             close_session();
             view.page = GROUP_PAGE_ASK;
             ++view.serial;
@@ -343,6 +347,14 @@ int group_lost_note(char *out, int len)
     if (!lost_note[0]) return 0;
     snprintf(out, (size_t)len, "%s", lost_note);
     lost_note[0] = 0;
+    return 1;
+}
+
+int group_fail_note(char *out, int len)
+{
+    if (!fail_note[0]) return 0;
+    snprintf(out, (size_t)len, "%s", fail_note);
+    fail_note[0] = 0;
     return 1;
 }
 
