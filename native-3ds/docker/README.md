@@ -90,6 +90,7 @@ docker/emu-test.sh run tools/group/group_results_test.py         # two emulated 
 docker/emu-test.sh run tools/group/group_door_test.py            # a door in use on one console cannot be switched from another
 docker/emu-test.sh run tools/group/group_names_test.py           # three emulated consoles and a PC one: the consoles' names under the results windows
 docker/emu-test.sh run tools/group/group_mii_test.py              # five PC hosts: Mii heads, the emblem, pages of games
+docker/emu-test.sh run tools/group/group_link_test.py             # a PC host, test_link_delay_ms=500: no engine stall on Group, Back, Join, Host, leaving
 ```
 
 Names and the bottom screen's group pages, no emulator:

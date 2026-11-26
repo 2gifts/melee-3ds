@@ -4,7 +4,10 @@
  * pages drive (group_menu.c).
  *
  * Every function here takes the platform lock itself (sp_lock, not recursive): call none of them with it held.
- * A worker thread services the link every couple of milliseconds; without one, group_net_poll does.
+ * A link thread does every slow call (UDS coming up and going down, joining, the scan, the system's name and Mii) and
+ * services the link every couple of milliseconds; the engine only posts requests and reads their outcome, so it never
+ * waits for the wireless hardware. The thread returns once there is no session; the engine joins it at once
+ * (group_session_reap, from group_system_frame and group_net_poll).
  *
  * Settings come from group.ini in the data folder (sp_data_dir), all optional:
  *   menu=1         Melee on the VS menu asks Solo / Group (0: vanilla VS). Default 1; 0 in development builds
@@ -14,11 +17,12 @@
  *   timeout_ms=2000  silence after which a console has dropped
  *   udp=1, port=N  development builds and PC tools: the loopback link instead of UDS (base port N)
  *   drop_pct=N     tests: lose N % of outgoing packets
- *   net_thread=1, net_thread_core=-2   the worker thread
  *   auto_players=2 automatic sessions (opponent=@host / @join in the engine's config, tests): the host starts a match by
  *                  itself once this many consoles are here and every one has picked
  *   test_wireless_off=1  tests: every session fails to open with "Please enable wireless and try again"
  *   test_scan_locked=1   tests: the scan for games runs with the session lock held, so the engine waits for it
+ *   test_link_delay_ms=N tests (development builds and PC tools): the link thread sleeps N ms inside every open,
+ *                  join, close and (every 1.5 s) scan, as slow hardware would; the engine must not wait for any of it
  *   test_vs_matches=N    tests (development builds): as a session's first lobby opens, this save's VS match counters
  *                  (the ones the stage unlock and challenger checks read) are raised to N
  *   test_nametag=N       tests (development builds): this console's player has name tag id N - 1 in group matches
@@ -38,10 +42,10 @@ typedef struct {
     int menu, top_menu;
     int delay, timeout_ms;
     int udp, port, drop_pct;
-    int net_thread, net_thread_core;
     int auto_players;
     int test_wireless_off;   /* tests: opening a session fails as if wireless communication were off */
     int test_scan_locked;    /* tests: the network thread scans with the session lock held (the engine waits for it) */
+    int test_link_delay_ms;  /* tests: the link thread sleeps this long in each open, join, close and scan */
     int test_vs_matches;     /* tests (development builds): raise this save's VS match counters to N (unlock checks) */
     int test_nametag;        /* tests (development builds): this console plays with name tag id N - 1 (0: off) */
     int test_screen_name_fail;   /* tests: the Mii name (FRD) is skipped and treated as failed */
@@ -61,11 +65,18 @@ void group_ini_str(const char *text, const char *key, char *out, int len);
 
 /* ---- the session ---- */
 /* Open a lobby: host it, or browse the games nearby (join one with group_join). automatic: the test mode of
- * opponent=@host / @join (a client joins the first game found, the host starts by itself). 0 ok; on failure the status
- * is FAILED and group_net_error says why. */
+ * opponent=@host / @join (a client joins the first game found, the host starts by itself). Asks the link thread and
+ * returns at once: group_session_opening is 1 until it is open (group_net_status SEARCHING) or failed (FAILED, and
+ * group_net_error says why). -1 only if the thread could not start (then FAILED). */
 int group_session_start(int host, int automatic);
+/* Close the session: at once for the engine (nothing reads as open any more); the link thread closes UDS after. */
 void group_session_stop(void);
-int group_session_open(void);                  /* a session is open (the online bridge goes to it) */
+int group_session_open(void);                  /* a session is open or opening (the online bridge goes to it) */
+int group_session_opening(void);               /* the link thread is still opening it */
+int group_session_busy(void);                  /* the link thread is running (a session, or closing one) */
+int group_session_link_up(void);               /* the wireless link is up, or still closing */
+void group_session_reap(void);                 /* the engine: join a link thread that has finished (at once) */
+int group_session_settle(int timeout_ms);      /* tests and tools: wait for the link thread to finish; 1 if it did */
 int group_my_mii(uint8_t *out);                /* this console's Mii (LOBBY_MII_BYTES), read as the session opened; 0 if none */
 int group_is_host(void);
 int group_my_port(void);
@@ -81,7 +92,8 @@ typedef struct {
     uint8_t mii[LOBBY_MII_BYTES];
 } group_game;
 int group_scan(group_game *out, int max);      /* the games in range, in list order; how many */
-int group_join(uint32_t key);                  /* 0: joining; -1: failed (group_net_error) */
+int group_join(uint32_t key);                  /* 0: asked (see group_join_result); -1: not now (group_net_error) */
+int group_join_result(void);                   /* 1 joined, -1 failed (group_net_error), 0 still joining; read once */
 
 /* The lobby, natively (the bottom screen). */
 void group_test_hold_view(int hold);           /* tests (PC): a joiner keeps its lobby view as it is while held,

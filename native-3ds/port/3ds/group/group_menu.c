@@ -1,5 +1,6 @@
 /* Melee -> Solo / Group (see group_menu.h). Touches only set a request; the engine's once-per-frame poll carries it
- * out, so the session calls (which can block a moment on UDS) never run on the bottom screen's thread. */
+ * out. Opening, hosting, joining and closing are asked of the session's link thread (group_session.c), which does the
+ * slow UDS calls: the poll never waits for them, it checks each frame how they went. */
 #include <stdio.h>
 #include <string.h>
 #include "group_menu.h"
@@ -18,6 +19,8 @@ static GroupView view;
 static volatile int req;
 static volatile uint32_t req_key;
 static int session;                          /* a group session is open (from this menu) */
+static int host_pending, join_pending;       /* Host / a join was asked of the link thread; the page is busy */
+static int mii_wanted;                       /* this console's Mii, once the browsing session is open */
 static int returning;
 static int enabled = -1, top_menu;
 
@@ -125,7 +128,8 @@ void group_join_row(int row)
 }
 void group_back(void) { req = REQ_BACK; }
 
-/* Start (or restart) the session as a browser or a host. 0 ok. */
+/* Start (or restart) the session as a browser or a host: asked of the link thread, which opens it meanwhile (a
+ * failure shows as the FAILED status, on a later poll). -1 if it could not even be asked. */
 static int open_session(int host)
 {
     if (group_session_start(host, 0) != 0) {
@@ -143,8 +147,10 @@ static int open_session(int host)
 
 static void close_session(void)
 {
-    group_session_stop();
+    group_session_stop();                     /* at once; the link thread closes UDS after */
     session = 0;
+    host_pending = join_pending = mii_wanted = 0;
+    view.busy = 0;
 }
 
 /* The games nearby, from the module's scan. */
@@ -187,44 +193,39 @@ int group_poll(int back)
     case REQ_GROUP:
         set_error("");
         sp_log("group: Group, looking for games");
-        if (open_session(0) == 0) {
+        if (open_session(0) == 0) {           /* the list page at once, empty until the link is up and scans */
             if (lost_note[0]) { set_error(lost_note); lost_note[0] = 0; }   /* only if the engine did not show it */
             view.page = GROUP_PAGE_LIST;
             view.count = 0;
             view.list_page = 0;
-            view.my_has_mii = group_my_mii(view.my_mii);
-            view.my_mii_crc = view.my_has_mii ? (uint16_t)(view.my_mii[LOBBY_MII_BYTES - 2] << 8 | view.my_mii[LOBBY_MII_BYTES - 1]) : 0;
+            view.my_has_mii = 0;
+            view.my_mii_crc = 0;
+            mii_wanted = 1;
             fix_pages();
             ++view.serial;
         }
         break;
     case REQ_HOST:
-        view.busy = 1;
         set_error("");
         sp_log("group: Host");
-        if (open_session(1) == 0) {
-            sp_log("group: hosting, entering the lobby");
-            sp_log_drain();
-            view.busy = 0;
-            view.page = GROUP_PAGE_NONE;
+        if (open_session(1) == 0) {           /* busy until the link thread has the game up (or failed) */
+            view.busy = 1;
+            host_pending = 1;
+            join_pending = mii_wanted = 0;
             ++view.serial;
-            return 2;
+        } else {
+            view.page = GROUP_PAGE_ASK;
+            ++view.serial;
         }
-        view.busy = 0;
-        view.page = GROUP_PAGE_ASK;
-        ++view.serial;
         break;
     case REQ_JOIN:
-        view.busy = 1;
-        ++view.serial;
-        if (group_join(req_key) == 0) {
-            view.busy = 0;
-            view.page = GROUP_PAGE_NONE;
+        if (group_join(req_key) == 0) {       /* busy until the link thread has joined (or failed) */
+            view.busy = 1;
+            join_pending = 1;
             ++view.serial;
-            return 2;
+        } else {
+            set_error(group_net_error()[0] ? group_net_error() : "Could not join that game");
         }
-        view.busy = 0;
-        set_error(group_net_error()[0] ? group_net_error() : "Could not join that game");
         break;
     case REQ_BACK:
         sp_log("group: Back from the %s page", view.page == GROUP_PAGE_LIST ? "Group" : "Solo/Group");
@@ -246,12 +247,43 @@ int group_poll(int back)
     }
     if (view.page == GROUP_PAGE_LIST) {
         group_net_poll();
-        if (group_net_status() == 4 /* failed */) {
+        int opening = group_session_opening();
+        if (mii_wanted && !opening && group_session_open()) {   /* the Host button's head, once the session is up */
+            mii_wanted = 0;
+            view.my_has_mii = group_my_mii(view.my_mii);
+            view.my_mii_crc = view.my_has_mii ? (uint16_t)(view.my_mii[LOBBY_MII_BYTES - 2] << 8 | view.my_mii[LOBBY_MII_BYTES - 1]) : 0;
+            ++view.serial;
+        }
+        if (host_pending && !opening && group_net_status() != 4) {
+            host_pending = 0;
+            sp_log("group: hosting, entering the lobby");
+            sp_log_drain();
+            view.busy = 0;
+            view.page = GROUP_PAGE_NONE;
+            ++view.serial;
+            return 2;
+        }
+        if (join_pending) {
+            int joined = group_join_result();
+            if (joined > 0) {
+                join_pending = 0;
+                view.busy = 0;
+                view.page = GROUP_PAGE_NONE;
+                ++view.serial;
+                return 2;
+            }
+            if (joined < 0) {
+                join_pending = 0;
+                view.busy = 0;
+                set_error(group_net_error()[0] ? group_net_error() : "Could not join that game");
+            }
+        }
+        if (group_net_status() == 4 /* failed: opening, hosting or the link */) {
             set_error(group_net_error());
             close_session();
             view.page = GROUP_PAGE_ASK;
             ++view.serial;
-        } else {
+        } else if (!view.busy) {
             refresh_rows();
         }
     }
@@ -445,12 +477,18 @@ volatile unsigned group_test_home_reject;   /* tests: a rejected HOME press, wri
 int group_in_wireless(void)
 {
     int st = group_net_status();
-    return session && (st == 1 || st == 3);   /* searching or connected; not failed (4) or ended (5) */
+    /* searching or connected (not failed, 4, or ended, 5); and until the link thread has closed UDS after Back, so the
+     * console never sleeps with the wireless half shut */
+    return (session && (st == 1 || st == 3)) || group_session_link_up();
 }
 
 void group_system_frame(void)
 {
     int on = group_in_wireless();
+    /* while the link thread opens a session, as before it: a session that fails to open never turns them off, and Host
+     * from the Group list (a close, then an open) never turns them on for a moment */
+    if (group_session_opening()) on = policy;
+    if (group_session_busy()) sp_log_drain();   /* the link thread's lines */
     if (on != policy) {
         policy = on;
 #ifdef __3DS__

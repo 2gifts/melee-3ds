@@ -60,6 +60,7 @@ static struct {
 
 /* A clock every console on this machine shares (CLOCK_MONOTONIC), so a test can order events across their logs. */
 static unsigned long long now_ms(void) { return (unsigned long long)(sp_time_us() / 1000); }
+static void stop_session(void);
 
 static const char *status_name(int s)
 {
@@ -103,6 +104,10 @@ static int joined;
 static int join_first(void)
 {
     if (group_net_status() == 3) return 1;
+    if (joined && group_join_result() < 0) {   /* the link thread could not join: look again */
+        sp_log("group-test: the join failed (%s); looking again", group_net_error());
+        joined = 0;
+    }
     group_game g;
     if (!joined && group_scan(&g, 1) > 0 && (!T.late || g.beacon.phase == LOBBY_MATCH)) {
         sp_log("group-test: found a game by '%s' with %d consoles; joining", g.host, g.players);
@@ -191,6 +196,7 @@ static int expect_full(void)
     end = sp_time_us() + 30000000;
     while (sp_time_us() < end) {
         group_net_poll();
+        if (group_join_result() < 0) { sp_log("group-test: refused: %s", group_net_error()); return 0; }
         int st = group_net_status();
         if (st == 3) { sp_log("group-test: FAIL a fifth console got into the lobby"); return 1; }
         if (st == 4 || st == 5) { sp_log("group-test: refused: %s", group_net_error()); return 0; }
@@ -336,7 +342,7 @@ static int results_screen(int me, int game)
 #ifndef _WIN32
                     if (T.results_leave == 2) _exit(0);
 #endif
-                    group_session_stop();
+                    stop_session();
                     return 2;
                 }
                 if (!hold) hold = sp_time_us() + (uint64_t)T.results_hold_ms * 1000;
@@ -497,6 +503,13 @@ static int play_game(int me, int game)
     return pass ? 0 : -1;
 }
 
+/* Close the session and let the link thread finish closing it (its goodbye goes out) before the process ends. */
+static void stop_session(void)
+{
+    group_session_stop();
+    if (!group_session_settle(10000)) sp_log("group-test: the link thread was still closing after 10 s");
+}
+
 int main(int argc, char **argv)
 {
     const char *dir = ".";
@@ -538,23 +551,23 @@ int main(int argc, char **argv)
     if (T.via_menu && T.expect_error) {
         int r = via_menu();
         sp_log("group-test: %s", r == 1 ? "PASS (wireless off, refused twice)" : "FAIL");
-        group_session_stop();
+        stop_session();
         return r == 1 ? 0 : 1;
     }
     if (T.via_menu ? via_menu() != 0 : group_session_start(T.host, 0) != 0) {
         sp_log("group-test: FAIL start: %s", group_net_error());
-        group_session_stop();
+        stop_session();
         return 1;
     }
     if (T.full) {
         int r = expect_full();
         sp_log("group-test: %s", r ? "FAIL" : "PASS");
-        group_session_stop();
+        stop_session();
         return r;
     }
     if (!wait_for(T.via_menu || T.host ? connected : join_first, 120000)) {
         sp_log("group-test: FAIL no connection: %s", group_net_error());
-        group_session_stop();
+        stop_session();
         return 1;
     }
     int me = group_net_local_index();
@@ -573,7 +586,7 @@ int main(int argc, char **argv)
     if (T.control) {
         failed = control(dir, me);
         sp_log("group-test: %s", failed ? "FAIL" : "PASS");
-        group_session_stop();
+        stop_session();
         return failed;
     }
     if (T.late && !watch_match()) failed = 1;
@@ -618,6 +631,6 @@ int main(int argc, char **argv)
         }
     }
     sp_log("group-test: %s", failed ? "FAIL" : "PASS");
-    group_session_stop();
+    stop_session();
     return failed ? 1 : 0;
 }

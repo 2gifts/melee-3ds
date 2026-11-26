@@ -39,8 +39,8 @@ static struct {
     int open, status, host, automatic, my_port;
     char error[160];
     group_config cfg;
-    int thread_running;
-    volatile int thread_stop;
+    int opening;                   /* the link thread is opening this session (group_session_start); not open yet */
+    int joining;                   /* the link thread is joining a game (group_join) */
     /* the lobby: the host's state (host) and what everyone shows */
     lobby_host host_lobby;
     lobby_state view;
@@ -124,11 +124,14 @@ void group_config_load(group_config *c)
     c->udp = group_ini_int(s, "udp", 0);
     c->port = group_ini_int(s, "port", 0);
     c->drop_pct = group_ini_int(s, "drop_pct", 0);
-    c->net_thread = group_ini_int(s, "net_thread", 1);
-    c->net_thread_core = group_ini_int(s, "net_thread_core", -2);
     c->auto_players = group_ini_int(s, "auto_players", 2);
     c->test_wireless_off = group_ini_int(s, "test_wireless_off", 0);
     c->test_scan_locked = group_ini_int(s, "test_scan_locked", 0);
+#if !defined(__3DS__) || defined(MP_SMOKE_TEST)
+    c->test_link_delay_ms = group_ini_int(s, "test_link_delay_ms", 0);
+    if (c->test_link_delay_ms < 0) c->test_link_delay_ms = 0;
+    if (c->test_link_delay_ms > 5000) c->test_link_delay_ms = 5000;
+#endif
 #ifdef MP_SMOKE_TEST
     c->test_vs_matches = group_ini_int(s, "test_vs_matches", 0);
     c->test_nametag = group_ini_int(s, "test_nametag", 0);
@@ -168,13 +171,21 @@ static int mii_name(const group_config *c, char *out, int cap)
     if (c->test_screen_name_fail) return 0;
     if (c->test_screen_name[0]) { snprintf(out, (size_t)cap, "%s", c->test_screen_name); return 1; }
 #ifdef __3DS__
-    MiiScreenName n;
-    memset(n, 0, sizeof(n));
-    if (R_FAILED(frdInit(true))) return 0;
-    Result r = FRD_GetMyScreenName(&n);
-    frdExit();
-    if (R_FAILED(r)) return 0;
-    return name_from_utf16(n, NAME_MAX_CHARS, out, cap, NAME_MAX_CHARS) > 0;
+    /* read once per run (on the link thread): it cannot change while the game runs */
+    static int known, ok;
+    static char name[32];
+    if (!known) {
+        MiiScreenName n;
+        memset(n, 0, sizeof(n));
+        known = 1;
+        if (R_SUCCEEDED(frdInit(true))) {
+            Result r = FRD_GetMyScreenName(&n);
+            frdExit();
+            ok = R_SUCCEEDED(r) && name_from_utf16(n, NAME_MAX_CHARS, name, sizeof(name), NAME_MAX_CHARS) > 0;
+        }
+    }
+    if (ok) snprintf(out, (size_t)cap, "%s", name);
+    return ok;
 #else
     return 0;                                     /* the PC tools have no Friends service */
 #endif
@@ -185,13 +196,20 @@ static int system_name(char *out, int cap)
 {
     out[0] = 0;
 #ifdef __3DS__
-    u16 blk[14];
-    memset(blk, 0, sizeof(blk));
-    if (R_FAILED(cfguInit())) return 0;
-    Result r = CFGU_GetConfigInfoBlk2(0x1C, 0x000A0000, blk);
-    cfguExit();
-    if (R_FAILED(r)) return 0;
-    return name_from_utf16(blk, NAME_MAX_CHARS, out, cap, NAME_MAX_CHARS) > 0;
+    static int known, ok;                         /* read once per run, as the Mii name */
+    static char name[32];
+    if (!known) {
+        u16 blk[14];
+        memset(blk, 0, sizeof(blk));
+        known = 1;
+        if (R_SUCCEEDED(cfguInit())) {
+            Result r = CFGU_GetConfigInfoBlk2(0x1C, 0x000A0000, blk);
+            cfguExit();
+            ok = R_SUCCEEDED(r) && name_from_utf16(blk, NAME_MAX_CHARS, name, sizeof(name), NAME_MAX_CHARS) > 0;
+        }
+    }
+    if (ok) snprintf(out, (size_t)cap, "%s", name);
+    return ok;
 #elif defined(_WIN32)
     return 0;
 #else
@@ -224,13 +242,21 @@ static int my_mii(const group_config *c, uint8_t *out)
     if (c->test_mii_ok) memcpy(out, c->test_mii, LOBBY_MII_BYTES);
 #ifdef __3DS__
     else {
-        FriendMii m;
+        /* read once per run (on the link thread): Mii Maker cannot be opened over the game */
+        static int known;
+        static Result r;
+        static FriendMii m;
         _Static_assert(sizeof(m) == LOBBY_MII_BYTES, "FriendMii is CFLStoreData");
-        memset(&m, 0, sizeof(m));
-        if (R_FAILED(frdInit(true))) { sp_log("group: no Mii (frd)"); return 0; }
-        Result r = FRD_GetMyMii(&m);
-        frdExit();
-        if (R_FAILED(r)) { sp_log("group: no Mii (FRD_GetMyMii 0x%08lx)", (unsigned long)r); return 0; }
+        if (!known) {
+            memset(&m, 0, sizeof(m));
+            r = frdInit(true);
+            if (R_SUCCEEDED(r)) {
+                r = FRD_GetMyMii(&m);
+                frdExit();
+            }
+            known = 1;
+        }
+        if (R_FAILED(r)) { sp_log("group: no Mii (FRD 0x%08lx)", (unsigned long)r); return 0; }
         memcpy(out, &m, LOBBY_MII_BYTES);
     }
 #else
@@ -419,97 +445,280 @@ static void service(void)
     lobby_service();
 }
 
-static void worker(void *arg)
+/* ---- the link thread ----
+ * Every slow call (group.ini, the name and the Mii from the system, UDS coming up and going down, joining, the scan)
+ * runs on one thread, so the engine (and the bottom screen) never waits for the wireless hardware. The engine posts a
+ * request (group_session_start, group_session_stop, group_join) and returns in the same frame; it reads the outcome
+ * from G under the lock (G.opening, G.open, G.status, G.error, the join result). A newer request replaces one that has
+ * not started. The thread services the open session between requests, and returns once there is no session and no
+ * request; the engine joins it later, at once (group_session_reap), so a thread never outlives what it is for and the
+ * platform's one background thread is free again for Slippi online. */
+
+enum { RQ_NONE, RQ_OPEN, RQ_JOIN, RQ_CLOSE };
+static struct {
+    int running;            /* engine: a thread was started and not joined yet */
+    int exited;             /* the thread has returned (it no longer takes the lock) */
+    int req, req_host, req_auto;   /* the next request; a newer one replaces it */
+    uint32_t req_key;
+    int up;                 /* lw_open succeeded and lw_close has not run */
+    int closing;            /* lw_close is running */
+    int join_result;        /* 1 joined, -1 failed, 0 pending or none */
+    int delay_ms;           /* test_link_delay_ms of the session open */
+} L;
+
+/* tests: the time the hardware may take (test_link_delay_ms), on the link thread with no lock held */
+static void link_delay(const char *what)
 {
-    (void)arg;
-    while (!G.thread_stop) {
-        sp_lock();
-        service();
-        if (G.cfg.test_scan_locked) lw_scan_step();   /* tests: the old way, scanning with the lock held */
-        sp_unlock();
-        lw_scan_step();   /* outside the lock: the engine reads the list while the hardware scans */
-        sp_sleep_us(2000);
-    }
+    if (L.delay_ms <= 0) return;
+    sp_log("group: test delay of %d ms in the link thread (%s)", L.delay_ms, what);
+    sp_sleep_us((uint32_t)L.delay_ms * 1000u);
 }
 
-/* Called without the lock: the worker needs it to finish its last service. */
-static void stop_thread(void)
+static void link_close(void)
 {
-    if (G.thread_running) {
-        G.thread_stop = 1;
-        sp_thread_join();
-        G.thread_running = 0;
-    }
-}
-
-int group_session_start(int host, int automatic)
-{
-    char err[160] = "";
-    group_session_stop();
-    sp_lock_init();
     sp_lock();
-    memset(&G, 0, sizeof(G));
-    group_config_load(&G.cfg);
-    G.host = host;
-    G.automatic = automatic;
-    G.my_port = host ? 0 : -1;
-    G.auto_stage = 0x1F;                      /* Battlefield, unless the host's engine says otherwise */
+    int was = L.up;
+    L.up = 0;
+    L.closing = was;
+    sp_unlock();
+    if (!was) return;
+    link_delay("close");
+    uint64_t t0 = sp_time_us();
+    lw_close();                                   /* the engine no longer touches the module: G.open is 0 */
+    sp_log("group: session closed (%u ms on the link thread)", (unsigned)((sp_time_us() - t0) / 1000));
+    sp_lock();
+    L.closing = 0;
+    sp_unlock();
+}
+
+static void link_open(int host, int automatic)
+{
+    group_config cfg;
+    char err[160] = "";
+    uint64_t t0 = sp_time_us();
+    group_config_load(&cfg);
+    L.delay_ms = cfg.test_link_delay_ms;
+    link_delay("open");
     lw_config c;
     memset(&c, 0, sizeof(c));
     c.host = host;
     c.input_size = PAD_BYTES;
     c.frame_us = FRAME_US;
-    c.timeout_ms = G.cfg.timeout_ms;
-    c.use_udp = G.cfg.udp;
+    c.timeout_ms = cfg.timeout_ms;
+    c.use_udp = cfg.udp;
 #ifndef __3DS__
     c.use_udp = 1;                            /* PC tools: there is no UDS */
 #endif
-    c.port = G.cfg.port;
-    c.test_drop_pct = G.cfg.drop_pct;
-    c.test_wireless_off = G.cfg.test_wireless_off;
-    pick_name(&G.cfg, c.name, sizeof(c.name));
+    c.port = cfg.port;
+    c.test_drop_pct = cfg.drop_pct;
+    c.test_wireless_off = cfg.test_wireless_off;
+    pick_name(&cfg, c.name, sizeof(c.name));
+    uint8_t mii[LOBBY_MII_BYTES];
+    int has_mii = my_mii(&cfg, mii);             /* a host sends it; a console browsing shows it on its Host button */
+    if (has_mii && cfg.test_mii_corrupt) sp_log("group: Mii corrupted in the beacon for the test (test_mii_corrupt)");
+    sp_log("group: %s (delay %d)", host ? "hosting a game" : "looking for games", cfg.delay);
+    int r = lw_open(&c, err, sizeof(err));    /* the engine does not touch the module while G.open is 0 */
+    unsigned ms = (unsigned)((sp_time_us() - t0) / 1000);
+    sp_lock();
+    if (r == 0) L.up = 1;
+    if (L.req != RQ_NONE || !G.opening) {
+        /* a newer request came meanwhile (Back, or Group again): it decides; this session is not shown */
+        sp_unlock();
+        sp_log("group: the open (%u ms) was overtaken by a newer request", ms);
+        return;
+    }
+    G.opening = 0;
+    G.cfg = cfg;
+    G.host = host;
+    G.automatic = automatic;
+    if (r != 0) {
+        fail(ST_FAILED, err[0] ? err : "Local wireless is unavailable");
+        sp_unlock();
+        return;
+    }
     if (host) {
         lobby_host_init(&G.host_lobby, 1);
         G.host_lobby.rng = (uint32_t)lw_platform_time_us() | 1u;   /* the Loser rule's first picker */
     }
-    G.has_mii = my_mii(&G.cfg, G.mii);            /* a host sends it; a console browsing shows it on its Host button */
-    if (G.has_mii && G.cfg.test_mii_corrupt) sp_log("group: Mii corrupted in the beacon for the test (test_mii_corrupt)");
-    sp_log("group: %s (delay %d)", host ? "hosting a game" : "looking for games", G.cfg.delay);
-    if (lw_open(&c, err, sizeof(err)) != 0) {
-        fail(ST_FAILED, err[0] ? err : "Local wireless is unavailable");
-        sp_unlock();
-        return -1;
-    }
+    memcpy(G.mii, mii, sizeof(G.mii));
+    G.has_mii = has_mii;
     G.open = 1;
     G.status = ST_SEARCHING;
-    int want_thread = G.cfg.net_thread, core = G.cfg.net_thread_core;
     sp_unlock();
-    if (want_thread) {
-        G.thread_stop = 0;
-        if (sp_thread_start(worker, NULL, core) == 0) G.thread_running = 1;
-        else sp_log("group: no network thread; servicing from the engine's polls");
+    sp_log("group: session open (%u ms on the link thread)", ms);
+}
+
+static void link_join(uint32_t key)
+{
+    sp_lock();
+    int ok = G.open && !G.host && L.up;
+    sp_unlock();
+    link_delay("join");
+    /* lw_join runs without the lock: the engine reads nothing of the module's list while G.joining (group_scan), and
+     * this thread is the only one that services it */
+    int r = ok ? lw_join(key) : -1;
+    sp_lock();
+    if (L.req == RQ_NONE && G.joining) {
+        G.joining = 0;
+        if (r == 0) L.join_result = 1;
+        else {
+            snprintf(G.error, sizeof(G.error), "%s", ok && lw_error()[0] ? lw_error() : ok ? "Could not join the game" : "That game is gone");
+            L.join_result = -1;
+        }
+    }
+    sp_unlock();
+}
+
+static void link_main(void *arg)
+{
+    (void)arg;
+    uint64_t next_delay = 0;
+    for (;;) {
+        sp_lock();
+        int rq = L.req, host = L.req_host, automatic = L.req_auto;
+        uint32_t key = L.req_key;
+        L.req = RQ_NONE;
+        if (rq == RQ_NONE && !L.up) {             /* nothing open, nothing asked: done */
+            L.exited = 1;
+            sp_unlock();
+            return;
+        }
+        int browsing = 0;
+        if (rq == RQ_NONE) {
+            service();
+            if (G.cfg.test_scan_locked) lw_scan_step();   /* tests: the old way, scanning with the lock held */
+            browsing = G.open && !G.host && lw_browsing();
+        }
+        sp_unlock();
+        switch (rq) {
+        case RQ_OPEN: link_close(); link_open(host, automatic); break;
+        case RQ_CLOSE: link_close(); break;
+        case RQ_JOIN: link_join(key); break;
+        default:
+            lw_scan_step();   /* outside the lock: the engine reads the list while the hardware scans */
+            if (browsing && L.delay_ms > 0 && sp_time_us() >= next_delay) {   /* tests: a scan as long as the delay */
+                next_delay = sp_time_us() + 1500000ull;
+                link_delay("scan");
+            }
+            sp_sleep_us(2000);
+        }
+    }
+}
+
+/* The engine: join a thread that has returned (at once), so a new one can start. */
+static void link_reap(void)
+{
+    if (!L.running) return;
+    sp_lock();
+    int done = L.exited;
+    sp_unlock();
+    if (!done) return;
+    sp_thread_join();
+    L.running = 0;
+    L.exited = 0;
+}
+
+void group_session_reap(void)
+{
+    sp_lock_init();
+    link_reap();
+}
+
+/* The engine: post a request (lock held); it replaces one that has not started. */
+static void link_post_locked(int rq)
+{
+    L.req = rq;
+}
+
+static int link_ensure_thread(void)
+{
+    link_reap();
+    if (L.running) return 1;
+    L.exited = 0;
+    if (sp_thread_start(link_main, NULL, -2) != 0) {   /* the default core */
+        sp_log("group: the link thread did not start");
+        return 0;
+    }
+    L.running = 1;
+    return 1;
+}
+
+int group_session_start(int host, int automatic)
+{
+    sp_lock_init();
+    link_reap();
+    sp_lock();
+    memset(&G, 0, sizeof(G));
+    G.host = host;
+    G.automatic = automatic;
+    G.my_port = host ? 0 : -1;
+    G.auto_stage = 0x1F;                      /* Battlefield, unless the host's engine says otherwise */
+    G.status = ST_SEARCHING;
+    G.opening = 1;
+    L.req_host = host;
+    L.req_auto = automatic;
+    L.join_result = 0;
+    link_post_locked(RQ_OPEN);                /* closes any session first, then opens */
+    sp_unlock();
+    if (!link_ensure_thread()) {
+        sp_lock();
+        L.req = RQ_NONE;
+        G.opening = 0;
+        fail(ST_FAILED, "Local wireless is unavailable");
+        sp_unlock();
+        return -1;
     }
     return 0;
 }
 
 void group_session_stop(void)
 {
-    stop_thread();
     sp_lock_init();
+    link_reap();
     sp_lock();
-    if (G.open) {
-        lw_close();
-        sp_log("group: session closed");
-    }
+    if (G.open) sp_log("group: session closing");
     G.open = 0;
+    G.opening = 0;
+    G.joining = 0;
     G.view_valid = 0;
     G.match_pending = 0;
     if (G.status == ST_SEARCHING || G.status == ST_CONNECTED) G.status = ST_IDLE;
+    if (L.running && !L.exited) link_post_locked(RQ_CLOSE);   /* replaces an open or join not started */
     sp_unlock();
     sp_log_drain();
 }
 
-int group_session_open(void) { return G.open; }
+int group_session_open(void) { return G.open || G.opening; }
+int group_session_opening(void) { sp_lock(); int o = G.opening; sp_unlock(); return o; }
+
+int group_session_link_up(void)
+{
+    sp_lock_init();
+    sp_lock();
+    int up = L.up || L.closing;
+    sp_unlock();
+    return up;
+}
+
+int group_session_busy(void)
+{
+    sp_lock_init();
+    link_reap();
+    return L.running;
+}
+
+/* Tests and tools: wait (up to timeout_ms) until the link thread has nothing left to do (it returned). 1 if so. */
+int group_session_settle(int timeout_ms)
+{
+    uint64_t end = sp_time_us() + (uint64_t)timeout_ms * 1000ull;
+    while (group_session_busy()) {
+        if (sp_time_us() >= end) return 0;
+        sp_log_drain();
+        sp_sleep_us(2000);
+    }
+    sp_log_drain();
+    return 1;
+}
 
 int group_my_mii(uint8_t *out)
 {
@@ -528,7 +737,7 @@ int group_scan(group_game *out, int max)
 {
     int n = 0;
     sp_lock();
-    if (G.open && !G.host) {
+    if (G.open && !G.host && !G.joining) {      /* while joining, the link thread works on the module unlocked */
         int count = lw_scan_count();
         for (int i = 0; i < count && n < max; ++i) {
             lw_net net;
@@ -553,8 +762,24 @@ int group_scan(group_game *out, int max)
 int group_join(uint32_t key)
 {
     sp_lock();
-    int r = G.open && !G.host ? lw_join(key) : -1;
-    if (r != 0) snprintf(G.error, sizeof(G.error), "%s", lw_error()[0] ? lw_error() : "Could not join the game");
+    int ok = G.open && !G.host && !G.joining && L.running && !L.exited;
+    if (ok) {
+        G.joining = 1;
+        L.join_result = 0;
+        L.req_key = key;
+        link_post_locked(RQ_JOIN);
+    } else {
+        snprintf(G.error, sizeof(G.error), "Could not join the game");
+    }
+    sp_unlock();
+    return ok ? 0 : -1;
+}
+
+int group_join_result(void)
+{
+    sp_lock();
+    int r = L.join_result;
+    if (r) L.join_result = 0;
     sp_unlock();
     return r;
 }
@@ -846,7 +1071,10 @@ int group_net_start(const char *role)
         G.status = ST_FAILED;
         return -2;
     }
-    return group_session_start(host, 1) == 0 ? 0 : -3;
+    if (group_session_start(host, 1) != 0) return -3;
+    /* the online bridge expects the session open (or failed) when this returns; automatic sessions are tests */
+    while (group_session_opening()) sp_sleep_us(2000);
+    return G.status == ST_FAILED ? -3 : 0;
 }
 
 int group_net_status(void) { return G.status; }
@@ -854,12 +1082,7 @@ const char *group_net_error(void) { return G.error; }
 
 void group_net_poll(void)
 {
-    if (!G.thread_running) {
-        sp_lock();
-        service();
-        sp_unlock();
-        if (G.open) lw_scan_step();
-    }
+    link_reap();                                  /* the link thread services the session */
     sp_log_drain();
 }
 
