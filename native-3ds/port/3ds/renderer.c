@@ -175,6 +175,7 @@ static float(*layer_uv)[2];static int layer_attributes;
 #ifdef MP_SMOKE_TEST
 unsigned layered_draws;
 unsigned shield_draws[2];
+unsigned decal_draws;
 #endif
 static u16*indices;static unsigned index_count;
 static unsigned flushed_vertices,flushed_indices;
@@ -1317,7 +1318,25 @@ static void native_submit(const Vertex*be,unsigned count,const Draw*state)
     static unsigned sampled;
     if(sampled++<5){char text[200];const Vertex*v=submitted;snprintf(text,sizeof(text),"GX draw texture=%08lx fmt=%lu %lux%lu rgba=%.2f %.2f %.2f %.2f uv=%.2f %.2f\n",(unsigned long)d.image,(unsigned long)d.format,(unsigned long)d.w,(unsigned long)d.h,v->c[0],v->c[1],v->c[2],v->c[3],v->t[0],v->t[1]);mp_native_log(text);}
     unsigned env_key=d.layer?8:t?!!d.texture_rgb|(!!d.texture_alpha<<1)|((!!d.texture_alpha&&(d.format==0||d.format==1))<<2):0;
-    if(d.layer&&layer.mode){
+    if(d.layer&&layer.mode==MP_FRAGMENT_DECAL){
+        /* 0: base texture x constant. 1: mix(previous, label, label alpha).
+         * I4/I8 have no alpha channel here; GX reads their intensity. */
+        for(unsigned i=0;i<3;++i)C3D_TexEnvInit(C3D_GetTexEnv(i));
+        C3D_TexEnv*env=C3D_GetTexEnv(0);
+        GPU_TEVOP_A base_alpha=d.format==0||d.format==1?GPU_TEVOP_A_SRC_R:GPU_TEVOP_A_SRC_ALPHA;
+        C3D_TexEnvSrc(env,C3D_Both,GPU_TEXTURE0,GPU_CONSTANT,0);C3D_TexEnvFunc(env,C3D_Both,GPU_MODULATE);
+        C3D_TexEnvOpAlpha(env,base_alpha,GPU_TEVOP_A_SRC_ALPHA,0);C3D_TexEnvColor(env,layer.tint);
+        env=C3D_GetTexEnv(1);
+        int intensity=layer.format==0||layer.format==1;
+        GPU_TEVOP_A label_alpha=intensity?GPU_TEVOP_A_SRC_R:GPU_TEVOP_A_SRC_ALPHA;
+        C3D_TexEnvSrc(env,C3D_Both,GPU_TEXTURE1,GPU_PREVIOUS,GPU_TEXTURE1);C3D_TexEnvFunc(env,C3D_Both,GPU_INTERPOLATE);
+        C3D_TexEnvOpRgb(env,GPU_TEVOP_RGB_SRC_COLOR,GPU_TEVOP_RGB_SRC_COLOR,intensity?GPU_TEVOP_RGB_SRC_R:GPU_TEVOP_RGB_SRC_ALPHA);
+        C3D_TexEnvOpAlpha(env,label_alpha,GPU_TEVOP_A_SRC_ALPHA,label_alpha);
+        raster_state.valid|=STATE_TEXENV;
+#ifdef MP_SMOKE_TEST
+        ++decal_draws;
+#endif
+    }else if(d.layer&&layer.mode){
         for(unsigned i=0;i<3;++i)C3D_TexEnvInit(C3D_GetTexEnv(i));
         C3D_TexEnv*env=C3D_GetTexEnv(0);
         GPU_TEVSRC texture_source=two_uv?GPU_TEXTURE1:GPU_TEXTURE0;

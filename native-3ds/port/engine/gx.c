@@ -18,6 +18,7 @@ extern int mp_be_memcmp_block(const void*,const void*,size_t);
 #include "primitive_expand.h"
 #include "layered_material.h"
 #include "shield_material.h"
+#include "cursor_material.h"
 #include "stereo_config.h"
 #include "draw_flags.h"
 /* Every GX entry point below is the replay implementation (gxr_<name>).
@@ -752,6 +753,19 @@ static void prepare_shield_material(unsigned mode){
     flat_shading=1;
     mp_shield_parameters(mode,tint,highlight,base,konst(tev_configuration[3][23],0),konst(tev_configuration[1][24],3),flat_color,&texture_layer);
 }
+/* The base texture is stage 0's; the second texture rides the layer with its
+ * own coordinate. Stage 0's constant is the only colour input: no raster or
+ * lighting, so the primary colour is flat and carries the same constant. */
+static void prepare_cursor_material(void){
+    u32*s=tev_configuration[1];GXTexObj*t=&textures[s[1]];GXTlutObj*p=&palettes[t->dummy[4]&31];
+    texture_layer=(MPTextureLayer){t->dummy[0],t->dummy[1]>>16,t->dummy[1]&65535,t->dummy[2],
+        p->dummy[0],p->dummy[1],p->dummy[2],t->dummy[3]>>16,(t->dummy[3]>>8)&255,(u32)batch_layer_uv};
+    if(texture_layer.format<GX_TF_C4||texture_layer.format>GX_TF_C14X2)texture_layer.palette=texture_layer.palette_format=texture_layer.palette_count=0;
+    texture_layer.mode=MP_FRAGMENT_DECAL;
+    texture_layer.tint=mp_cursor_constant(tev_configuration,(const unsigned char(*)[4])tev_color,(const unsigned char(*)[4])konst_color);
+    active_texture=tev_configuration[0][1];active_coord=tev_configuration[0][0];layer_coord=s[0];
+    flat_shading=1;for(unsigned j=0;j<4;++j)flat_color[j]=((texture_layer.tint>>(8*j))&255)/255.f;
+}
 static float color_arg(unsigned a,unsigned k,float reg[4][4],const float*ras,unsigned sel){if(a<8)return reg[a/2][(a&1)?3:k];if(a==8||a==9)return 1;if(a==10)return ras[k];if(a==11)return ras[3];if(a==12)return 1;if(a==13)return .5f;if(a==14)return konst(sel,k);return 0;}
 static float alpha_arg(unsigned a,float reg[4][4],const float*ras,unsigned sel){if(a<4)return reg[a][3];if(a==4)return 1;if(a==5)return ras[3];if(a==6)return konst(sel,3);return 0;}
 static float tev_op(float a,float b,float c,float d,unsigned op,unsigned bias,unsigned scale,unsigned clamp){float value;if(op>=8)value=d+(((op&1)?a==b:a>b)?c:0);else value=d+(op==1?-1:1)*(a*(1-c)+b*c)+(bias==1?.5f:bias==2?-.5f:0);static const float scales[]={1,2,4,.5f};value*=scales[scale&3];if(clamp){if(value<0)value=0;if(value>1)value=1;}return value;}
@@ -1281,13 +1295,16 @@ void GXBegin(GXPrimitive type,GXVtxFmt fmt,u16 nverts)
     unsigned shield=!points&&!lines&&!ind_count?mp_shield_material(tev_configuration,num_stages):0;
     if(shield&&(tev_configuration[1][0]>=texgens||(shield==MP_FRAGMENT_SHIELD_START&&tev_configuration[2][0]>=texgens)))shield=0;
     tint_active=shield==MP_FRAGMENT_TINT;
+    unsigned decal=!layered&&!shield&&!points&&!lines&&!ind_count&&mp_cursor_material(tev_configuration,num_stages)&&
+        tev_configuration[0][0]<texgens&&tev_configuration[1][0]<texgens;
     u32 measured=detail_begin(0);
     if(shield){layer_active=shield==MP_FRAGMENT_SHIELD_START;prepare_shield_material(shield);}
+    else if(decal){layer_active=1;prepare_cursor_material();}
     else if(layer_active)prepare_layered_material();else prepare_material();detail_end(0,measured);
-    material_save(kind,layered||shield,selected>=0||layered||shield,layered||shield==MP_FRAGMENT_SHIELD_START);++material_fast_misses;
+    material_save(kind,layered||shield||decal,selected>=0||layered||shield||decal,layered||shield==MP_FRAGMENT_SHIELD_START||decal);++material_fast_misses;
     if(validating)material_validate(&expected);
     }
-    /* Layered and shield materials keep their GPU combiner path. */
+    /* Layered, shield and decal materials keep their GPU combiner path. */
     if(merge&&(layer_active||tint_active)){merge=0;flush();}
     u32 measured=detail_begin(1);gpu_shading=merge?0:prepare_gpu_shading();detail_end(1,measured);draw.gpu=gpu_shading?(u32)&gpu_uniforms:0;
     if(merge){
