@@ -65,7 +65,7 @@ Group play (Melee -> Group, local wireless lobbies; `port/3ds/group`, `tools/gro
 ```sh
 python3 tools/test_group.py                                  # host C: every rule, sanitized, seconds (no Docker)
 docker/emu-test.sh run tools/group/run_pc_suite.py           # PC consoles: every group_test.py scenario, lw_lobby, menu art
-python3 tools/group/run_azahar_suite.py                      # Azahar: smoke, lobby, quad, Mii, scan, link (at most 6 emulators)
+python3 tools/group/run_azahar_suite.py                      # Azahar: smoke, picker, lobby, quad, Mii, scan, link (at most 6 emulators)
 ```
 
 One scenario or test alone:
@@ -91,7 +91,8 @@ docker/emu-test.sh run tools/localwireless/lw_lobby_test.py     # the localwirel
 docker/emu-test.sh run tools/group/menu_art_test.py             # the submenu's art over the disc's MnMaAll archives (PC, no emulator)
 docker/emu-test.sh run tools/group/group_smoke_test.py          # two emulated consoles and a PC one: the glue, end to end
 docker/emu-test.sh run tools/group/group_lobby_test.py           # Azahar hosts, a PC console joins: doors, Rules, Start, stage, match
-docker/emu-test.sh run tools/group/group_quad_test.py --players 3 --end-frame 600 --kill 3:60 --timeout-ms 20000   # engine, Azahar
+docker/emu-test.sh run tools/group/group_picker_test.py          # Turns: the picker leaves mid stage select; the pick passes on
+docker/emu-test.sh run tools/group/group_quad_test.py --players 3 --end-frame 1500 --pause-kill 3:300 --timeout-ms 20000   # a paused console drops
 docker/emu-test.sh run tools/group/group_mii_test.py              # five PC hosts: Mii heads, the emblem, pages of games
 docker/emu-test.sh run tools/group/group_scan_test.py             # the real UDS scan does not stall the engine
 docker/emu-test.sh run tools/group/group_link_test.py             # a PC host, test_link_delay_ms=500: no engine stall on Group, Back, Join, Host, leaving

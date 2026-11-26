@@ -210,8 +210,9 @@ int main(void)
 
     /* a console leaves during the stage select... */
     h.st.phase = LOBBY_STAGE; h.st.stage_picked = 0; h.st.starter = 1;
-    CHECK(lobby_host_sync(&h, 0x5) & LOBBY_CHANGED);                               /* the starter left */
-    CHECK(h.st.phase == LOBBY_CSS && h.st.slot[1].kind == LOBBY_CPU);              /* ...its Human door plays on as a CPU */
+    CHECK(lobby_host_sync(&h, 0x5) & LOBBY_CHANGED);                               /* the one who pressed Start */
+    CHECK(h.st.phase == LOBBY_STAGE && h.st.slot[1].kind == LOBBY_CPU);            /* ...its Human door plays on as a CPU */
+    h.st.phase = LOBBY_CSS;
     {   /* a door edit it queued before leaving is not applied over that CPU */
         lobby_slot late = fighter(LOBBY_HUMAN, 0x0C, 2);
         CHECK(!door(&h, 1, 1, late) && h.st.slot[1].kind == LOBBY_CPU);
@@ -645,8 +646,6 @@ int main(void)
         /* the picker leaving passes the pick to the next Human port with a console; a pick from it is refused */
         u.st.rules.stage_sel = LOBBY_SSS_LOSER;
         lobby_host_set_loser(&u, 2);
-        CHECK(lobby_host_start(&u, 2) && u.st.sss_picker == 2);      /* port 2 started: its leaving would end it */
-        u.st.phase = LOBBY_CSS;
         CHECK(lobby_host_start(&u, 0) && u.st.sss_picker == 2);      /* Loser: the recorded loser */
         CHECK(lobby_host_sync(&u, 0x3) & LOBBY_CHANGED);               /* port 2 leaves */
         CHECK(u.st.phase == LOBBY_STAGE && u.st.sss_picker == 0);
@@ -681,6 +680,24 @@ int main(void)
         /* a joiner's own rule plays no part: an unknown rule on the wire reads as Any */
         u.st.rules.stage_sel = 9;
         CHECK(lobby_decode(&x, b, lobby_encode(&u.st, b, sizeof(b))) == 0 && x.rules.stage_sel == LOBBY_SSS_ANY);
+    }
+
+    /* the picker who pressed Start leaves: the stage select goes on, the pick passes on, then to everyone */
+    {
+        lobby_host u;
+        uint8_t c[24];
+        lobby_host_init(&u, 0x7);                                     /* consoles on ports 0, 1, 2 */
+        u.st.slot[0] = fighter(LOBBY_CPU, 2, 0);                       /* the host's own door is a CPU */
+        u.st.slot[1] = fighter(LOBBY_HUMAN, 9, 0);
+        u.st.slot[2] = fighter(LOBBY_HUMAN, 4, 0);
+        u.st.rules.stage_sel = LOBBY_SSS_TURNS;
+        CHECK(lobby_host_start(&u, 1) && u.st.sss_picker == 1);       /* port 1 pressed Start, and it is its turn */
+        CHECK(lobby_host_sync(&u, 0x5) & LOBBY_CHANGED);               /* port 1 leaves */
+        CHECK(u.st.phase == LOBBY_STAGE && u.st.sss_picker == 2 && u.st.slot[1].kind == LOBBY_CPU);
+        CHECK(!lobby_host_command(&u, 0, c, lobby_cmd_stage(c, 0x20, 0)) && !u.st.stage_picked);
+        CHECK(lobby_host_sync(&u, 0x1) & LOBBY_CHANGED);               /* port 2, the last Human door, leaves too */
+        CHECK(u.st.phase == LOBBY_STAGE && u.st.sss_picker == LOBBY_PICK_ANY);
+        CHECK(lobby_host_command(&u, 0, c, lobby_cmd_stage(c, 0x20, 0)) & LOBBY_START_MATCH);   /* the host's CPU seat picks */
     }
 
     printf("group_lobby: ok\n");

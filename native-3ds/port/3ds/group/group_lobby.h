@@ -78,7 +78,7 @@ typedef struct {
 
 typedef struct {
     uint8_t phase;                 /* LOBBY_CSS / LOBBY_STAGE / LOBBY_MATCH / LOBBY_RESULTS */
-    uint8_t starter;               /* console that pressed Start (phase STAGE) */
+    uint8_t starter;               /* console that pressed Start (phase STAGE); for the logs: its leaving ends nothing */
     lobby_rules rules;
     uint16_t stage;                /* the picked stage (phase STAGE once picked, and MATCH) */
     uint8_t stage_picked, alt_stage;

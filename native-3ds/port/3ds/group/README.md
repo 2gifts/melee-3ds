@@ -67,7 +67,10 @@ Three tiers, fastest first. Run them in that order: a failure in an earlier one 
      names on the results, the saves after a match, "End the session?" and the joiner's notice, the "Match in progress"
      page, the soft reset;
    - `group_lobby_test.py`: the emulated console hosts a PC console through a whole match;
-   - `group_quad_test.py`: identical records across 2 to 4 emulated consoles, a CPU taking over a dropped one;
+   - `group_picker_test.py`: Turns; the picker, who also pressed Start, leaves during the stage select: the stage
+     select goes on and the cursor appears on the console the pick passes to;
+   - `group_quad_test.py`: identical records across 2 to 4 emulated consoles, a CPU taking over a dropped one (one that
+     had paused the match: the others unpause for it);
    - `group_mii_test.py`: Mii heads (cfl-mii loads, renders without stalling the engine, unloads);
    - `group_scan_test.py`: the real UDS scan does not stall the engine;
    - `group_link_test.py`: a slow link thread (open, close, join) does not stall the engine.

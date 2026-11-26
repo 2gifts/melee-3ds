@@ -27,6 +27,7 @@ TESTS = [
     # console 3 pauses, then drops while paused: the others make it a CPU, unpause for it and reach the host's end
     ('quad', 3, ['tools/group/group_quad_test.py', '--players', '3', '--end-frame', '1500', '--pause-kill', '3:300',
                  '--timeout-ms', '20000']),
+    ('picker', 2, ['tools/group/group_picker_test.py']),
     ('lobby', 1, ['tools/group/group_lobby_test.py']),
     ('mii', 1, ['tools/group/group_mii_test.py']),
     ('mii_no_mii', 1, ['tools/group/group_mii_test.py', '--no-mii']),

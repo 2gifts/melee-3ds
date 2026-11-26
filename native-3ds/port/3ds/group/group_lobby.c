@@ -430,10 +430,12 @@ int lobby_host_sync(lobby_host *h, unsigned present)
         changed |= (present & bit) ? console_arrives(h, i) : console_leaves(h, i);
     }
     h->present = present & 0xF;
-    if (h->st.phase == LOBBY_STAGE && !(present & (1u << h->st.starter))) { h->st.phase = LOBBY_CSS; h->st.stage_picked = 0; changed = 1; }
+    /* A console that leaves during the stage select, whoever pressed Start: its door plays on as a CPU (console_leaves)
+     * and the stage select goes on. (Vanilla's stage select reads only the picker's controller: unplugged, it waits for
+     * it, and L+R+Start is the only way out. A console that left is not coming back, so the pick moves on instead.) */
     if (h->st.phase == LOBBY_STAGE && h->st.sss_picker < LOBBY_SLOTS && !(present & (1u << h->st.sss_picker)) &&
         !h->st.stage_picked) {
-        /* the picker left: as a controller unplugged on one console, the pick passes to the next Human port */
+        /* the picker left: the pick passes to the next Human port with a console, or to everyone when none is left */
         h->st.sss_picker = (uint8_t)next_picker(h, h->st.sss_picker + 1);
         changed = 1;
     }
