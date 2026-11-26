@@ -37,7 +37,7 @@ def main():
                'native_geometry_lru_checks','native_geometry_check_lru','native_geometry_validate',
                'native_geometry_checks','native_geometry_check',
                'layered_draws','layered_verify','verify_layered_material','fixture_rgba8',
-               'shield_draws','shield_verify','verify_shield_material',
+               'shield_draws','shield_verify','verify_shield_material','decal_draws',
                'raster_state_disable','raster_state_verify','verify_raster_state',
                'mp_test_stall','mp_test_memory_compare','mp_game_memory_check','mp_memory_compare_self_test',
                'mp_test_rotation_check','mp_game_rotation_check','mp_rotation_self_test',
